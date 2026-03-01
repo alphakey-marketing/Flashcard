@@ -1,10 +1,13 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { getAllSets, deleteSet, FlashcardSet } from '../lib/storage';
 
-const Home: React.FC = () => {
+interface HomeProps {
+  onNavigateToCreate: () => void;
+  onNavigateToSwipe: (setId: string) => void;
+}
+
+const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe }) => {
   const [sets, setSets] = useState<FlashcardSet[]>([]);
-  const navigate = useNavigate();
 
   useEffect(() => {
     loadSets();
@@ -22,10 +25,6 @@ const Home: React.FC = () => {
     }
   };
 
-  const handleCardClick = (id: string) => {
-    navigate(`/swipe/${id}`);
-  };
-
   const calculateProgress = (set: FlashcardSet) => {
     if (set.cards.length === 0) return 0;
     return (set.knownCardIds.length / set.cards.length) * 100;
@@ -37,7 +36,7 @@ const Home: React.FC = () => {
         <h1 style={styles.title}>FlashMind</h1>
         <button
           style={styles.addButton}
-          onClick={() => navigate('/create')}
+          onClick={onNavigateToCreate}
           onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
           onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
         >
@@ -52,7 +51,7 @@ const Home: React.FC = () => {
           <p style={styles.emptyText}>Create your first set to start studying!</p>
           <button
             style={styles.createButton}
-            onClick={() => navigate('/create')}
+            onClick={onNavigateToCreate}
             onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
             onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
           >
@@ -67,7 +66,7 @@ const Home: React.FC = () => {
               <div
                 key={set.id}
                 style={styles.card}
-                onClick={() => handleCardClick(set.id)}
+                onClick={() => onNavigateToSwipe(set.id)}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.transform = 'translateY(-4px)';
                   e.currentTarget.style.boxShadow = '0 8px 16px rgba(0,0,0,0.1)';

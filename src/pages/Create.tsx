@@ -1,9 +1,11 @@
 import React, { useState, CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { createNewSet, saveSet, CardDraft } from '../lib/storage';
 
-const Create: React.FC = () => {
-  const navigate = useNavigate();
+interface CreateProps {
+  onNavigateToHome: () => void;
+}
+
+const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [cards, setCards] = useState<CardDraft[]>([
@@ -43,7 +45,7 @@ const Create: React.FC = () => {
     // Create and save set
     const newSet = createNewSet(title.trim(), description.trim(), validCards);
     saveSet(newSet);
-    navigate('/');
+    onNavigateToHome();
   };
 
   return (
@@ -51,7 +53,7 @@ const Create: React.FC = () => {
       <header style={styles.header}>
         <button
           style={styles.closeButton}
-          onClick={() => navigate('/')}
+          onClick={onNavigateToHome}
           onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
           onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
         >
@@ -200,7 +202,8 @@ const styles: { [key: string]: CSSProperties } = {
     marginBottom: '16px',
     outline: 'none',
     transition: 'border-color 0.2s',
-    backgroundColor: '#fff'
+    backgroundColor: '#fff',
+    boxSizing: 'border-box'
   },
   descriptionInput: {
     width: '100%',
@@ -212,7 +215,8 @@ const styles: { [key: string]: CSSProperties } = {
     resize: 'vertical',
     fontFamily: 'inherit',
     transition: 'border-color 0.2s',
-    backgroundColor: '#fff'
+    backgroundColor: '#fff',
+    boxSizing: 'border-box'
   },
   sectionTitle: {
     fontSize: '18px',
@@ -257,7 +261,8 @@ const styles: { [key: string]: CSSProperties } = {
     outline: 'none',
     resize: 'vertical',
     fontFamily: 'inherit',
-    transition: 'border-color 0.2s'
+    transition: 'border-color 0.2s',
+    boxSizing: 'border-box'
   },
   addCardButton: {
     width: '100%',

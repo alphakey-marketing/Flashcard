@@ -1,18 +1,46 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import React, { useState } from 'react';
 import Home from './pages/Home';
 import Create from './pages/Create';
 import Swipe from './pages/Swipe';
 
+type Page = 'home' | 'create' | 'swipe';
+
 function App() {
+  const [currentPage, setCurrentPage] = useState<Page>('home');
+  const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
+
+  const navigateToHome = () => {
+    setCurrentPage('home');
+    setSelectedSetId(null);
+  };
+
+  const navigateToCreate = () => {
+    setCurrentPage('create');
+  };
+
+  const navigateToSwipe = (setId: string) => {
+    setSelectedSetId(setId);
+    setCurrentPage('swipe');
+  };
+
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/create" element={<Create />} />
-        <Route path="/swipe/:id" element={<Swipe />} />
-      </Routes>
-    </Router>
+    <>
+      {currentPage === 'home' && (
+        <Home 
+          onNavigateToCreate={navigateToCreate}
+          onNavigateToSwipe={navigateToSwipe}
+        />
+      )}
+      {currentPage === 'create' && (
+        <Create onNavigateToHome={navigateToHome} />
+      )}
+      {currentPage === 'swipe' && selectedSetId && (
+        <Swipe 
+          setId={selectedSetId}
+          onNavigateToHome={navigateToHome}
+        />
+      )}
+    </>
   );
 }
 

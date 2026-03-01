@@ -1,10 +1,12 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
 import { getSet, updateKnownCards, FlashcardSet } from '../lib/storage';
 
-const Swipe: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+interface SwipeProps {
+  setId: string;
+  onNavigateToHome: () => void;
+}
+
+const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [set, setSet] = useState<FlashcardSet | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
@@ -12,16 +14,14 @@ const Swipe: React.FC = () => {
   const [isFinished, setIsFinished] = useState(false);
 
   useEffect(() => {
-    if (id) {
-      const flashcardSet = getSet(id);
-      if (flashcardSet) {
-        setSet(flashcardSet);
-        setKnownIds(new Set(flashcardSet.knownCardIds));
-      } else {
-        navigate('/');
-      }
+    const flashcardSet = getSet(setId);
+    if (flashcardSet) {
+      setSet(flashcardSet);
+      setKnownIds(new Set(flashcardSet.knownCardIds));
+    } else {
+      onNavigateToHome();
     }
-  }, [id, navigate]);
+  }, [setId, onNavigateToHome]);
 
   if (!set) {
     return (
@@ -68,7 +68,7 @@ const Swipe: React.FC = () => {
         <header style={styles.header}>
           <button
             style={styles.closeButton}
-            onClick={() => navigate('/')}
+            onClick={onNavigateToHome}
             onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
             onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
           >
@@ -109,7 +109,7 @@ const Swipe: React.FC = () => {
             </button>
             <button
               style={styles.homeButton}
-              onClick={() => navigate('/')}
+              onClick={onNavigateToHome}
               onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f1f5f9')}
               onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#fff')}
             >
@@ -126,7 +126,7 @@ const Swipe: React.FC = () => {
       <header style={styles.header}>
         <button
           style={styles.closeButton}
-          onClick={() => navigate('/')}
+          onClick={onNavigateToHome}
           onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
           onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
         >
