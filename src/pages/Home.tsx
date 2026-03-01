@@ -1,23 +1,34 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
 import { getAllSets, deleteSet, FlashcardSet } from '../lib/storage';
 import { exportToCSV } from '../lib/csvParser';
+import { getStreak, getTodayStats } from '../lib/studyStats';
 import ImportModal from '../components/ImportModal';
 
 interface HomeProps {
   onNavigateToCreate: () => void;
   onNavigateToSwipe: (setId: string) => void;
+  onNavigateToStats: () => void;
 }
 
-const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe }) => {
+const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNavigateToStats }) => {
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [streak, setStreak] = useState({ current: 0, longest: 0, lastStudyDate: '' });
+  const [todayStats, setTodayStats] = useState({ totalCards: 0, totalDuration: 0 });
 
   useEffect(() => {
     loadSets();
+    loadStats();
   }, []);
 
   const loadSets = () => {
     setSets(getAllSets());
+  };
+
+  const loadStats = () => {
+    setStreak(getStreak());
+    const today = getTodayStats();
+    setTodayStats({ totalCards: today.totalCards, totalDuration: today.totalDuration });
   };
 
   const handleDelete = (e: React.MouseEvent, id: string) => {
@@ -72,6 +83,14 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe }) =>
         </div>
         <div style={styles.headerButtons}>
           <button
+            style={styles.statsButton}
+            onClick={onNavigateToStats}
+            onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
+            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+          >
+            📊 Stats
+          </button>
+          <button
             style={styles.importButton}
             onClick={() => setShowImportModal(true)}
             onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
@@ -89,6 +108,17 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe }) =>
           </button>
         </div>
       </header>
+
+      {/* Streak Banner */}
+      {streak.current > 0 && (
+        <div style={styles.streakBanner} onClick={onNavigateToStats}>
+          <span style={styles.streakIcon}>🔥</span>
+          <span style={styles.streakText}>{streak.current} day streak!</span>
+          {todayStats.totalCards > 0 && (
+            <span style={styles.todayBadge}>{todayStats.totalCards} cards today</span>
+          )}
+        </div>
+      )}
 
       {sets.length > 0 && (
         <div style={styles.statsBar}>
@@ -249,6 +279,17 @@ const styles: { [key: string]: CSSProperties } = {
     display: 'flex',
     gap: '12px'
   },
+  statsButton: {
+    backgroundColor: '#fff',
+    color: '#8b5cf6',
+    border: '2px solid #8b5cf6',
+    borderRadius: '12px',
+    padding: '12px 20px',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'transform 0.2s'
+  },
   importButton: {
     backgroundColor: '#fff',
     color: '#3b82f6',
@@ -270,6 +311,36 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 600,
     cursor: 'pointer',
     transition: 'transform 0.2s'
+  },
+  streakBanner: {
+    maxWidth: '1000px',
+    margin: '0 auto 16px',
+    backgroundColor: '#fef3c7',
+    borderRadius: '12px',
+    padding: '16px 20px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    cursor: 'pointer',
+    transition: 'transform 0.2s',
+    border: '2px solid #fbbf24'
+  },
+  streakIcon: {
+    fontSize: '24px'
+  },
+  streakText: {
+    fontSize: '16px',
+    fontWeight: 600,
+    color: '#92400e',
+    flex: 1
+  },
+  todayBadge: {
+    backgroundColor: '#fff',
+    padding: '4px 12px',
+    borderRadius: '12px',
+    fontSize: '12px',
+    fontWeight: 600,
+    color: '#16a34a'
   },
   statsBar: {
     maxWidth: '1000px',

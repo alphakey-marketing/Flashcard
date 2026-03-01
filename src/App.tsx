@@ -2,46 +2,42 @@ import React, { useState } from 'react';
 import Home from './pages/Home';
 import Create from './pages/Create';
 import Swipe from './pages/Swipe';
+import Stats from './pages/Stats';
 
-type Page = 'home' | 'create' | 'swipe';
+type Page = 'home' | 'create' | 'swipe' | 'stats';
 
-function App() {
+const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
 
-  const navigateToHome = () => {
-    setCurrentPage('home');
-    setSelectedSetId(null);
-  };
-
-  const navigateToCreate = () => {
-    setCurrentPage('create');
-  };
-
+  const navigateToHome = () => setCurrentPage('home');
+  const navigateToCreate = () => setCurrentPage('create');
+  const navigateToStats = () => setCurrentPage('stats');
   const navigateToSwipe = (setId: string) => {
     setSelectedSetId(setId);
     setCurrentPage('swipe');
   };
 
   return (
-    <>
+    <div>
       {currentPage === 'home' && (
-        <Home 
+        <Home
           onNavigateToCreate={navigateToCreate}
           onNavigateToSwipe={navigateToSwipe}
+          onNavigateToStats={navigateToStats}
         />
       )}
       {currentPage === 'create' && (
         <Create onNavigateToHome={navigateToHome} />
       )}
       {currentPage === 'swipe' && selectedSetId && (
-        <Swipe 
-          setId={selectedSetId}
-          onNavigateToHome={navigateToHome}
-        />
+        <Swipe setId={selectedSetId} onNavigateToHome={navigateToHome} />
       )}
-    </>
+      {currentPage === 'stats' && (
+        <Stats onNavigateToHome={navigateToHome} />
+      )}
+    </div>
   );
-}
+};
 
 export default App;
