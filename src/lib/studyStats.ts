@@ -2,6 +2,8 @@
  * Study statistics and session tracking
  */
 
+import { storageCache } from './storageCache';
+
 export interface StudySession {
   setId: string;
   setTitle: string;
@@ -27,6 +29,7 @@ export interface StudyStreak {
 
 const SESSIONS_KEY = 'flashmind-study-sessions';
 const STREAK_KEY = 'flashmind-study-streak';
+const CACHE_TTL = 3000; // 3 seconds cache for study data
 
 /**
  * Get today's date in YYYY-MM-DD format
@@ -37,12 +40,12 @@ function getTodayDate(): string {
 }
 
 /**
- * Get all study sessions from localStorage
+ * Get all study sessions from storage (with caching)
  */
 function getAllSessions(): StudySession[] {
   try {
-    const data = localStorage.getItem(SESSIONS_KEY);
-    return data ? JSON.parse(data) : [];
+    const data = storageCache.get<StudySession[]>(SESSIONS_KEY, CACHE_TTL);
+    return data || [];
   } catch (error) {
     console.error('Error reading study sessions:', error);
     return [];
@@ -50,11 +53,11 @@ function getAllSessions(): StudySession[] {
 }
 
 /**
- * Save study sessions to localStorage
+ * Save study sessions to storage (invalidates cache)
  */
 function saveSessions(sessions: StudySession[]): void {
   try {
-    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+    storageCache.set(SESSIONS_KEY, sessions);
   } catch (error) {
     console.error('Error saving study sessions:', error);
   }
@@ -122,12 +125,12 @@ export function getRecentStats(days: number = 7): DailyStats[] {
 }
 
 /**
- * Get current study streak
+ * Get current study streak (with caching)
  */
 export function getStreak(): StudyStreak {
   try {
-    const data = localStorage.getItem(STREAK_KEY);
-    return data ? JSON.parse(data) : { current: 0, longest: 0, lastStudyDate: '' };
+    const data = storageCache.get<StudyStreak>(STREAK_KEY, CACHE_TTL);
+    return data || { current: 0, longest: 0, lastStudyDate: '' };
   } catch (error) {
     console.error('Error reading streak:', error);
     return { current: 0, longest: 0, lastStudyDate: '' };
@@ -169,7 +172,7 @@ function updateStreak(): void {
   streak.lastStudyDate = today;
 
   try {
-    localStorage.setItem(STREAK_KEY, JSON.stringify(streak));
+    storageCache.set(STREAK_KEY, streak);
   } catch (error) {
     console.error('Error saving streak:', error);
   }
