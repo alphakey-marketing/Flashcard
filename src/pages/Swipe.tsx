@@ -28,6 +28,43 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     }
   }, [setId, onNavigateToHome]);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (isFinished) return;
+
+      // Prevent shortcuts when typing in input fields
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      switch (e.key.toLowerCase()) {
+        case ' ':
+        case 'spacebar':
+          e.preventDefault();
+          setIsFlipped(!isFlipped);
+          break;
+        case '1':
+        case 'arrowleft':
+          e.preventDefault();
+          if (isFlipped) handleAgain();
+          break;
+        case '2':
+        case 'arrowright':
+          e.preventDefault();
+          if (isFlipped) handleGotIt();
+          break;
+        case 'escape':
+          e.preventDefault();
+          onNavigateToHome();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [isFlipped, isFinished, onNavigateToHome]);
+
   if (!set || !currentCard) {
     return (
       <div style={styles.container}>
@@ -162,6 +199,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           onClick={onNavigateToHome}
           onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
           onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          title="ESC to exit"
         >
           ✕
         </button>
@@ -185,7 +223,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               <>
                 <div style={styles.cardLabel}>FRONT</div>
                 <div style={styles.cardText}>{currentCard.front}</div>
-                <div style={styles.tapHint}>👆 Tap to flip</div>
+                <div style={styles.tapHint}>👆 Tap to flip (or press Space)</div>
               </>
             ) : (
               <>
@@ -199,6 +237,13 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <div style={styles.queueInfo}>
           💡 Cards remaining: {activeQueue.length} / {totalCards}
         </div>
+
+        <div style={styles.keyboardHints}>
+          <span style={styles.hint}><kbd>Space</kbd> Flip</span>
+          <span style={styles.hint}><kbd>1</kbd> or <kbd>←</kbd> Again</span>
+          <span style={styles.hint}><kbd>2</kbd> or <kbd>→</kbd> Got It</span>
+          <span style={styles.hint}><kbd>ESC</kbd> Home</span>
+        </div>
       </div>
 
       <div style={styles.actions}>
@@ -207,18 +252,22 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           onClick={handleAgain}
           onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
           onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+          disabled={!isFlipped}
         >
           <span style={styles.buttonIcon}>✕</span>
           <span>もう一度<br/>Again</span>
+          <span style={styles.buttonShortcut}>1 or ←</span>
         </button>
         <button
           style={styles.gotItButton}
           onClick={handleGotIt}
           onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
           onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+          disabled={!isFlipped}
         >
           <span style={styles.buttonIcon}>✓</span>
           <span>覚えた<br/>Got It</span>
+          <span style={styles.buttonShortcut}>2 or →</span>
         </button>
       </div>
     </div>
@@ -315,7 +364,8 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 600,
     color: '#0f172a',
     lineHeight: '1.5',
-    wordWrap: 'break-word'
+    wordWrap: 'break-word',
+    whiteSpace: 'pre-wrap'
   },
   tapHint: {
     fontSize: '14px',
@@ -330,6 +380,19 @@ const styles: { [key: string]: CSSProperties } = {
     backgroundColor: '#fff',
     borderRadius: '20px',
     border: '1px solid #e2e8f0'
+  },
+  keyboardHints: {
+    display: 'flex',
+    gap: '16px',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    fontSize: '12px',
+    color: '#94a3b8'
+  },
+  hint: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px'
   },
   actions: {
     display: 'flex',
@@ -355,7 +418,8 @@ const styles: { [key: string]: CSSProperties } = {
     justifyContent: 'center',
     gap: '8px',
     transition: 'transform 0.2s',
-    lineHeight: '1.3'
+    lineHeight: '1.3',
+    opacity: 1
   },
   gotItButton: {
     flex: 1,
@@ -373,10 +437,15 @@ const styles: { [key: string]: CSSProperties } = {
     justifyContent: 'center',
     gap: '8px',
     transition: 'transform 0.2s',
-    lineHeight: '1.3'
+    lineHeight: '1.3',
+    opacity: 1
   },
   buttonIcon: {
     fontSize: '24px'
+  },
+  buttonShortcut: {
+    fontSize: '11px',
+    opacity: 0.7
   },
   finishedContainer: {
     flex: 1,
