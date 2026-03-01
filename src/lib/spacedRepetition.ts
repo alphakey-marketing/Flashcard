@@ -10,6 +10,8 @@
  * - status: learning / reviewing / mastered
  */
 
+import { storageCache } from './storageCache';
+
 export interface CardReviewData {
   cardId: string;
   setId: string;
@@ -51,6 +53,7 @@ export type ReviewRating = 'again' | 'know_it' | 'mastered';
 
 const STORAGE_KEY_REVIEWS = 'flashcard-review-data';
 const STORAGE_KEY_SESSIONS = 'flashcard-review-sessions';
+const CACHE_TTL = 5000; // 5 seconds cache for review data
 
 // SM-2 Algorithm Constants
 const MIN_EASE_FACTOR = 1.3;
@@ -81,16 +84,16 @@ export function initializeCardReview(setId: string, cardId: string): CardReviewD
 }
 
 /**
- * Get all review data from storage
+ * Get all review data from storage (with caching)
  */
 function getReviewDataFromStorage(): CardReviewData[] {
   try {
-    const data = localStorage.getItem(STORAGE_KEY_REVIEWS);
+    const data = storageCache.get<CardReviewData[]>(STORAGE_KEY_REVIEWS, CACHE_TTL);
+    
     if (!data) return [];
     
-    const parsed = JSON.parse(data);
     // Migrate old data if needed
-    return parsed.map((item: any) => {
+    return data.map((item: any) => {
       if (!item.status) {
         // Migrate old 4-button data to new 3-button system
         return {
@@ -110,11 +113,11 @@ function getReviewDataFromStorage(): CardReviewData[] {
 }
 
 /**
- * Save review data to storage
+ * Save review data to storage (invalidates cache)
  */
 function saveReviewDataToStorage(data: CardReviewData[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY_REVIEWS, JSON.stringify(data));
+    storageCache.set(STORAGE_KEY_REVIEWS, data);
   } catch (error) {
     console.error('Error saving review data:', error);
   }
@@ -139,7 +142,7 @@ export function getCardReviewData(setId: string, cardId: string): CardReviewData
 }
 
 /**
- * Get all review data for a set
+ * Get all review data for a set (cached)
  */
 export function getSetReviewData(setId: string): CardReviewData[] {
   const allData = getReviewDataFromStorage();
@@ -377,17 +380,17 @@ export function endReviewSession(session: ReviewSession): ReviewSession {
     endTime: Date.now(),
   };
   
-  // Save to storage
+  // Save to storage (use cache for sessions too)
   try {
-    const sessions = JSON.parse(
-      localStorage.getItem(STORAGE_KEY_SESSIONS) || '[]'
-    );
+    const sessions = storageCache.get<ReviewSession[]>(STORAGE_KEY_SESSIONS) || [];
     sessions.push(endedSession);
+    
     // Keep only last 100 sessions
     if (sessions.length > 100) {
       sessions.shift();
     }
-    localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(sessions));
+    
+    storageCache.set(STORAGE_KEY_SESSIONS, sessions);
   } catch (error) {
     console.error('Error saving session:', error);
   }
@@ -403,9 +406,7 @@ export function getRecentSessions(
   limit: number = 10
 ): ReviewSession[] {
   try {
-    const sessions: ReviewSession[] = JSON.parse(
-      localStorage.getItem(STORAGE_KEY_SESSIONS) || '[]'
-    );
+    const sessions = storageCache.get<ReviewSession[]>(STORAGE_KEY_SESSIONS) || [];
     return sessions
       .filter(s => s.setId === setId)
       .sort((a, b) => b.startTime - a.startTime)
