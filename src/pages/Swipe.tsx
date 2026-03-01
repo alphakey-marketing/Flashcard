@@ -20,7 +20,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [sessionStartTime] = useState(Date.now());
   const [studyMode, setStudyMode] = useState<'due' | 'all'>('all');
-  const [reverseMode, setReverseMode] = useState(false); // NEW: Reverse mode state
+  const [reverseMode, setReverseMode] = useState(false);
 
   // Memoized queue loading logic to prevent recreating function
   const loadQueue = useCallback((flashcardSet: FlashcardSet, mode: 'due' | 'all') => {
@@ -104,13 +104,11 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     setIsFinished(false);
   }, [set, loadQueue]);
 
-  // NEW: Toggle reverse mode
   const toggleReverseMode = useCallback(() => {
     setReverseMode(prev => !prev);
     setIsFlipped(false); // Reset flip state when switching modes
   }, []);
 
-  // NEW: Get current front/back based on reverse mode
   const getCurrentFront = useCallback(() => {
     if (!currentCard) return '';
     return reverseMode ? currentCard.back : currentCard.front;
@@ -121,11 +119,30 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     return reverseMode ? currentCard.front : currentCard.back;
   }, [currentCard, reverseMode]);
 
+  // Handle parsing text into main text and example sentence
+  const renderCardText = (text: string) => {
+    if (!text) return null;
+    const parts = text.split('\n');
+    const mainText = parts[0];
+    const extraText = parts.length > 1 ? parts.slice(1).join('\n').trim() : '';
+
+    return (
+      <div style={styles.cardTextContainer}>
+        <div style={styles.cardText}>{mainText}</div>
+        {extraText && (
+          <div style={styles.exampleBox}>
+            <div style={styles.exampleLabel}>例文 (Example)</div>
+            <div style={styles.exampleText}>{extraText}</div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Memoize audio play handler
   const handlePlayAudio = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (currentCard) {
-      // In reverse mode, audio should play the Japanese text (which is now on the back)
       const japaneseText = reverseMode 
         ? currentCard.front.split(/[\n,]|\s-\s/)[0].trim()
         : currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
@@ -271,7 +288,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     color: studyMode === 'all' ? 'white' : '#64748b'
   }), [studyMode]);
 
-  // NEW: Reverse mode button style
   const reverseModeButtonStyle = useMemo(() => ({
     ...styles.reverseModeButton,
     backgroundColor: reverseMode ? '#10b981' : '#f1f5f9',
@@ -426,7 +442,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <div style={progressBarStyle} />
       </div>
 
-      {/* NEW: Reverse mode toggle button below header */}
       <div style={styles.reverseModeContainer}>
         <button
           style={reverseModeButtonStyle}
@@ -446,13 +461,13 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
             {!isFlipped ? (
               <>
                 <div style={styles.cardLabel}>FRONT</div>
-                <div style={styles.cardText}>{getCurrentFront()}</div>
+                {renderCardText(getCurrentFront())}
                 <div style={styles.tapHint}>👆 Tap to flip (or press Space)</div>
               </>
             ) : (
               <>
                 <div style={styles.cardLabel}>BACK</div>
-                <div style={styles.cardText}>{getCurrentBack()}</div>
+                {renderCardText(getCurrentBack())}
                 {audioService.isSupported() && (
                   <button style={styles.speakerButton} onClick={handlePlayAudio} title="Play audio (A)">
                     🔊 Listen
@@ -589,7 +604,6 @@ const styles: { [key: string]: CSSProperties } = {
     minWidth: '60px',
     textAlign: 'right'
   },
-  // NEW: Reverse mode styles
   reverseModeContainer: {
     padding: '12px 24px',
     backgroundColor: '#fff',
@@ -660,6 +674,14 @@ const styles: { [key: string]: CSSProperties } = {
     letterSpacing: '1px',
     marginBottom: '24px'
   },
+  // NEW STYLES FOR RENDERING CARD TEXT WITH EXAMPLES
+  cardTextContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    width: '100%',
+    gap: '24px'
+  },
   cardText: {
     fontSize: '32px',
     fontWeight: 600,
@@ -667,6 +689,29 @@ const styles: { [key: string]: CSSProperties } = {
     lineHeight: '1.5',
     wordWrap: 'break-word',
     whiteSpace: 'pre-wrap'
+  },
+  exampleBox: {
+    backgroundColor: '#f8fafc',
+    borderLeft: '4px solid #3b82f6',
+    borderRadius: '0 12px 12px 0',
+    padding: '16px',
+    width: '100%',
+    maxWidth: '450px',
+    textAlign: 'left'
+  },
+  exampleLabel: {
+    fontSize: '12px',
+    fontWeight: 700,
+    color: '#64748b',
+    marginBottom: '8px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px'
+  },
+  exampleText: {
+    fontSize: '18px',
+    color: '#334155',
+    lineHeight: '1.6',
+    fontWeight: 500
   },
   tapHint: {
     fontSize: '14px',
