@@ -173,7 +173,9 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
         <div style={styles.grid}>
           {sets.map((set) => {
             const stats = getSetStudyStats(set.id, set.cards.length);
-            const progress = set.cards.length === 0 ? 0 : (stats.masteredCards / set.cards.length) * 100;
+            // Show progress as "reviewed" (have SM-2 data) rather than just "mastered"
+            const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
+            const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
             const hasDue = stats.dueCards > 0;
             
             return (
@@ -227,7 +229,7 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
                 <div style={styles.cardFooter}>
                   <span style={styles.cardCount}>{set.cards.length} cards</span>
                   <span style={styles.progressText}>
-                    {stats.masteredCards}/{set.cards.length} mastered
+                    {reviewedCards}/{set.cards.length} reviewed
                   </span>
                 </div>
                 
