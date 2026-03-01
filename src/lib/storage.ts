@@ -10,7 +10,7 @@ export interface Card {
 export interface FlashcardSet {
   id: string;
   title: string;
-  description: string;
+  description?: string;
   cards: Card[];
   tags?: string[]; // Tags for organization
   jlptLevel?: 'N5' | 'N4' | 'N3' | 'N2' | 'N1'; // JLPT level category
@@ -26,6 +26,8 @@ export interface CardDraft {
 
 const STORAGE_KEY = 'flashcard-sets';
 const INIT_FLAG_KEY = 'flashcard-initialized';
+const TEMPLATE_VERSION_KEY = 'flashcard-template-version';
+const CURRENT_TEMPLATE_VERSION = '2.0'; // Version 2.0 includes N4 vocabulary (500 cards)
 
 // Helper function to get all sets from localStorage
 function getSetsFromStorage(): FlashcardSet[] {
@@ -48,15 +50,29 @@ function saveSetsToStorage(sets: FlashcardSet[]): void {
   }
 }
 
-// Initialize with JLPT templates on first load
+// Initialize with JLPT templates on first load or version upgrade
 function initializeTemplates(): void {
   const isInitialized = localStorage.getItem(INIT_FLAG_KEY);
+  const templateVersion = localStorage.getItem(TEMPLATE_VERSION_KEY);
   
-  if (!isInitialized) {
-    // First time loading the app - populate with templates
-    saveSetsToStorage(jlptTemplates);
+  // Check if this is first time OR if template version has changed
+  if (!isInitialized || templateVersion !== CURRENT_TEMPLATE_VERSION) {
+    const existingSets = getSetsFromStorage();
+    
+    // Get IDs of template sets (they start with 'jlpt-')
+    const templateIds = new Set(jlptTemplates.map(t => t.id));
+    
+    // Keep user-created sets (non-template sets)
+    const userSets = existingSets.filter(set => !templateIds.has(set.id) && !set.id.startsWith('jlpt-'));
+    
+    // Merge: new templates + user sets
+    const allSets = [...jlptTemplates, ...userSets];
+    
+    saveSetsToStorage(allSets);
     localStorage.setItem(INIT_FLAG_KEY, 'true');
-    console.log('Initialized with JLPT N5/N4 templates');
+    localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
+    
+    console.log(`Initialized with template version ${CURRENT_TEMPLATE_VERSION} - Added N4 vocabulary`);
   }
 }
 
@@ -138,4 +154,10 @@ export function deleteSet(id: string): void {
   const sets = getSetsFromStorage();
   const filteredSets = sets.filter(set => set.id !== id);
   saveSetsToStorage(filteredSets);
+}
+
+// Force reload templates (for debugging/admin purposes)
+export function forceReloadTemplates(): void {
+  localStorage.removeItem(TEMPLATE_VERSION_KEY);
+  initializeTemplates();
 }
