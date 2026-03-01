@@ -1,5 +1,5 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
-import { getSet, updateKnownCards, FlashcardSet } from '../lib/storage';
+import { getSet, updateKnownCards, FlashcardSet, Card } from '../lib/storage';
 
 interface SwipeProps {
   setId: string;
@@ -8,9 +8,11 @@ interface SwipeProps {
 
 const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [set, setSet] = useState<FlashcardSet | null>(null);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [activeQueue, setActiveQueue] = useState<Card[]>([]);
+  const [currentCard, setCurrentCard] = useState<Card | null>(null);
   const [isFlipped, setIsFlipped] = useState(false);
   const [knownIds, setKnownIds] = useState<Set<string>>(new Set());
+  const [totalCards, setTotalCards] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
 
   useEffect(() => {
@@ -18,12 +20,15 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     if (flashcardSet) {
       setSet(flashcardSet);
       setKnownIds(new Set(flashcardSet.knownCardIds));
+      setActiveQueue([...flashcardSet.cards]);
+      setCurrentCard(flashcardSet.cards[0] || null);
+      setTotalCards(flashcardSet.cards.length);
     } else {
       onNavigateToHome();
     }
   }, [setId, onNavigateToHome]);
 
-  if (!set) {
+  if (!set || !currentCard) {
     return (
       <div style={styles.container}>
         <p style={styles.loading}>Loading...</p>
@@ -31,31 +36,59 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     );
   }
 
-  const currentCard = set.cards[currentIndex];
-  const progress = ((currentIndex + (isFinished ? 1 : 0)) / set.cards.length) * 100;
+  const cardsCompleted = totalCards - activeQueue.length;
+  const progress = (cardsCompleted / totalCards) * 100;
 
-  const handleNext = (known: boolean) => {
+  const handleGotIt = () => {
+    // Mark card as known
     const newKnownIds = new Set(knownIds);
-    if (known) {
-      newKnownIds.add(currentCard.id);
-    } else {
-      newKnownIds.delete(currentCard.id);
-    }
+    newKnownIds.add(currentCard.id);
     setKnownIds(newKnownIds);
 
-    if (currentIndex < set.cards.length - 1) {
-      setCurrentIndex(prev => prev + 1);
-      setIsFlipped(false);
-    } else {
+    // Remove from queue
+    const newQueue = activeQueue.slice(1);
+
+    if (newQueue.length === 0) {
+      // All cards mastered!
       setIsFinished(true);
       updateKnownCards(set.id, Array.from(newKnownIds));
+    } else {
+      // Move to next card
+      setActiveQueue(newQueue);
+      setCurrentCard(newQueue[0]);
+      setIsFlipped(false);
     }
   };
 
+  const handleAgain = () => {
+    // Mark card as not known
+    const newKnownIds = new Set(knownIds);
+    newKnownIds.delete(currentCard.id);
+    setKnownIds(newKnownIds);
+
+    const newQueue = [...activeQueue];
+    const missedCard = newQueue.shift()!; // Remove from front
+
+    if (newQueue.length === 0) {
+      // Last card - put it right back
+      newQueue.push(missedCard);
+    } else {
+      // Insert randomly into remaining cards (not at the front)
+      const randomIndex = Math.floor(Math.random() * newQueue.length) + 1;
+      newQueue.splice(randomIndex, 0, missedCard);
+    }
+
+    setActiveQueue(newQueue);
+    setCurrentCard(newQueue[0]);
+    setIsFlipped(false);
+  };
+
   const handleStudyAgain = () => {
-    setCurrentIndex(0);
+    setActiveQueue([...set.cards]);
+    setCurrentCard(set.cards[0]);
     setIsFlipped(false);
     setIsFinished(false);
+    setKnownIds(new Set());
   };
 
   if (isFinished) {
@@ -80,21 +113,21 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
         <div style={styles.finishedContainer}>
           <div style={styles.finishedIcon}>🎉</div>
-          <h1 style={styles.finishedTitle}>Great Job!</h1>
-          <p style={styles.finishedText}>You've completed this set</p>
+          <h1 style={styles.finishedTitle}>完璧！Perfect!</h1>
+          <p style={styles.finishedText}>You've mastered all cards in this set!</p>
           
           <div style={styles.statsContainer}>
             <div style={styles.statBox}>
-              <div style={styles.statValue}>{knownCount}</div>
-              <div style={styles.statLabel}>Known</div>
+              <div style={styles.statValue}>{totalCount}</div>
+              <div style={styles.statLabel}>Cards</div>
             </div>
             <div style={styles.statBox}>
-              <div style={styles.statValue}>{totalCount - knownCount}</div>
-              <div style={styles.statLabel}>Review</div>
+              <div style={styles.statValue}>{knownCount}</div>
+              <div style={styles.statLabel}>Mastered</div>
             </div>
             <div style={styles.statBox}>
               <div style={styles.statValue}>{percentage}%</div>
-              <div style={styles.statLabel}>Mastery</div>
+              <div style={styles.statLabel}>Complete</div>
             </div>
           </div>
 
@@ -105,7 +138,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
               onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
             >
-              Study Again
+              もう一度 Study Again
             </button>
             <button
               style={styles.homeButton}
@@ -134,7 +167,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         </button>
         <h2 style={styles.headerTitle}>{set.title}</h2>
         <span style={styles.counter}>
-          {currentIndex + 1} / {set.cards.length}
+          {activeQueue.length} left
         </span>
       </header>
 
@@ -152,7 +185,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               <>
                 <div style={styles.cardLabel}>FRONT</div>
                 <div style={styles.cardText}>{currentCard.front}</div>
-                <div style={styles.tapHint}>Tap to flip</div>
+                <div style={styles.tapHint}>👆 Tap to flip</div>
               </>
             ) : (
               <>
@@ -162,26 +195,30 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
             )}
           </div>
         </div>
+
+        <div style={styles.queueInfo}>
+          💡 Cards remaining: {activeQueue.length} / {totalCards}
+        </div>
       </div>
 
       <div style={styles.actions}>
         <button
           style={styles.againButton}
-          onClick={() => handleNext(false)}
+          onClick={handleAgain}
           onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
           onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
         >
           <span style={styles.buttonIcon}>✕</span>
-          <span>Again</span>
+          <span>もう一度<br/>Again</span>
         </button>
         <button
           style={styles.gotItButton}
-          onClick={() => handleNext(true)}
+          onClick={handleGotIt}
           onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
           onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
         >
           <span style={styles.buttonIcon}>✓</span>
-          <span>Got It</span>
+          <span>覚えた<br/>Got It</span>
         </button>
       </div>
     </div>
@@ -214,7 +251,7 @@ const styles: { [key: string]: CSSProperties } = {
     width: '40px'
   },
   headerTitle: {
-    fontSize: '18px',
+    fontSize: '16px',
     fontWeight: 600,
     color: '#0f172a',
     margin: 0,
@@ -223,9 +260,9 @@ const styles: { [key: string]: CSSProperties } = {
   },
   counter: {
     fontSize: '14px',
-    color: '#64748b',
-    fontWeight: 500,
-    width: '40px',
+    color: '#3b82f6',
+    fontWeight: 600,
+    width: '80px',
     textAlign: 'right'
   },
   progressBarContainer: {
@@ -235,15 +272,17 @@ const styles: { [key: string]: CSSProperties } = {
   },
   progressBar: {
     height: '100%',
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#22c55e',
     transition: 'width 0.3s'
   },
   cardContainer: {
     flex: 1,
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '24px'
+    padding: '24px',
+    gap: '16px'
   },
   flashcard: {
     width: '100%',
@@ -272,16 +311,25 @@ const styles: { [key: string]: CSSProperties } = {
     marginBottom: '24px'
   },
   cardText: {
-    fontSize: '28px',
+    fontSize: '32px',
     fontWeight: 600,
     color: '#0f172a',
-    lineHeight: '1.4',
+    lineHeight: '1.5',
     wordWrap: 'break-word'
   },
   tapHint: {
     fontSize: '14px',
     color: '#94a3b8',
     marginTop: '24px'
+  },
+  queueInfo: {
+    fontSize: '14px',
+    color: '#64748b',
+    textAlign: 'center',
+    padding: '8px 16px',
+    backgroundColor: '#fff',
+    borderRadius: '20px',
+    border: '1px solid #e2e8f0'
   },
   actions: {
     display: 'flex',
@@ -297,15 +345,17 @@ const styles: { [key: string]: CSSProperties } = {
     color: '#ef4444',
     border: '2px solid #ef4444',
     borderRadius: '16px',
-    padding: '16px',
+    padding: '20px',
     fontSize: '16px',
     fontWeight: 600,
     cursor: 'pointer',
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
     gap: '8px',
-    transition: 'transform 0.2s'
+    transition: 'transform 0.2s',
+    lineHeight: '1.3'
   },
   gotItButton: {
     flex: 1,
@@ -313,18 +363,20 @@ const styles: { [key: string]: CSSProperties } = {
     color: 'white',
     border: 'none',
     borderRadius: '16px',
-    padding: '16px',
+    padding: '20px',
     fontSize: '16px',
     fontWeight: 600,
     cursor: 'pointer',
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
     gap: '8px',
-    transition: 'transform 0.2s'
+    transition: 'transform 0.2s',
+    lineHeight: '1.3'
   },
   buttonIcon: {
-    fontSize: '20px'
+    fontSize: '24px'
   },
   finishedContainer: {
     flex: 1,
@@ -360,7 +412,7 @@ const styles: { [key: string]: CSSProperties } = {
   statValue: {
     fontSize: '36px',
     fontWeight: 700,
-    color: '#0f172a',
+    color: '#22c55e',
     marginBottom: '4px'
   },
   statLabel: {

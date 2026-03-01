@@ -1,3 +1,5 @@
+import { jlptTemplates } from '../data/jlpt-templates';
+
 // Data models
 export interface Card {
   id: string;
@@ -22,6 +24,7 @@ export interface CardDraft {
 }
 
 const STORAGE_KEY = 'flashcard-sets';
+const INIT_FLAG_KEY = 'flashcard-initialized';
 
 // Helper function to get all sets from localStorage
 function getSetsFromStorage(): FlashcardSet[] {
@@ -44,8 +47,21 @@ function saveSetsToStorage(sets: FlashcardSet[]): void {
   }
 }
 
+// Initialize with JLPT templates on first load
+function initializeTemplates(): void {
+  const isInitialized = localStorage.getItem(INIT_FLAG_KEY);
+  
+  if (!isInitialized) {
+    // First time loading the app - populate with templates
+    saveSetsToStorage(jlptTemplates);
+    localStorage.setItem(INIT_FLAG_KEY, 'true');
+    console.log('Initialized with JLPT N5/N4 templates');
+  }
+}
+
 // READ operations
 export function getAllSets(): FlashcardSet[] {
+  initializeTemplates();
   return getSetsFromStorage();
 }
 
