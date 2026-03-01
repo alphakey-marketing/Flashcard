@@ -139,30 +139,72 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     );
   };
 
-  // Memoize audio play handler
+  // Play audio sequence with pauses
+  const playCardAudio = useCallback(() => {
+    if (!currentCard) return;
+
+    // We only play Japanese text, which is always stored in currentCard.front
+    const frontText = currentCard.front;
+    const parts = frontText.split('\n');
+    const mainLine = parts[0].trim();
+    const exampleText = parts.length > 1 ? parts.slice(1).join('\n').trim() : '';
+
+    let kanji = mainLine;
+    let kana = '';
+    
+    // Check for "Kanji[kana]" format
+    const bracketMatch = mainLine.match(/^(.*?)\[(.*?)\]/);
+    if (bracketMatch) {
+      kanji = bracketMatch[1].trim();
+      kana = bracketMatch[2].trim();
+    } else {
+      kanji = mainLine.split(/[\s-]/)[0].trim();
+    }
+
+    const sequence: { text: string; pauseAfter: number }[] = [];
+    
+    // If kanji and kana are present and different, play both with a 2-second wait in between
+    if (kanji && kana && kanji !== kana) {
+      sequence.push({ text: kanji, pauseAfter: 2000 });
+      sequence.push({ text: kana, pauseAfter: exampleText ? 2000 : 0 });
+    } else {
+      sequence.push({ text: kanji, pauseAfter: exampleText ? 2000 : 0 });
+    }
+
+    if (exampleText) {
+      sequence.push({ text: exampleText, pauseAfter: 0 });
+    }
+
+    audioService.playSequence(sequence);
+  }, [currentCard]);
+
+  // Memoize manual audio play handler
   const handlePlayAudio = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    if (currentCard) {
-      const japaneseText = reverseMode 
-        ? currentCard.front.split(/[\n,]|\s-\s/)[0].trim()
-        : currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
-      audioService.speak(japaneseText);
-    }
-  }, [currentCard, reverseMode]);
+    playCardAudio();
+  }, [playCardAudio]);
 
-  // Auto-play audio when card is flipped (only in normal mode, not reverse)
+  // Cleanup audio when card changes
   useEffect(() => {
-    if (isFlipped && audioEnabled && currentCard && !reverseMode) {
-      const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
-      if (japaneseText) {
-        const timeoutId = setTimeout(() => {
-          audioService.speak(japaneseText);
-        }, 200);
-        
-        return () => clearTimeout(timeoutId);
-      }
+    audioService.stop();
+  }, [currentCard]);
+
+  // Auto-play audio logic
+  useEffect(() => {
+    if (!audioEnabled || !currentCard) return;
+
+    // Recognition mode (JP -> EN): Front is Japanese -> play when NOT flipped
+    // Production mode (EN -> JP): Back is Japanese -> play when FLIPPED
+    const shouldPlay = (!reverseMode && !isFlipped) || (reverseMode && isFlipped);
+
+    if (shouldPlay) {
+      const timeoutId = setTimeout(() => {
+        playCardAudio();
+      }, 300);
+      
+      return () => clearTimeout(timeoutId);
     }
-  }, [isFlipped, audioEnabled, currentCard, reverseMode]);
+  }, [currentCard, isFlipped, reverseMode, audioEnabled, playCardAudio]);
 
   const handleReview = useCallback((rating: ReviewRating) => {
     if (!currentCard || !set) return;
@@ -215,7 +257,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     }
   }, [currentCard, set, activeQueue, sessionStartTime, totalCards]);
 
-  // Keyboard shortcuts - now includes reverse mode toggle (R key)
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (isFinished) return;
@@ -244,11 +286,8 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         case 'a':
         case 'A':
           e.preventDefault();
-          if (isFlipped && currentCard) {
-            const japaneseText = reverseMode 
-              ? currentCard.front.split(/[\n,]|\s-\s/)[0].trim()
-              : currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
-            audioService.speak(japaneseText);
+          if (currentCard) {
+            playCardAudio();
           }
           break;
         case 'r':
@@ -265,7 +304,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isFlipped, isFinished, handleReview, onNavigateToHome, currentCard, reverseMode, toggleReverseMode]);
+  }, [isFlipped, isFinished, handleReview, onNavigateToHome, currentCard, reverseMode, toggleReverseMode, playCardAudio]);
 
   const handleStudyAgain = useCallback(() => {
     if (!set) return;
@@ -674,7 +713,6 @@ const styles: { [key: string]: CSSProperties } = {
     letterSpacing: '1px',
     marginBottom: '24px'
   },
-  // NEW STYLES FOR RENDERING CARD TEXT WITH EXAMPLES
   cardTextContainer: {
     display: 'flex',
     flexDirection: 'column',
