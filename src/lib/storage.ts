@@ -5,6 +5,7 @@ export interface Card {
   id: string;
   front: string;
   back: string;
+  example?: string; // Optional example sentence in Japanese
 }
 
 export interface FlashcardSet {
@@ -22,12 +23,13 @@ export interface CardDraft {
   id: string;
   front: string;
   back: string;
+  example?: string;
 }
 
 const STORAGE_KEY = 'flashcard-sets';
 const INIT_FLAG_KEY = 'flashcard-initialized';
 const TEMPLATE_VERSION_KEY = 'flashcard-template-version';
-const CURRENT_TEMPLATE_VERSION = '2.0'; // Version 2.0 includes N4 vocabulary (500 cards)
+const CURRENT_TEMPLATE_VERSION = '3.0'; // Version 3.0 includes example sentences
 
 // Helper function to get all sets from localStorage
 function getSetsFromStorage(): FlashcardSet[] {
@@ -72,7 +74,7 @@ function initializeTemplates(): void {
     localStorage.setItem(INIT_FLAG_KEY, 'true');
     localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
     
-    console.log(`Initialized with template version ${CURRENT_TEMPLATE_VERSION} - Added N4 vocabulary`);
+    console.log(`Initialized with template version ${CURRENT_TEMPLATE_VERSION} - Added example sentences`);
   }
 }
 
@@ -127,7 +129,8 @@ export function createNewSet(
     cards: cards.map(card => ({
       id: card.id,
       front: card.front,
-      back: card.back
+      back: card.back,
+      example: card.example
     })),
     tags: tags || [],
     jlptLevel,
