@@ -20,6 +20,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [sessionStartTime] = useState(Date.now());
   const [studyMode, setStudyMode] = useState<'due' | 'all'>('all');
+  const [reverseMode, setReverseMode] = useState(false); // NEW: Reverse mode state
 
   // Memoized queue loading logic to prevent recreating function
   const loadQueue = useCallback((flashcardSet: FlashcardSet, mode: 'due' | 'all') => {
@@ -103,29 +104,48 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     setIsFinished(false);
   }, [set, loadQueue]);
 
+  // NEW: Toggle reverse mode
+  const toggleReverseMode = useCallback(() => {
+    setReverseMode(prev => !prev);
+    setIsFlipped(false); // Reset flip state when switching modes
+  }, []);
+
+  // NEW: Get current front/back based on reverse mode
+  const getCurrentFront = useCallback(() => {
+    if (!currentCard) return '';
+    return reverseMode ? currentCard.back : currentCard.front;
+  }, [currentCard, reverseMode]);
+
+  const getCurrentBack = useCallback(() => {
+    if (!currentCard) return '';
+    return reverseMode ? currentCard.front : currentCard.back;
+  }, [currentCard, reverseMode]);
+
   // Memoize audio play handler
   const handlePlayAudio = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (currentCard) {
-      const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
+      // In reverse mode, audio should play the Japanese text (which is now on the back)
+      const japaneseText = reverseMode 
+        ? currentCard.front.split(/[\n,]|\s-\s/)[0].trim()
+        : currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
       audioService.speak(japaneseText);
     }
-  }, [currentCard]);
+  }, [currentCard, reverseMode]);
 
-  // Auto-play audio when card is flipped
+  // Auto-play audio when card is flipped (only in normal mode, not reverse)
   useEffect(() => {
-    if (isFlipped && audioEnabled && currentCard) {
+    if (isFlipped && audioEnabled && currentCard && !reverseMode) {
       const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
       if (japaneseText) {
         const timeoutId = setTimeout(() => {
           audioService.speak(japaneseText);
         }, 200);
         
-        // Cleanup timeout to prevent memory leaks
         return () => clearTimeout(timeoutId);
       }
     }
-  }, [isFlipped, audioEnabled, currentCard]);
+  }, [isFlipped, audioEnabled, currentCard, reverseMode]);
 
   const handleReview = useCallback((rating: ReviewRating) => {
     if (!currentCard || !set) return;
@@ -178,7 +198,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     }
   }, [currentCard, set, activeQueue, sessionStartTime, totalCards]);
 
-  // Keyboard shortcuts - now includes all dependencies
+  // Keyboard shortcuts - now includes reverse mode toggle (R key)
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (isFinished) return;
@@ -208,9 +228,16 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         case 'A':
           e.preventDefault();
           if (isFlipped && currentCard) {
-            const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
+            const japaneseText = reverseMode 
+              ? currentCard.front.split(/[\n,]|\s-\s/)[0].trim()
+              : currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
             audioService.speak(japaneseText);
           }
+          break;
+        case 'r':
+        case 'R':
+          e.preventDefault();
+          toggleReverseMode();
           break;
         case 'Escape':
           e.preventDefault();
@@ -221,7 +248,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isFlipped, isFinished, handleReview, onNavigateToHome, currentCard]);
+  }, [isFlipped, isFinished, handleReview, onNavigateToHome, currentCard, reverseMode, toggleReverseMode]);
 
   const handleStudyAgain = useCallback(() => {
     if (!set) return;
@@ -243,6 +270,14 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     backgroundColor: studyMode === 'all' ? '#3b82f6' : '#f1f5f9',
     color: studyMode === 'all' ? 'white' : '#64748b'
   }), [studyMode]);
+
+  // NEW: Reverse mode button style
+  const reverseModeButtonStyle = useMemo(() => ({
+    ...styles.reverseModeButton,
+    backgroundColor: reverseMode ? '#10b981' : '#f1f5f9',
+    color: reverseMode ? 'white' : '#64748b',
+    border: reverseMode ? '1px solid #10b981' : '1px solid #e2e8f0'
+  }), [reverseMode]);
 
   const audioButtonStyle = useMemo(() => ({
     ...styles.audioButton,
@@ -391,19 +426,33 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <div style={progressBarStyle} />
       </div>
 
+      {/* NEW: Reverse mode toggle button below header */}
+      <div style={styles.reverseModeContainer}>
+        <button
+          style={reverseModeButtonStyle}
+          onClick={toggleReverseMode}
+          title="Toggle between JP→EN and EN→JP (Press R)"
+        >
+          <span style={styles.reverseModeIcon}>{reverseMode ? '🔄' : '➡️'}</span>
+          <span style={styles.reverseModeText}>
+            {reverseMode ? 'EN → JP (Production)' : 'JP → EN (Recognition)'}
+          </span>
+        </button>
+      </div>
+
       <div style={styles.cardContainer}>
         <div style={styles.flashcard} onClick={() => setIsFlipped(!isFlipped)}>
           <div style={styles.cardContent}>
             {!isFlipped ? (
               <>
                 <div style={styles.cardLabel}>FRONT</div>
-                <div style={styles.cardText}>{currentCard!.front}</div>
+                <div style={styles.cardText}>{getCurrentFront()}</div>
                 <div style={styles.tapHint}>👆 Tap to flip (or press Space)</div>
               </>
             ) : (
               <>
                 <div style={styles.cardLabel}>BACK</div>
-                <div style={styles.cardText}>{currentCard!.back}</div>
+                <div style={styles.cardText}>{getCurrentBack()}</div>
                 {audioService.isSupported() && (
                   <button style={styles.speakerButton} onClick={handlePlayAudio} title="Play audio (A)">
                     🔊 Listen
@@ -420,6 +469,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
         <div style={styles.keyboardHints}>
           <span style={styles.hint}><kbd style={styles.kbd}>Space</kbd> Flip</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>R</kbd> Reverse</span>
           <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> Mastered</span>
           <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> Know It</span>
           <span style={styles.hint}><kbd style={styles.kbd}>3</kbd> Again</span>
@@ -538,6 +588,31 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 600,
     minWidth: '60px',
     textAlign: 'right'
+  },
+  // NEW: Reverse mode styles
+  reverseModeContainer: {
+    padding: '12px 24px',
+    backgroundColor: '#fff',
+    borderBottom: '1px solid #e2e8f0',
+    display: 'flex',
+    justifyContent: 'center'
+  },
+  reverseModeButton: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 16px',
+    borderRadius: '8px',
+    fontSize: '13px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.2s'
+  },
+  reverseModeIcon: {
+    fontSize: '16px'
+  },
+  reverseModeText: {
+    fontSize: '13px'
   },
   progressBarContainer: {
     height: '4px',
