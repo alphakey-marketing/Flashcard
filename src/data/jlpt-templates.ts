@@ -7,6 +7,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n5-numbers-time',
     title: 'JLPT N5 - Numbers & Time',
     description: 'Essential numbers, days, months, and time expressions',
+    jlptLevel: 'N5',
     cards: [
       { id: 'n5-1', front: '一', back: 'いち - one' },
       { id: 'n5-2', front: '二', back: 'に - two' },
@@ -34,7 +35,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n5-24', front: '土曜日', back: 'どようび - Saturday' },
       { id: 'n5-25', front: '日曜日', back: 'にちようび - Sunday' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -44,6 +44,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n5-family-people',
     title: 'JLPT N5 - Family & People',
     description: 'Family members, relationships, and personal descriptions',
+    jlptLevel: 'N5',
     cards: [
       { id: 'n5-26', front: '家族', back: 'かぞく - family' },
       { id: 'n5-27', front: '父', back: 'ちち - father (my)' },
@@ -66,7 +67,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n5-44', front: '名前', back: 'なまえ - name' },
       { id: 'n5-45', front: '誕生日', back: 'たんじょうび - birthday' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -76,6 +76,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n5-food-drink',
     title: 'JLPT N5 - Food & Drink',
     description: 'Common foods, drinks, and meals',
+    jlptLevel: 'N5',
     cards: [
       { id: 'n5-46', front: '食べ物', back: 'たべもの - food' },
       { id: 'n5-47', front: '飲み物', back: 'のみもの - drink, beverage' },
@@ -98,7 +99,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n5-64', front: '店', back: 'みせ - shop, store' },
       { id: 'n5-65', front: '料理', back: 'りょうり - cooking, cuisine' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -108,6 +108,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n5-daily-life',
     title: 'JLPT N5 - Daily Life & Activities',
     description: 'Common verbs and daily activities',
+    jlptLevel: 'N5',
     cards: [
       { id: 'n5-66', front: '行く', back: 'いく - to go' },
       { id: 'n5-67', front: '来る', back: 'くる - to come' },
@@ -130,7 +131,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n5-84', front: '待つ', back: 'まつ - to wait' },
       { id: 'n5-85', front: '使う', back: 'つかう - to use' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -140,6 +140,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n5-places',
     title: 'JLPT N5 - Places & Locations',
     description: 'Common places, buildings, and locations',
+    jlptLevel: 'N5',
     cards: [
       { id: 'n5-86', front: '学校', back: 'がっこう - school' },
       { id: 'n5-87', front: '大学', back: 'だいがく - university' },
@@ -162,7 +163,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n5-104', front: '上', back: 'うえ - above, on top' },
       { id: 'n5-105', front: '下', back: 'した - below, under' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -172,6 +172,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-work-career',
     title: 'JLPT N4 - Work & Career',
     description: 'Work, jobs, career, and business vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-1', front: '仕事', back: 'しごと - work, job' },
       { id: 'n4-2', front: '会議', back: 'かいぎ - meeting, conference' },
@@ -194,7 +195,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-19', front: '成功', back: 'せいこう - success' },
       { id: 'n4-20', front: '失敗', back: 'しっぱい - failure' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -204,6 +204,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-travel',
     title: 'JLPT N4 - Travel & Transportation',
     description: 'Travel, transportation, and navigation vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-21', front: '旅行', back: 'りょこう - travel, trip' },
       { id: 'n4-22', front: '観光', back: 'かんこう - sightseeing, tourism' },
@@ -226,7 +227,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-39', front: '交差点', back: 'こうさてん - intersection' },
       { id: 'n4-40', front: '信号', back: 'しんごう - traffic light, signal' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -236,6 +236,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-health',
     title: 'JLPT N4 - Health & Body',
     description: 'Health, body parts, and medical vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-41', front: '体', back: 'からだ - body' },
       { id: 'n4-42', front: '頭', back: 'あたま - head' },
@@ -258,7 +259,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-59', front: '疲れる', back: 'つかれる - to get tired' },
       { id: 'n4-60', front: '元気', back: 'げんき - healthy, energetic' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -268,6 +268,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-weather-nature',
     title: 'JLPT N4 - Weather & Nature',
     description: 'Weather, seasons, and nature vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-61', front: '天気', back: 'てんき - weather' },
       { id: 'n4-62', front: '晴れ', back: 'はれ - clear weather, sunny' },
@@ -290,7 +291,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-79', front: '森', back: 'もり - forest' },
       { id: 'n4-80', front: '花', back: 'はな - flower' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -300,6 +300,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-technology',
     title: 'JLPT N4 - Technology & Communication',
     description: 'Technology, internet, and communication vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-81', front: '電話', back: 'でんわ - telephone' },
       { id: 'n4-82', front: 'スマホ', back: 'スマホ - smartphone' },
@@ -322,7 +323,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-99', front: 'バッテリー', back: 'バッテリー - battery' },
       { id: 'n4-100', front: 'データ', back: 'データ - data' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -334,6 +334,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-verbs-actions',
     title: 'JLPT N4 - Verbs: Actions & Movement',
     description: 'Common N4 action verbs and movement vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-101', front: '開ける', back: 'あける - to open' },
       { id: 'n4-102', front: '閉める', back: 'しめる - to close' },
@@ -356,7 +357,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-119', front: '歩く', back: 'あるく - to walk' },
       { id: 'n4-120', front: '止まる', back: 'とまる - to stop (intransitive)' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -366,6 +366,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-adjectives',
     title: 'JLPT N4 - Adjectives & Descriptions',
     description: 'Important N4 adjectives for describing things',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-121', front: '新しい', back: 'あたらしい - new' },
       { id: 'n4-122', front: '古い', back: 'ふるい - old' },
@@ -388,7 +389,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-139', front: '正しい', back: 'ただしい - correct, right' },
       { id: 'n4-140', front: '間違い', back: 'まちがい - mistake, wrong' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -398,6 +398,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-emotions',
     title: 'JLPT N4 - Emotions & Feelings',
     description: 'Expressing emotions, feelings, and states of mind',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-141', front: '嬉しい', back: 'うれしい - happy, glad' },
       { id: 'n4-142', front: '楽しい', back: 'たのしい - fun, enjoyable' },
@@ -420,7 +421,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-159', front: '気分', back: 'きぶん - mood, feeling' },
       { id: 'n4-160', front: '満足', back: 'まんぞく - satisfaction' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -430,6 +430,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-thinking',
     title: 'JLPT N4 - Thinking & Opinion',
     description: 'Expressing thoughts, opinions, and mental activities',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-161', front: '考える', back: 'かんがえる - to think, consider' },
       { id: 'n4-162', front: '思う', back: 'おもう - to think, feel' },
@@ -452,7 +453,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-179', front: '注意', back: 'ちゅうい - attention, caution' },
       { id: 'n4-180', front: '集中', back: 'しゅうちゅう - concentration' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -462,6 +462,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-household',
     title: 'JLPT N4 - Daily Necessities & Household',
     description: 'Household items, furniture, and daily necessities',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-181', front: '机', back: 'つくえ - desk' },
       { id: 'n4-182', front: '椅子', back: 'いす - chair' },
@@ -484,7 +485,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-199', front: '電気', back: 'でんき - electricity, light' },
       { id: 'n4-200', front: '水道', back: 'すいどう - water supply' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -494,6 +494,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-clothing',
     title: 'JLPT N4 - Clothing & Fashion',
     description: 'Clothes, accessories, and fashion vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-201', front: '服', back: 'ふく - clothes' },
       { id: 'n4-202', front: 'シャツ', back: 'シャツ - shirt' },
@@ -516,7 +517,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-219', front: '脱ぐ', back: 'ぬぐ - to take off (clothes)' },
       { id: 'n4-220', front: 'サイズ', back: 'サイズ - size' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -526,6 +526,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-education',
     title: 'JLPT N4 - Education & Learning',
     description: 'School, learning, and academic vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-221', front: '授業', back: 'じゅぎょう - class, lesson' },
       { id: 'n4-222', front: '宿題', back: 'しゅくだい - homework' },
@@ -548,7 +549,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-239', front: '予習', back: 'よしゅう - preparation (for class)' },
       { id: 'n4-240', front: '質問', back: 'しつもん - question' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -558,6 +558,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-shopping',
     title: 'JLPT N4 - Shopping & Money',
     description: 'Shopping, money, and commerce vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-241', front: 'お金', back: 'おかね - money' },
       { id: 'n4-242', front: '現金', back: 'げんきん - cash' },
@@ -580,7 +581,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-259', front: '市場', back: 'いちば - market' },
       { id: 'n4-260', front: '交換', back: 'こうかん - exchange' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -590,6 +590,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-entertainment',
     title: 'JLPT N4 - Entertainment & Hobbies',
     description: 'Hobbies, entertainment, and leisure activities',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-261', front: '趣味', back: 'しゅみ - hobby' },
       { id: 'n4-262', front: '映画', back: 'えいが - movie' },
@@ -612,7 +613,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-279', front: '踊る', back: 'おどる - to dance' },
       { id: 'n4-280', front: '遊ぶ', back: 'あそぶ - to play, hang out' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -622,6 +622,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-society',
     title: 'JLPT N4 - Society & Culture',
     description: 'Social relationships, culture, and society',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-281', front: '社会', back: 'しゃかい - society' },
       { id: 'n4-282', front: '文化', back: 'ぶんか - culture' },
@@ -644,7 +645,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-299', front: '影響', back: 'えいきょう - influence, effect' },
       { id: 'n4-300', front: '関係', back: 'かんけい - relationship, connection' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -654,6 +654,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-time-frequency',
     title: 'JLPT N4 - Time & Frequency',
     description: 'Time expressions, frequency, and duration',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-301', front: '先週', back: 'せんしゅう - last week' },
       { id: 'n4-302', front: '今週', back: 'こんしゅう - this week' },
@@ -676,7 +677,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-319', front: '終わり', back: 'おわり - end, ending' },
       { id: 'n4-320', front: 'いつも', back: 'いつも - always' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -686,6 +686,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-quantity',
     title: 'JLPT N4 - Quantity & Degree',
     description: 'Expressing quantity, degree, and comparison',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-321', front: '全部', back: 'ぜんぶ - all, everything' },
       { id: 'n4-322', front: '全て', back: 'すべて - all, everything' },
@@ -708,7 +709,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-339', front: 'ちょっと', back: 'ちょっと - a little, somewhat' },
       { id: 'n4-340', front: 'もっと', back: 'もっと - more' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -718,6 +718,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-connection',
     title: 'JLPT N4 - Connection & Transition',
     description: 'Conjunctions, connectors, and transition words',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-341', front: 'そして', back: 'そして - and, then' },
       { id: 'n4-342', front: 'それで', back: 'それで - so, therefore' },
@@ -740,7 +741,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-359', front: '要するに', back: 'ようするに - in short, in summary' },
       { id: 'n4-360', front: 'とにかく', back: 'とにかく - anyway, in any case' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -750,6 +750,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-changes',
     title: 'JLPT N4 - Changes & Results',
     description: 'Changes, transformations, and resulting states',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-361', front: '変わる', back: 'かわる - to change (intransitive)' },
       { id: 'n4-362', front: '変える', back: 'かえる - to change (transitive)' },
@@ -772,7 +773,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-379', front: '状態', back: 'じょうたい - state, condition' },
       { id: 'n4-380', front: '様子', back: 'ようす - appearance, situation' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -782,6 +782,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-communication',
     title: 'JLPT N4 - Communication & Expression',
     description: 'Speaking, writing, and communication verbs',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-381', front: '伝える', back: 'つたえる - to convey, tell' },
       { id: 'n4-382', front: '説明', back: 'せつめい - explanation' },
@@ -804,7 +805,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-399', front: '意味', back: 'いみ - meaning' },
       { id: 'n4-400', front: '表現', back: 'ひょうげん - expression' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -814,6 +814,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-existence',
     title: 'JLPT N4 - Existence & Location',
     description: 'Existence, location, and position vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-401', front: 'いる', back: 'いる - to exist (animate)' },
       { id: 'n4-402', front: 'ある', back: 'ある - to exist (inanimate)' },
@@ -836,7 +837,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-419', front: '近く', back: 'ちかく - near, nearby' },
       { id: 'n4-420', front: '遠く', back: 'とおく - far, distant' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -846,6 +846,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-senses',
     title: 'JLPT N4 - Senses & Perception',
     description: 'Five senses and perception vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-421', front: '見える', back: 'みえる - to be visible, can see' },
       { id: 'n4-422', front: '聞こえる', back: 'きこえる - to be audible, can hear' },
@@ -868,7 +869,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-439', front: '暗い', back: 'くらい - dark' },
       { id: 'n4-440', front: '色', back: 'いろ - color' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -878,6 +878,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-ability',
     title: 'JLPT N4 - Ability & Possibility',
     description: 'Expressing ability, possibility, and permission',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-441', front: '出来る', back: 'できる - can do, be able to' },
       { id: 'n4-442', front: '可能', back: 'かのう - possible' },
@@ -900,7 +901,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-459', front: '大丈夫', back: 'だいじょうぶ - okay, all right' },
       { id: 'n4-460', front: '構わない', back: 'かまわない - don\'t mind' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -910,6 +910,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-safety',
     title: 'JLPT N4 - Safety & Problems',
     description: 'Safety, accidents, problems, and emergencies',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-461', front: '安全', back: 'あんぜん - safety' },
       { id: 'n4-462', front: '危険', back: 'きけん - danger' },
@@ -932,7 +933,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-479', front: '遅れる', back: 'おくれる - to be late, delayed' },
       { id: 'n4-480', front: '急ぐ', back: 'いそぐ - to hurry' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
@@ -942,6 +942,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-abstract',
     title: 'JLPT N4 - Abstract Concepts',
     description: 'Abstract nouns and conceptual vocabulary',
+    jlptLevel: 'N4',
     cards: [
       { id: 'n4-481', front: '理由', back: 'りゆう - reason' },
       { id: 'n4-482', front: '目的', back: 'もくてき - purpose, goal' },
@@ -964,7 +965,6 @@ export const jlptTemplates: FlashcardSet[] = [
       { id: 'n4-499', front: '原則', back: 'げんそく - principle' },
       { id: 'n4-500', front: '基準', back: 'きじゅん - standard, criterion' },
     ],
-    knownCardIds: [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   },
