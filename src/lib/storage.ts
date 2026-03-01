@@ -1,0 +1,112 @@
+// Data models
+export interface Card {
+  id: string;
+  front: string;
+  back: string;
+}
+
+export interface FlashcardSet {
+  id: string;
+  title: string;
+  description: string;
+  cards: Card[];
+  knownCardIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CardDraft {
+  id: string;
+  front: string;
+  back: string;
+}
+
+const STORAGE_KEY = 'flashcard-sets';
+
+// Helper function to get all sets from localStorage
+function getSetsFromStorage(): FlashcardSet[] {
+  try {
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (!data) return [];
+    return JSON.parse(data);
+  } catch (error) {
+    console.error('Error reading from localStorage:', error);
+    return [];
+  }
+}
+
+// Helper function to save sets to localStorage
+function saveSetsToStorage(sets: FlashcardSet[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sets));
+  } catch (error) {
+    console.error('Error writing to localStorage:', error);
+  }
+}
+
+// READ operations
+export function getAllSets(): FlashcardSet[] {
+  return getSetsFromStorage();
+}
+
+export function getSet(id: string): FlashcardSet | undefined {
+  const sets = getSetsFromStorage();
+  return sets.find(set => set.id === id);
+}
+
+// CREATE operation
+export function createNewSet(
+  title: string,
+  description: string,
+  cards: CardDraft[]
+): FlashcardSet {
+  const now = Date.now();
+  return {
+    id: crypto.randomUUID(),
+    title,
+    description,
+    cards: cards.map(card => ({
+      id: card.id,
+      front: card.front,
+      back: card.back
+    })),
+    knownCardIds: [],
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+export function saveSet(set: FlashcardSet): void {
+  const sets = getSetsFromStorage();
+  const existingIndex = sets.findIndex(s => s.id === set.id);
+  
+  if (existingIndex >= 0) {
+    sets[existingIndex] = { ...set, updatedAt: Date.now() };
+  } else {
+    sets.push(set);
+  }
+  
+  saveSetsToStorage(sets);
+}
+
+// UPDATE operation
+export function updateKnownCards(setId: string, knownCardIds: string[]): void {
+  const sets = getSetsFromStorage();
+  const setIndex = sets.findIndex(s => s.id === setId);
+  
+  if (setIndex >= 0) {
+    sets[setIndex] = {
+      ...sets[setIndex],
+      knownCardIds,
+      updatedAt: Date.now()
+    };
+    saveSetsToStorage(sets);
+  }
+}
+
+// DELETE operation
+export function deleteSet(id: string): void {
+  const sets = getSetsFromStorage();
+  const filteredSets = sets.filter(set => set.id !== id);
+  saveSetsToStorage(filteredSets);
+}
