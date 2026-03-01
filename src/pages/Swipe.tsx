@@ -178,7 +178,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           break;
         case '1':
           e.preventDefault();
-          if (isFlipped) handleReview('again');
+          if (isFlipped) handleReview('mastered');
           break;
         case '2':
           e.preventDefault();
@@ -186,7 +186,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           break;
         case '3':
           e.preventDefault();
-          if (isFlipped) handleReview('mastered');
+          if (isFlipped) handleReview('again');
           break;
         case 'a':
         case 'A':
@@ -388,21 +388,21 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
         <div style={styles.keyboardHints}>
           <span style={styles.hint}><kbd style={styles.kbd}>Space</kbd> Flip</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> Again</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> Mastered</span>
           <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> Know It</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>3</kbd> Mastered</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>3</kbd> Again</span>
           <span style={styles.hint}><kbd style={styles.kbd}>A</kbd> Audio</span>
         </div>
       </div>
 
       <div style={styles.actions}>
         <button
-          style={{ ...styles.reviewBtn, ...styles.btnAgain, opacity: !isFlipped ? 0.5 : 1 }}
-          onClick={() => { if (isFlipped) handleReview('again'); }}
+          style={{ ...styles.reviewBtn, ...styles.btnMastered, opacity: !isFlipped ? 0.5 : 1 }}
+          onClick={() => { if (isFlipped) handleReview('mastered'); }}
           disabled={!isFlipped}
         >
-          <span style={styles.emoji}>😰</span>
-          <span>Again</span>
+          <span style={styles.emoji}>🎯</span>
+          <span>Mastered</span>
           <span style={styles.buttonShortcut}>1</span>
         </button>
         <button
@@ -415,12 +415,12 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           <span style={styles.buttonShortcut}>2</span>
         </button>
         <button
-          style={{ ...styles.reviewBtn, ...styles.btnMastered, opacity: !isFlipped ? 0.5 : 1 }}
-          onClick={() => { if (isFlipped) handleReview('mastered'); }}
+          style={{ ...styles.reviewBtn, ...styles.btnAgain, opacity: !isFlipped ? 0.5 : 1 }}
+          onClick={() => { if (isFlipped) handleReview('again'); }}
           disabled={!isFlipped}
         >
-          <span style={styles.emoji}>🎯</span>
-          <span>Mastered</span>
+          <span style={styles.emoji}>😰</span>
+          <span>Again</span>
           <span style={styles.buttonShortcut}>3</span>
         </button>
       </div>
