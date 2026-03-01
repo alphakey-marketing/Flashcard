@@ -2,7 +2,7 @@ import React, { useState, useEffect, CSSProperties, useCallback } from 'react';
 import { getSet, FlashcardSet, Card } from '../lib/storage';
 import { audioService } from '../lib/audioService';
 import { recordSession } from '../lib/studyStats';
-import { saveCardReview, ReviewRating, getDueCards } from '../lib/spacedRepetition';
+import { saveCardReview, ReviewRating, getDueCards, getSetReviewData } from '../lib/spacedRepetition';
 
 interface SwipeProps {
   setId: string;
@@ -19,40 +19,65 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [isFinished, setIsFinished] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [sessionStartTime] = useState(Date.now());
+  const [studyMode, setStudyMode] = useState<'due' | 'all'>('due');
 
   useEffect(() => {
     const flashcardSet = getSet(setId);
     if (flashcardSet) {
       setSet(flashcardSet);
-      
-      // We could filter by getDueCards, but for now we'll review all or just due ones.
-      // Let's mix due cards first, then new cards.
-      // For simplicity, let's load all cards but we'll apply the SRS algorithm to reviews.
-      const dueCardsData = getDueCards(setId);
-      const dueCardIds = new Set(dueCardsData.map(d => d.cardId));
-      
-      // Sort so due cards come first
-      const sortedCards = [...flashcardSet.cards].sort((a, b) => {
-        const aDue = dueCardIds.has(a.id) ? -1 : 1;
-        const bDue = dueCardIds.has(b.id) ? -1 : 1;
-        return aDue - bDue;
-      });
-
-      setActiveQueue(sortedCards);
-      setCurrentCard(sortedCards[0] || null);
-      setTotalCards(sortedCards.length);
+      loadQueue(flashcardSet, 'due');
     } else {
       onNavigateToHome();
     }
   }, [setId, onNavigateToHome]);
 
+  const loadQueue = (flashcardSet: FlashcardSet, mode: 'due' | 'all') => {
+    const dueCardsData = getDueCards(setId);
+    const dueCardIds = new Set(dueCardsData.map(d => d.cardId));
+    
+    let queueCards: Card[];
+    
+    if (mode === 'due') {
+      // Only due cards
+      queueCards = flashcardSet.cards.filter(card => dueCardIds.has(card.id));
+      
+      // If no due cards, check if we have any new cards (never studied)
+      if (queueCards.length === 0) {
+        const reviewedData = getSetReviewData(setId);
+        const reviewedIds = new Set(reviewedData.map(d => d.cardId));
+        const newCards = flashcardSet.cards.filter(card => !reviewedIds.has(card.id));
+        
+        if (newCards.length > 0) {
+          // Start with first 10 new cards
+          queueCards = newCards.slice(0, 10);
+        }
+      }
+    } else {
+      // All cards, but due cards first
+      const dueCards = flashcardSet.cards.filter(card => dueCardIds.has(card.id));
+      const otherCards = flashcardSet.cards.filter(card => !dueCardIds.has(card.id));
+      queueCards = [...dueCards, ...otherCards];
+    }
+
+    setActiveQueue(queueCards);
+    setCurrentCard(queueCards[0] || null);
+    setTotalCards(queueCards.length);
+    setStudyMode(mode);
+  };
+
+  const switchMode = (mode: 'due' | 'all') => {
+    if (!set) return;
+    loadQueue(set, mode);
+    setSessionStats({ reviewed: 0, correct: 0 });
+    setIsFlipped(false);
+    setIsFinished(false);
+  };
+
   // Auto-play audio when card is flipped
   useEffect(() => {
     if (isFlipped && audioEnabled && currentCard) {
-      // Extract Japanese text from the front (before any special characters)
       const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
       if (japaneseText) {
-        // Small delay to feel more natural
         setTimeout(() => {
           audioService.speak(japaneseText);
         }, 200);
@@ -73,25 +98,23 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     }));
 
     const newQueue = [...activeQueue];
-    const reviewedCard = newQueue.shift()!; // Remove from front
+    const reviewedCard = newQueue.shift()!;
 
     if (rating === 'again') {
-      // If they forgot it, put it back in the queue
+      // Reinsert card a few positions back
       if (newQueue.length === 0) {
         newQueue.push(reviewedCard);
       } else {
-        // Insert a few cards down, or at the end if few cards left
-        const insertIndex = Math.min(newQueue.length, 3);
+        const insertIndex = Math.min(newQueue.length, Math.floor(Math.random() * 3) + 2);
         newQueue.splice(insertIndex, 0, reviewedCard);
       }
     }
 
     if (newQueue.length === 0) {
-      // All done!
+      // Session complete
       setIsFinished(true);
       
       const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
-      // We still record to basic study stats
       recordSession({
         setId: set.id,
         setTitle: set.title,
@@ -126,7 +149,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       }
 
       switch (e.key) {
-        case ' ': // Spacebar
+        case ' ':
           e.preventDefault();
           setIsFlipped(prev => !prev);
           break;
@@ -164,14 +187,13 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   const handleStudyAgain = () => {
     if (!set) return;
-    setActiveQueue([...set.cards]);
-    setCurrentCard(set.cards[0]);
+    loadQueue(set, studyMode);
     setIsFlipped(false);
     setIsFinished(false);
     setSessionStats({ reviewed: 0, correct: 0 });
   };
 
-  if (!set || !currentCard) {
+  if (!set) {
     return (
       <div style={styles.container}>
         <p style={styles.loading}>Loading...</p>
@@ -179,9 +201,45 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     );
   }
 
-  const cardsCompleted = totalCards - activeQueue.filter(c => !activeQueue.slice(activeQueue.indexOf(c) + 1).includes(c)).length;
-  // Approximation of progress
-  const progress = Math.min(100, Math.max(0, (cardsCompleted / totalCards) * 100));
+  // No cards in queue
+  if (!currentCard && !isFinished) {
+    const dueCardsData = getDueCards(setId);
+    const reviewedData = getSetReviewData(setId);
+    const allReviewed = reviewedData.length === set.cards.length;
+    
+    return (
+      <div style={styles.container}>
+        <header style={styles.header}>
+          <button style={styles.closeButton} onClick={onNavigateToHome}>✕</button>
+          <h2 style={styles.headerTitle}>{set.title}</h2>
+          <div style={{ width: '40px' }} />
+        </header>
+
+        <div style={styles.finishedContainer}>
+          <div style={styles.finishedIcon}>✅</div>
+          <h1 style={styles.finishedTitle}>All caught up!</h1>
+          <p style={styles.finishedText}>
+            {allReviewed 
+              ? 'You\'ve reviewed all cards. Come back later for more reviews!' 
+              : 'No cards due right now. Great work!'}
+          </p>
+          
+          <div style={styles.finishedButtons}>
+            {set.cards.length > reviewedData.length && (
+              <button style={styles.studyAgainButton} onClick={() => switchMode('all')}>
+                Study All Cards
+              </button>
+            )}
+            <button style={styles.homeButton} onClick={onNavigateToHome}>
+              Back to Home
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const progress = totalCards > 0 ? Math.min(100, ((totalCards - activeQueue.length) / totalCards) * 100) : 0;
 
   if (isFinished) {
     const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
@@ -206,10 +264,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           
           <div style={styles.statsContainer}>
             <div style={styles.statBox}>
-              <div style={styles.statValue}>{totalCards}</div>
-              <div style={styles.statLabel}>Cards</div>
-            </div>
-            <div style={styles.statBox}>
               <div style={styles.statValue}>{sessionStats.reviewed}</div>
               <div style={styles.statLabel}>Reviews</div>
             </div>
@@ -227,8 +281,16 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
           <div style={styles.finishedButtons}>
             <button style={styles.studyAgainButton} onClick={handleStudyAgain}>
-              Review Again
+              Study Again
             </button>
+            {studyMode === 'due' && (
+              <button 
+                style={{ ...styles.homeButton, backgroundColor: '#3b82f6', color: 'white' }} 
+                onClick={() => switchMode('all')}
+              >
+                Study All Cards
+              </button>
+            )}
             <button style={styles.homeButton} onClick={onNavigateToHome}>
               Back to Home
             </button>
@@ -244,6 +306,28 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <button style={styles.closeButton} onClick={onNavigateToHome} title="ESC to exit">✕</button>
         <h2 style={styles.headerTitle}>{set.title}</h2>
         <div style={styles.audioToggle}>
+          <div style={styles.modeToggle}>
+            <button
+              style={{
+                ...styles.modeButton,
+                backgroundColor: studyMode === 'due' ? '#3b82f6' : '#f1f5f9',
+                color: studyMode === 'due' ? 'white' : '#64748b'
+              }}
+              onClick={() => switchMode('due')}
+            >
+              Due
+            </button>
+            <button
+              style={{
+                ...styles.modeButton,
+                backgroundColor: studyMode === 'all' ? '#3b82f6' : '#f1f5f9',
+                color: studyMode === 'all' ? 'white' : '#64748b'
+              }}
+              onClick={() => switchMode('all')}
+            >
+              All
+            </button>
+          </div>
           <button
             style={{ ...styles.audioButton, opacity: audioEnabled ? 1 : 0.4 }}
             onClick={() => setAudioEnabled(!audioEnabled)}
@@ -265,13 +349,13 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
             {!isFlipped ? (
               <>
                 <div style={styles.cardLabel}>FRONT</div>
-                <div style={styles.cardText}>{currentCard.front}</div>
+                <div style={styles.cardText}>{currentCard!.front}</div>
                 <div style={styles.tapHint}>👆 Tap to flip (or press Space)</div>
               </>
             ) : (
               <>
                 <div style={styles.cardLabel}>BACK</div>
-                <div style={styles.cardText}>{currentCard.back}</div>
+                <div style={styles.cardText}>{currentCard!.back}</div>
                 {audioService.isSupported() && (
                   <button style={styles.speakerButton} onClick={handlePlayAudio} title="Play audio (A)">
                     🔊 Listen
@@ -370,6 +454,22 @@ const styles: { [key: string]: CSSProperties } = {
     display: 'flex',
     alignItems: 'center',
     gap: '12px'
+  },
+  modeToggle: {
+    display: 'flex',
+    gap: '4px',
+    backgroundColor: '#f1f5f9',
+    borderRadius: '8px',
+    padding: '2px'
+  },
+  modeButton: {
+    border: 'none',
+    padding: '6px 12px',
+    borderRadius: '6px',
+    fontSize: '12px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'all 0.2s'
   },
   audioButton: {
     background: 'none',
@@ -510,10 +610,10 @@ const styles: { [key: string]: CSSProperties } = {
     transition: 'all 0.2s',
     color: '#fff'
   },
-  btnAgain: { backgroundColor: '#ef4444' }, // Red
-  btnHard: { backgroundColor: '#f97316' },  // Orange
-  btnGood: { backgroundColor: '#22c55e' },  // Green
-  btnEasy: { backgroundColor: '#3b82f6' },  // Blue
+  btnAgain: { backgroundColor: '#ef4444' },
+  btnHard: { backgroundColor: '#f97316' },
+  btnGood: { backgroundColor: '#22c55e' },
+  btnEasy: { backgroundColor: '#3b82f6' },
   buttonShortcut: {
     fontSize: '11px',
     opacity: 0.8,
@@ -540,7 +640,8 @@ const styles: { [key: string]: CSSProperties } = {
   finishedText: {
     fontSize: '16px',
     color: '#64748b',
-    marginBottom: '32px'
+    marginBottom: '32px',
+    textAlign: 'center'
   },
   statsContainer: {
     display: 'flex',
