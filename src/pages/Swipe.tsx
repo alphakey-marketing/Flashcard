@@ -1,4 +1,4 @@
-import React, { useState, useEffect, CSSProperties } from 'react';
+import React, { useState, useEffect, CSSProperties, useCallback } from 'react';
 import { getSet, updateKnownCards, FlashcardSet, Card } from '../lib/storage';
 
 interface SwipeProps {
@@ -28,55 +28,9 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     }
   }, [setId, onNavigateToHome]);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      if (isFinished) return;
+  const handleGotIt = useCallback(() => {
+    if (!currentCard || !set) return;
 
-      // Prevent shortcuts when typing in input fields
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-
-      switch (e.key.toLowerCase()) {
-        case ' ':
-        case 'spacebar':
-          e.preventDefault();
-          setIsFlipped(!isFlipped);
-          break;
-        case '1':
-        case 'arrowleft':
-          e.preventDefault();
-          if (isFlipped) handleAgain();
-          break;
-        case '2':
-        case 'arrowright':
-          e.preventDefault();
-          if (isFlipped) handleGotIt();
-          break;
-        case 'escape':
-          e.preventDefault();
-          onNavigateToHome();
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isFlipped, isFinished, onNavigateToHome]);
-
-  if (!set || !currentCard) {
-    return (
-      <div style={styles.container}>
-        <p style={styles.loading}>Loading...</p>
-      </div>
-    );
-  }
-
-  const cardsCompleted = totalCards - activeQueue.length;
-  const progress = (cardsCompleted / totalCards) * 100;
-
-  const handleGotIt = () => {
     // Mark card as known
     const newKnownIds = new Set(knownIds);
     newKnownIds.add(currentCard.id);
@@ -95,9 +49,11 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       setCurrentCard(newQueue[0]);
       setIsFlipped(false);
     }
-  };
+  }, [currentCard, set, knownIds, activeQueue]);
 
-  const handleAgain = () => {
+  const handleAgain = useCallback(() => {
+    if (!currentCard) return;
+
     // Mark card as not known
     const newKnownIds = new Set(knownIds);
     newKnownIds.delete(currentCard.id);
@@ -118,9 +74,46 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     setActiveQueue(newQueue);
     setCurrentCard(newQueue[0]);
     setIsFlipped(false);
-  };
+  }, [currentCard, knownIds, activeQueue]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (isFinished) return;
+
+      // Prevent shortcuts when typing in input fields (though shouldn't be any here, good practice)
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      switch (e.key) {
+        case ' ': // Spacebar
+          e.preventDefault();
+          setIsFlipped(prev => !prev);
+          break;
+        case '1':
+        case 'ArrowLeft':
+          e.preventDefault();
+          if (isFlipped) handleAgain();
+          break;
+        case '2':
+        case 'ArrowRight':
+          e.preventDefault();
+          if (isFlipped) handleGotIt();
+          break;
+        case 'Escape':
+          e.preventDefault();
+          onNavigateToHome();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [isFlipped, isFinished, handleAgain, handleGotIt, onNavigateToHome]);
 
   const handleStudyAgain = () => {
+    if (!set) return;
     setActiveQueue([...set.cards]);
     setCurrentCard(set.cards[0]);
     setIsFlipped(false);
@@ -128,10 +121,20 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     setKnownIds(new Set());
   };
 
+  if (!set || !currentCard) {
+    return (
+      <div style={styles.container}>
+        <p style={styles.loading}>Loading...</p>
+      </div>
+    );
+  }
+
+  const cardsCompleted = totalCards - activeQueue.length;
+  const progress = (cardsCompleted / totalCards) * 100;
+
   if (isFinished) {
     const knownCount = knownIds.size;
-    const totalCount = set.cards.length;
-    const percentage = Math.round((knownCount / totalCount) * 100);
+    const percentage = Math.round((knownCount / totalCards) * 100);
 
     return (
       <div style={styles.container}>
@@ -155,7 +158,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           
           <div style={styles.statsContainer}>
             <div style={styles.statBox}>
-              <div style={styles.statValue}>{totalCount}</div>
+              <div style={styles.statValue}>{totalCards}</div>
               <div style={styles.statLabel}>Cards</div>
             </div>
             <div style={styles.statBox}>
@@ -239,31 +242,49 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         </div>
 
         <div style={styles.keyboardHints}>
-          <span style={styles.hint}><kbd>Space</kbd> Flip</span>
-          <span style={styles.hint}><kbd>1</kbd> or <kbd>←</kbd> Again</span>
-          <span style={styles.hint}><kbd>2</kbd> or <kbd>→</kbd> Got It</span>
-          <span style={styles.hint}><kbd>ESC</kbd> Home</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>Space</kbd> Flip</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> or <kbd style={styles.kbd}>←</kbd> Again</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> or <kbd style={styles.kbd}>→</kbd> Got It</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>ESC</kbd> Home</span>
         </div>
       </div>
 
       <div style={styles.actions}>
         <button
-          style={styles.againButton}
-          onClick={handleAgain}
-          onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
-          onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-          disabled={!isFlipped}
+          style={{
+            ...styles.againButton,
+            opacity: !isFlipped ? 0.5 : 1,
+            cursor: !isFlipped ? 'not-allowed' : 'pointer',
+          }}
+          onClick={() => {
+            if (isFlipped) handleAgain();
+          }}
+          onMouseEnter={(e) => {
+            if (isFlipped) e.currentTarget.style.transform = 'scale(1.05)';
+          }}
+          onMouseLeave={(e) => {
+            if (isFlipped) e.currentTarget.style.transform = 'scale(1)';
+          }}
         >
           <span style={styles.buttonIcon}>✕</span>
           <span>もう一度<br/>Again</span>
           <span style={styles.buttonShortcut}>1 or ←</span>
         </button>
         <button
-          style={styles.gotItButton}
-          onClick={handleGotIt}
-          onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
-          onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-          disabled={!isFlipped}
+          style={{
+            ...styles.gotItButton,
+            opacity: !isFlipped ? 0.5 : 1,
+            cursor: !isFlipped ? 'not-allowed' : 'pointer',
+          }}
+          onClick={() => {
+            if (isFlipped) handleGotIt();
+          }}
+          onMouseEnter={(e) => {
+            if (isFlipped) e.currentTarget.style.transform = 'scale(1.05)';
+          }}
+          onMouseLeave={(e) => {
+            if (isFlipped) e.currentTarget.style.transform = 'scale(1)';
+          }}
         >
           <span style={styles.buttonIcon}>✓</span>
           <span>覚えた<br/>Got It</span>
@@ -346,7 +367,8 @@ const styles: { [key: string]: CSSProperties } = {
     justifyContent: 'center',
     padding: '48px',
     transition: 'transform 0.2s',
-    border: '2px solid #e2e8f0'
+    border: '2px solid #e2e8f0',
+    userSelect: 'none' // Prevent text selection when double clicking
   },
   cardContent: {
     textAlign: 'center',
@@ -394,6 +416,15 @@ const styles: { [key: string]: CSSProperties } = {
     alignItems: 'center',
     gap: '6px'
   },
+  kbd: {
+    backgroundColor: '#f1f5f9',
+    border: '1px solid #cbd5e1',
+    borderRadius: '4px',
+    padding: '2px 6px',
+    fontFamily: 'monospace',
+    fontSize: '11px',
+    color: '#475569'
+  },
   actions: {
     display: 'flex',
     gap: '16px',
@@ -411,15 +442,13 @@ const styles: { [key: string]: CSSProperties } = {
     padding: '20px',
     fontSize: '16px',
     fontWeight: 600,
-    cursor: 'pointer',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
     gap: '8px',
-    transition: 'transform 0.2s',
-    lineHeight: '1.3',
-    opacity: 1
+    transition: 'all 0.2s',
+    lineHeight: '1.3'
   },
   gotItButton: {
     flex: 1,
@@ -430,22 +459,21 @@ const styles: { [key: string]: CSSProperties } = {
     padding: '20px',
     fontSize: '16px',
     fontWeight: 600,
-    cursor: 'pointer',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
     gap: '8px',
-    transition: 'transform 0.2s',
-    lineHeight: '1.3',
-    opacity: 1
+    transition: 'all 0.2s',
+    lineHeight: '1.3'
   },
   buttonIcon: {
     fontSize: '24px'
   },
   buttonShortcut: {
     fontSize: '11px',
-    opacity: 0.7
+    opacity: 0.8,
+    fontWeight: 400
   },
   finishedContainer: {
     flex: 1,
