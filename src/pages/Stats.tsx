@@ -1,5 +1,5 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
-import { getStreak, getTodayStats, getRecentStats, formatDuration, getTotalCardsStudied, getTotalStudyTime } from '../lib/studyStats';
+import { getStreak, getTodayStats, getRecentStats, formatDuration, getTotalCardsStudied, getTotalStudyTime, DailyStats } from '../lib/studyStats';
 
 interface StatsProps {
   onNavigateToHome: () => void;
@@ -7,8 +7,13 @@ interface StatsProps {
 
 const Stats: React.FC<StatsProps> = ({ onNavigateToHome }) => {
   const [streak, setStreak] = useState({ current: 0, longest: 0, lastStudyDate: '' });
-  const [todayStats, setTodayStats] = useState({ totalCards: 0, totalDuration: 0, sessions: [] });
-  const [weekStats, setWeekStats] = useState<any[]>([]);
+  const [todayStats, setTodayStats] = useState<DailyStats>({ 
+    date: '',
+    totalCards: 0, 
+    totalDuration: 0, 
+    sessions: [] 
+  });
+  const [weekStats, setWeekStats] = useState<DailyStats[]>([]);
   const [totalCards, setTotalCards] = useState(0);
   const [totalTime, setTotalTime] = useState(0);
 
