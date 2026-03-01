@@ -1,12 +1,13 @@
 /**
  * Spaced Repetition System using SM-2 Algorithm
- * Based on SuperMemo 2 algorithm for optimal review scheduling
+ * Modified to use 3-button system: Again / Know It / Mastered
  * 
  * Key concepts:
  * - easeFactor: How easy the card is (higher = easier, longer intervals)
  * - interval: Days until next review
  * - repetitions: Number of consecutive correct reviews
  * - nextReview: Timestamp when card should be reviewed next
+ * - status: learning / reviewing / mastered
  */
 
 export interface CardReviewData {
@@ -19,11 +20,14 @@ export interface CardReviewData {
   repetitions: number;     // Consecutive successful reviews
   nextReview: number;      // Timestamp (ms) for next review
   
+  // Card status
+  status: 'learning' | 'reviewing' | 'mastered'; // Learning state
+  
   // Performance tracking
   totalReviews: number;    // Total number of times reviewed
-  correctCount: number;    // Times marked as "Easy" or "Good"
+  knowItCount: number;     // Times marked as "Know It"
   againCount: number;      // Times marked as "Again" (struggling)
-  hardCount: number;       // Times marked as "Hard"
+  masteredCount: number;   // Times marked as "Mastered"
   
   // Timestamps
   lastReviewed: number;    // Last review timestamp
@@ -37,13 +41,13 @@ export interface ReviewSession {
   startTime: number;
   endTime?: number;
   cardsReviewed: number;
-  cardsCorrect: number;
   cardsAgain: number;
-  cardsHard: number;
-  cardsEasy: number;
+  cardsKnowIt: number;
+  cardsMastered: number;
 }
 
-export type ReviewRating = 'again' | 'hard' | 'good' | 'easy';
+// 3-button rating system
+export type ReviewRating = 'again' | 'know_it' | 'mastered';
 
 const STORAGE_KEY_REVIEWS = 'flashcard-review-data';
 const STORAGE_KEY_SESSIONS = 'flashcard-review-sessions';
@@ -65,10 +69,11 @@ export function initializeCardReview(setId: string, cardId: string): CardReviewD
     interval: 0,
     repetitions: 0,
     nextReview: now, // Available for review immediately
+    status: 'learning',
     totalReviews: 0,
-    correctCount: 0,
+    knowItCount: 0,
     againCount: 0,
-    hardCount: 0,
+    masteredCount: 0,
     lastReviewed: 0,
     createdAt: now,
     updatedAt: now,
@@ -81,7 +86,23 @@ export function initializeCardReview(setId: string, cardId: string): CardReviewD
 function getReviewDataFromStorage(): CardReviewData[] {
   try {
     const data = localStorage.getItem(STORAGE_KEY_REVIEWS);
-    return data ? JSON.parse(data) : [];
+    if (!data) return [];
+    
+    const parsed = JSON.parse(data);
+    // Migrate old data if needed
+    return parsed.map((item: any) => {
+      if (!item.status) {
+        // Migrate old 4-button data to new 3-button system
+        return {
+          ...item,
+          status: item.repetitions >= 5 ? 'mastered' : item.repetitions > 0 ? 'reviewing' : 'learning',
+          knowItCount: (item.correctCount || 0) + (item.hardCount || 0),
+          masteredCount: 0,
+          againCount: item.againCount || 0
+        };
+      }
+      return item;
+    });
   } catch (error) {
     console.error('Error reading review data:', error);
     return [];
@@ -126,9 +147,13 @@ export function getSetReviewData(setId: string): CardReviewData[] {
 }
 
 /**
- * Calculate next interval based on SM-2 algorithm
+ * Calculate next interval based on 3-button system
  * 
- * @param rating - User's rating of how well they knew the card
+ * Again: Reset progress, short interval (1 day)
+ * Know It: Normal progress, medium intervals (2-5 days)
+ * Mastered: Graduate card, long intervals (7+ days)
+ * 
+ * @param rating - User's rating (again / know_it / mastered)
  * @param currentData - Current review data for the card
  * @returns Updated review data
  */
@@ -137,60 +162,61 @@ export function calculateNextReview(
   currentData: CardReviewData
 ): CardReviewData {
   const now = Date.now();
-  let { easeFactor, interval, repetitions } = currentData;
+  let { easeFactor, interval, repetitions, status } = currentData;
   
   // Update performance counters
   const totalReviews = currentData.totalReviews + 1;
-  let correctCount = currentData.correctCount;
+  let knowItCount = currentData.knowItCount;
   let againCount = currentData.againCount;
-  let hardCount = currentData.hardCount;
+  let masteredCount = currentData.masteredCount;
   
-  // Calculate quality of response (0-5 scale in SM-2)
-  let quality: number;
+  // Process rating
   switch (rating) {
     case 'again':
-      quality = 0; // Complete blackout
+      // Reset progress - card goes back to learning
       againCount++;
+      repetitions = 0;
+      interval = 1; // 1 day
+      status = 'learning';
+      // Decrease ease factor (make it harder)
+      easeFactor = Math.max(MIN_EASE_FACTOR, easeFactor - 0.2);
       break;
-    case 'hard':
-      quality = 3; // Correct with difficulty
-      hardCount++;
+      
+    case 'know_it':
+      // Normal progress - card stays in reviewing
+      knowItCount++;
+      
+      if (repetitions === 0) {
+        interval = 2; // 2 days
+        status = 'reviewing';
+      } else if (repetitions === 1) {
+        interval = 4; // 4 days
+        status = 'reviewing';
+      } else {
+        interval = Math.round(interval * 1.5); // Gradual increase
+        status = 'reviewing';
+      }
+      
+      repetitions++;
+      // Maintain ease factor
       break;
-    case 'good':
-      quality = 4; // Correct after hesitation
-      correctCount++;
+      
+    case 'mastered':
+      // Graduate card - long intervals
+      masteredCount++;
+      
+      if (repetitions === 0) {
+        interval = 7; // 1 week
+      } else {
+        interval = Math.round(interval * easeFactor); // Use full ease factor
+      }
+      
+      repetitions++;
+      status = 'mastered';
+      // Increase ease factor (make it easier)
+      easeFactor = Math.min(3.0, easeFactor + 0.15);
       break;
-    case 'easy':
-      quality = 5; // Perfect response
-      correctCount++;
-      break;
-    default:
-      quality = 0;
   }
-  
-  // SM-2 Algorithm
-  if (quality >= 3) {
-    // Correct response
-    if (repetitions === 0) {
-      interval = INITIAL_INTERVAL;
-    } else if (repetitions === 1) {
-      interval = 6; // 6 days
-    } else {
-      interval = Math.round(interval * easeFactor);
-    }
-    repetitions++;
-  } else {
-    // Incorrect response - reset
-    repetitions = 0;
-    interval = INITIAL_INTERVAL;
-  }
-  
-  // Update ease factor based on performance
-  // EF' = EF + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
-  easeFactor = Math.max(
-    MIN_EASE_FACTOR,
-    easeFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-  );
   
   // Calculate next review date
   const nextReview = now + (interval * 24 * 60 * 60 * 1000);
@@ -201,10 +227,11 @@ export function calculateNextReview(
     interval,
     repetitions,
     nextReview,
+    status,
     totalReviews,
-    correctCount,
+    knowItCount,
     againCount,
-    hardCount,
+    masteredCount,
     lastReviewed: now,
     updatedAt: now,
   };
@@ -241,12 +268,24 @@ export function saveCardReview(
 }
 
 /**
- * Get cards that are due for review
+ * Get cards that are due for review (includes learning and reviewing cards)
  */
 export function getDueCards(setId: string): CardReviewData[] {
   const now = Date.now();
   const setData = getSetReviewData(setId);
-  return setData.filter(card => card.nextReview <= now);
+  return setData.filter(card => 
+    card.nextReview <= now || 
+    card.status === 'learning' || 
+    card.status === 'reviewing'
+  );
+}
+
+/**
+ * Get cards in learning state (not yet mastered)
+ */
+export function getLearningCards(setId: string): CardReviewData[] {
+  const setData = getSetReviewData(setId);
+  return setData.filter(card => card.status === 'learning' || card.status === 'reviewing');
 }
 
 /**
@@ -263,16 +302,11 @@ export function getDifficultCards(
 }
 
 /**
- * Get mastered cards (high ease factor and successful repetitions)
+ * Get mastered cards (status = 'mastered')
  */
-export function getMasteredCards(
-  setId: string,
-  minRepetitions: number = 5
-): CardReviewData[] {
+export function getMasteredCards(setId: string): CardReviewData[] {
   const setData = getSetReviewData(setId);
-  return setData.filter(
-    card => card.repetitions >= minRepetitions && card.easeFactor >= 2.5
-  );
+  return setData.filter(card => card.status === 'mastered');
 }
 
 /**
@@ -283,6 +317,7 @@ export function getSetStudyStats(setId: string, totalCards: number) {
   const now = Date.now();
   
   const dueCards = setData.filter(card => card.nextReview <= now);
+  const learningCards = getLearningCards(setId);
   const masteredCards = getMasteredCards(setId);
   const difficultCards = getDifficultCards(setId);
   
@@ -296,17 +331,18 @@ export function getSetStudyStats(setId: string, totalCards: number) {
     (sum, card) => sum + card.totalReviews,
     0
   );
-  const totalCorrect = setData.reduce(
-    (sum, card) => sum + card.correctCount,
+  const totalKnowIt = setData.reduce(
+    (sum, card) => sum + card.knowItCount + card.masteredCount,
     0
   );
-  const successRate = totalAttempts > 0 ? (totalCorrect / totalAttempts) * 100 : 0;
+  const successRate = totalAttempts > 0 ? (totalKnowIt / totalAttempts) * 100 : 0;
   
   return {
     totalCards,
     studiedCards: setData.length,
     newCards: totalCards - setData.length,
     dueCards: dueCards.length,
+    learningCards: learningCards.length,
     masteredCards: masteredCards.length,
     difficultCards: difficultCards.length,
     totalReviews,
@@ -324,10 +360,9 @@ export function startReviewSession(setId: string): ReviewSession {
     sessionId: crypto.randomUUID(),
     startTime: Date.now(),
     cardsReviewed: 0,
-    cardsCorrect: 0,
     cardsAgain: 0,
-    cardsHard: 0,
-    cardsEasy: 0,
+    cardsKnowIt: 0,
+    cardsMastered: 0,
   };
   
   return session;
