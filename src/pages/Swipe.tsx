@@ -1,5 +1,7 @@
 import React, { useState, useEffect, CSSProperties, useCallback } from 'react';
 import { getSet, updateKnownCards, FlashcardSet, Card } from '../lib/storage';
+import { audioService } from '../lib/audioService';
+import { recordSession } from '../lib/studyStats';
 
 interface SwipeProps {
   setId: string;
@@ -14,6 +16,8 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [knownIds, setKnownIds] = useState<Set<string>>(new Set());
   const [totalCards, setTotalCards] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(true);
+  const [sessionStartTime] = useState(Date.now());
 
   useEffect(() => {
     const flashcardSet = getSet(setId);
@@ -28,6 +32,20 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     }
   }, [setId, onNavigateToHome]);
 
+  // Auto-play audio when card is flipped
+  useEffect(() => {
+    if (isFlipped && audioEnabled && currentCard) {
+      // Extract Japanese text from the front (before any special characters)
+      const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
+      if (japaneseText) {
+        // Small delay to feel more natural
+        setTimeout(() => {
+          audioService.speak(japaneseText);
+        }, 200);
+      }
+    }
+  }, [isFlipped, audioEnabled, currentCard]);
+
   const handleGotIt = useCallback(() => {
     if (!currentCard || !set) return;
 
@@ -40,16 +58,27 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     const newQueue = activeQueue.slice(1);
 
     if (newQueue.length === 0) {
-      // All cards mastered!
+      // All cards mastered! Record session
       setIsFinished(true);
       updateKnownCards(set.id, Array.from(newKnownIds));
+      
+      const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
+      recordSession({
+        setId: set.id,
+        setTitle: set.title,
+        startTime: sessionStartTime,
+        endTime: Date.now(),
+        cardsStudied: totalCards,
+        cardsMastered: newKnownIds.size,
+        duration
+      });
     } else {
       // Move to next card
       setActiveQueue(newQueue);
       setCurrentCard(newQueue[0]);
       setIsFlipped(false);
     }
-  }, [currentCard, set, knownIds, activeQueue]);
+  }, [currentCard, set, knownIds, activeQueue, sessionStartTime, totalCards]);
 
   const handleAgain = useCallback(() => {
     if (!currentCard) return;
@@ -76,12 +105,20 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     setIsFlipped(false);
   }, [currentCard, knownIds, activeQueue]);
 
+  const handlePlayAudio = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (currentCard) {
+      const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
+      audioService.speak(japaneseText);
+    }
+  };
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (isFinished) return;
 
-      // Prevent shortcuts when typing in input fields (though shouldn't be any here, good practice)
+      // Prevent shortcuts when typing in input fields
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
@@ -100,6 +137,11 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         case 'ArrowRight':
           e.preventDefault();
           if (isFlipped) handleGotIt();
+          break;
+        case 'a':
+        case 'A':
+          e.preventDefault();
+          if (isFlipped) handlePlayAudio(e as any);
           break;
         case 'Escape':
           e.preventDefault();
@@ -135,6 +177,9 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   if (isFinished) {
     const knownCount = knownIds.size;
     const percentage = Math.round((knownCount / totalCards) * 100);
+    const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
+    const minutesStudied = Math.floor(duration / 60);
+    const secondsStudied = duration % 60;
 
     return (
       <div style={styles.container}>
@@ -167,7 +212,13 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
             </div>
             <div style={styles.statBox}>
               <div style={styles.statValue}>{percentage}%</div>
-              <div style={styles.statLabel}>Complete</div>
+              <div style={styles.statLabel}>Accuracy</div>
+            </div>
+            <div style={styles.statBox}>
+              <div style={styles.statValue}>
+                {minutesStudied > 0 ? `${minutesStudied}m` : `${secondsStudied}s`}
+              </div>
+              <div style={styles.statLabel}>Time</div>
             </div>
           </div>
 
@@ -207,9 +258,19 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           ✕
         </button>
         <h2 style={styles.headerTitle}>{set.title}</h2>
-        <span style={styles.counter}>
-          {activeQueue.length} left
-        </span>
+        <div style={styles.audioToggle}>
+          <button
+            style={{
+              ...styles.audioButton,
+              opacity: audioEnabled ? 1 : 0.4
+            }}
+            onClick={() => setAudioEnabled(!audioEnabled)}
+            title={audioEnabled ? 'Audio ON' : 'Audio OFF'}
+          >
+            {audioEnabled ? '🔊' : '🔇'}
+          </button>
+          <span style={styles.counter}>{activeQueue.length} left</span>
+        </div>
       </header>
 
       <div style={styles.progressBarContainer}>
@@ -232,6 +293,17 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               <>
                 <div style={styles.cardLabel}>BACK</div>
                 <div style={styles.cardText}>{currentCard.back}</div>
+                {audioService.isSupported() && (
+                  <button
+                    style={styles.speakerButton}
+                    onClick={handlePlayAudio}
+                    title="Play audio (A)"
+                    onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.1)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+                  >
+                    🔊 Listen
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -245,6 +317,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           <span style={styles.hint}><kbd style={styles.kbd}>Space</kbd> Flip</span>
           <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> or <kbd style={styles.kbd}>←</kbd> Again</span>
           <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> or <kbd style={styles.kbd}>→</kbd> Got It</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>A</kbd> Audio</span>
           <span style={styles.hint}><kbd style={styles.kbd}>ESC</kbd> Home</span>
         </div>
       </div>
@@ -328,11 +401,24 @@ const styles: { [key: string]: CSSProperties } = {
     flex: 1,
     textAlign: 'center'
   },
+  audioToggle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px'
+  },
+  audioButton: {
+    background: 'none',
+    border: 'none',
+    fontSize: '20px',
+    cursor: 'pointer',
+    padding: '4px',
+    transition: 'opacity 0.2s'
+  },
   counter: {
     fontSize: '14px',
     color: '#3b82f6',
     fontWeight: 600,
-    width: '80px',
+    minWidth: '60px',
     textAlign: 'right'
   },
   progressBarContainer: {
@@ -368,7 +454,7 @@ const styles: { [key: string]: CSSProperties } = {
     padding: '48px',
     transition: 'transform 0.2s',
     border: '2px solid #e2e8f0',
-    userSelect: 'none' // Prevent text selection when double clicking
+    userSelect: 'none'
   },
   cardContent: {
     textAlign: 'center',
@@ -393,6 +479,18 @@ const styles: { [key: string]: CSSProperties } = {
     fontSize: '14px',
     color: '#94a3b8',
     marginTop: '24px'
+  },
+  speakerButton: {
+    marginTop: '20px',
+    padding: '10px 20px',
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'transform 0.2s'
   },
   queueInfo: {
     fontSize: '14px',
@@ -501,7 +599,9 @@ const styles: { [key: string]: CSSProperties } = {
   statsContainer: {
     display: 'flex',
     gap: '24px',
-    marginBottom: '32px'
+    marginBottom: '32px',
+    flexWrap: 'wrap',
+    justifyContent: 'center'
   },
   statBox: {
     textAlign: 'center'
