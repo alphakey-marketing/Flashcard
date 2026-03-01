@@ -7,6 +7,7 @@ export class AudioService {
   private synth: SpeechSynthesis | null = null;
   private japaneseVoice: SpeechSynthesisVoice | null = null;
   private isInitialized = false;
+  private sequenceId = 0;
 
   constructor() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -34,13 +35,12 @@ export class AudioService {
   }
 
   /**
-   * Speak Japanese text
+   * Speak a single Japanese text
    */
   speak(text: string, rate: number = 0.85): void {
     if (!this.synth || !text) return;
 
-    // Cancel any ongoing speech
-    this.synth.cancel();
+    this.stop(); // Stop any ongoing speech or sequence
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'ja-JP';
@@ -57,9 +57,46 @@ export class AudioService {
   }
 
   /**
+   * Play a sequence of items with delays between them
+   */
+  async playSequence(items: { text: string; pauseAfter: number }[], rate: number = 0.85): Promise<void> {
+    if (!this.synth) return;
+    
+    this.stop();
+    const currentSeqId = ++this.sequenceId;
+
+    for (const item of items) {
+      if (!item.text) continue;
+      if (currentSeqId !== this.sequenceId) break;
+
+      await new Promise<void>((resolve) => {
+        const utterance = new SpeechSynthesisUtterance(item.text);
+        utterance.lang = 'ja-JP';
+        utterance.rate = rate;
+        
+        if (this.japaneseVoice) {
+          utterance.voice = this.japaneseVoice;
+        }
+
+        utterance.onend = () => resolve();
+        utterance.onerror = () => resolve();
+
+        this.synth!.speak(utterance);
+      });
+
+      if (currentSeqId !== this.sequenceId) break;
+
+      if (item.pauseAfter > 0) {
+        await new Promise(res => setTimeout(res, item.pauseAfter));
+      }
+    }
+  }
+
+  /**
    * Stop any ongoing speech
    */
   stop(): void {
+    this.sequenceId++; // Invalidate any ongoing sequence
     if (this.synth) {
       this.synth.cancel();
     }
