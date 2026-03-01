@@ -7,6 +7,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n5-numbers-time',
     title: 'JLPT N5 - Numbers & Time',
     description: 'Essential numbers, days, months, and time expressions',
+    tags: ['JLPT N5', 'Beginner', 'Numbers'],
     cards: [
       { id: 'n5-1', front: '一', back: 'いち - one' },
       { id: 'n5-2', front: '二', back: 'に - two' },
@@ -44,6 +45,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n5-family-people',
     title: 'JLPT N5 - Family & People',
     description: 'Family members, relationships, and personal descriptions',
+    tags: ['JLPT N5', 'Beginner', 'People'],
     cards: [
       { id: 'n5-26', front: '家族', back: 'かぞく - family' },
       { id: 'n5-27', front: '父', back: 'ちち - father (my)' },
@@ -76,6 +78,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n5-food-drink',
     title: 'JLPT N5 - Food & Drink',
     description: 'Common foods, drinks, and meals',
+    tags: ['JLPT N5', 'Beginner', 'Food'],
     cards: [
       { id: 'n5-46', front: '食べ物', back: 'たべもの - food' },
       { id: 'n5-47', front: '飲み物', back: 'のみもの - drink, beverage' },
@@ -108,6 +111,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n5-daily-life',
     title: 'JLPT N5 - Daily Life & Activities',
     description: 'Common verbs and daily activities',
+    tags: ['JLPT N5', 'Beginner', 'Verbs'],
     cards: [
       { id: 'n5-66', front: '行く', back: 'いく - to go' },
       { id: 'n5-67', front: '来る', back: 'くる - to come' },
@@ -140,6 +144,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n5-places',
     title: 'JLPT N5 - Places & Locations',
     description: 'Common places, buildings, and locations',
+    tags: ['JLPT N5', 'Beginner', 'Places'],
     cards: [
       { id: 'n5-86', front: '学校', back: 'がっこう - school' },
       { id: 'n5-87', front: '大学', back: 'だいがく - university' },
@@ -172,6 +177,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-work-career',
     title: 'JLPT N4 - Work & Career',
     description: 'Work, jobs, career, and business vocabulary',
+    tags: ['JLPT N4', 'Intermediate', 'Work'],
     cards: [
       { id: 'n4-1', front: '仕事', back: 'しごと - work, job' },
       { id: 'n4-2', front: '会議', back: 'かいぎ - meeting, conference' },
@@ -204,6 +210,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-travel',
     title: 'JLPT N4 - Travel & Transportation',
     description: 'Travel, transportation, and navigation vocabulary',
+    tags: ['JLPT N4', 'Intermediate', 'Travel'],
     cards: [
       { id: 'n4-21', front: '旅行', back: 'りょこう - travel, trip' },
       { id: 'n4-22', front: '観光', back: 'かんこう - sightseeing, tourism' },
@@ -236,6 +243,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-health',
     title: 'JLPT N4 - Health & Body',
     description: 'Health, body parts, and medical vocabulary',
+    tags: ['JLPT N4', 'Intermediate', 'Health'],
     cards: [
       { id: 'n4-41', front: '体', back: 'からだ - body' },
       { id: 'n4-42', front: '頭', back: 'あたま - head' },
@@ -268,6 +276,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-weather-nature',
     title: 'JLPT N4 - Weather & Nature',
     description: 'Weather, seasons, and nature vocabulary',
+    tags: ['JLPT N4', 'Intermediate', 'Nature'],
     cards: [
       { id: 'n4-61', front: '天気', back: 'てんき - weather' },
       { id: 'n4-62', front: '晴れ', back: 'はれ - clear weather, sunny' },
@@ -300,6 +309,7 @@ export const jlptTemplates: FlashcardSet[] = [
     id: 'n4-technology',
     title: 'JLPT N4 - Technology & Communication',
     description: 'Technology, internet, and communication vocabulary',
+    tags: ['JLPT N4', 'Intermediate', 'Technology'],
     cards: [
       { id: 'n4-81', front: '電話', back: 'でんわ - telephone' },
       { id: 'n4-82', front: 'スマホ', back: 'スマホ - smartphone' },

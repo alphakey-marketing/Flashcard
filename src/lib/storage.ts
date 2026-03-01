@@ -13,6 +13,7 @@ export interface FlashcardSet {
   description: string;
   cards: Card[];
   knownCardIds: string[];
+  tags?: string[]; // NEW: Tags for organization
   createdAt: number;
   updatedAt: number;
 }
@@ -70,11 +71,30 @@ export function getSet(id: string): FlashcardSet | undefined {
   return sets.find(set => set.id === id);
 }
 
+// Get all unique tags
+export function getAllTags(): string[] {
+  const sets = getSetsFromStorage();
+  const tagSet = new Set<string>();
+  
+  sets.forEach(set => {
+    set.tags?.forEach(tag => tagSet.add(tag));
+  });
+  
+  return Array.from(tagSet).sort();
+}
+
+// Filter sets by tag
+export function getSetsByTag(tag: string): FlashcardSet[] {
+  const sets = getSetsFromStorage();
+  return sets.filter(set => set.tags?.includes(tag));
+}
+
 // CREATE operation
 export function createNewSet(
   title: string,
   description: string,
-  cards: CardDraft[]
+  cards: CardDraft[],
+  tags?: string[]
 ): FlashcardSet {
   const now = Date.now();
   return {
@@ -87,6 +107,7 @@ export function createNewSet(
       back: card.back
     })),
     knownCardIds: [],
+    tags: tags || [],
     createdAt: now,
     updatedAt: now
   };
