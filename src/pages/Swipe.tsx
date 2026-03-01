@@ -1,4 +1,4 @@
-import React, { useState, useEffect, CSSProperties, useCallback } from 'react';
+import React, { useState, useEffect, CSSProperties, useCallback, useMemo } from 'react';
 import { getSet, FlashcardSet, Card } from '../lib/storage';
 import { audioService } from '../lib/audioService';
 import { recordSession } from '../lib/studyStats';
@@ -20,6 +20,56 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [sessionStartTime] = useState(Date.now());
   const [studyMode, setStudyMode] = useState<'due' | 'all'>('all');
+
+  // Memoized queue loading logic to prevent recreating function
+  const loadQueue = useCallback((flashcardSet: FlashcardSet, mode: 'due' | 'all') => {
+    const reviewedData = getSetReviewData(setId);
+    const learningCards = getLearningCards(setId);
+    const dueCardsData = getDueCards(setId);
+    
+    // Optimized: Create single Set for all priority cards
+    const priorityCardIds = new Set([
+      ...learningCards.map(d => d.cardId),
+      ...dueCardsData.map(d => d.cardId)
+    ]);
+    
+    let queueCards: Card[];
+    
+    if (mode === 'due') {
+      // Show learning/reviewing cards (not mastered yet) + due mastered cards
+      queueCards = flashcardSet.cards.filter(card => priorityCardIds.has(card.id));
+      
+      // If no learning/due cards, check if we have any new cards (never studied)
+      if (queueCards.length === 0) {
+        const reviewedIds = new Set(reviewedData.map(d => d.cardId));
+        const newCards = flashcardSet.cards.filter(card => !reviewedIds.has(card.id));
+        
+        if (newCards.length > 0) {
+          // Start with first 10 new cards
+          queueCards = newCards.slice(0, 10);
+        }
+      }
+    } else {
+      // All cards, but learning/due cards first - optimized single pass
+      const priorityCards: Card[] = [];
+      const otherCards: Card[] = [];
+      
+      for (const card of flashcardSet.cards) {
+        if (priorityCardIds.has(card.id)) {
+          priorityCards.push(card);
+        } else {
+          otherCards.push(card);
+        }
+      }
+      
+      queueCards = [...priorityCards, ...otherCards];
+    }
+
+    setActiveQueue(queueCards);
+    setCurrentCard(queueCards[0] || null);
+    setTotalCards(queueCards.length);
+    setStudyMode(mode);
+  }, [setId]);
 
   useEffect(() => {
     const flashcardSet = getSet(setId);
@@ -43,66 +93,36 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     } else {
       onNavigateToHome();
     }
-  }, [setId, onNavigateToHome]);
+  }, [setId, onNavigateToHome, loadQueue]);
 
-  const loadQueue = (flashcardSet: FlashcardSet, mode: 'due' | 'all') => {
-    const reviewedData = getSetReviewData(setId);
-    const learningCards = getLearningCards(setId);
-    const learningCardIds = new Set(learningCards.map(d => d.cardId));
-    const dueCardsData = getDueCards(setId);
-    const dueCardIds = new Set(dueCardsData.map(d => d.cardId));
-    
-    let queueCards: Card[];
-    
-    if (mode === 'due') {
-      // Show learning/reviewing cards (not mastered yet) + due mastered cards
-      queueCards = flashcardSet.cards.filter(card => 
-        learningCardIds.has(card.id) || dueCardIds.has(card.id)
-      );
-      
-      // If no learning/due cards, check if we have any new cards (never studied)
-      if (queueCards.length === 0) {
-        const reviewedIds = new Set(reviewedData.map(d => d.cardId));
-        const newCards = flashcardSet.cards.filter(card => !reviewedIds.has(card.id));
-        
-        if (newCards.length > 0) {
-          // Start with first 10 new cards
-          queueCards = newCards.slice(0, 10);
-        }
-      }
-    } else {
-      // All cards, but learning/due cards first
-      const priorityCards = flashcardSet.cards.filter(card => 
-        learningCardIds.has(card.id) || dueCardIds.has(card.id)
-      );
-      const otherCards = flashcardSet.cards.filter(card => 
-        !learningCardIds.has(card.id) && !dueCardIds.has(card.id)
-      );
-      queueCards = [...priorityCards, ...otherCards];
-    }
-
-    setActiveQueue(queueCards);
-    setCurrentCard(queueCards[0] || null);
-    setTotalCards(queueCards.length);
-    setStudyMode(mode);
-  };
-
-  const switchMode = (mode: 'due' | 'all') => {
+  const switchMode = useCallback((mode: 'due' | 'all') => {
     if (!set) return;
     loadQueue(set, mode);
     setSessionStats({ reviewed: 0, knowIt: 0, mastered: 0 });
     setIsFlipped(false);
     setIsFinished(false);
-  };
+  }, [set, loadQueue]);
+
+  // Memoize audio play handler
+  const handlePlayAudio = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (currentCard) {
+      const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
+      audioService.speak(japaneseText);
+    }
+  }, [currentCard]);
 
   // Auto-play audio when card is flipped
   useEffect(() => {
     if (isFlipped && audioEnabled && currentCard) {
       const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
       if (japaneseText) {
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
           audioService.speak(japaneseText);
         }, 200);
+        
+        // Cleanup timeout to prevent memory leaks
+        return () => clearTimeout(timeoutId);
       }
     }
   }, [isFlipped, audioEnabled, currentCard]);
@@ -113,15 +133,16 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     // Save review to SM-2 system
     saveCardReview(set.id, currentCard.id, rating);
     
-    // Update session stats
+    // Update session stats using functional update to avoid stale closure
     setSessionStats(prev => ({
       reviewed: prev.reviewed + 1,
       knowIt: prev.knowIt + (rating === 'know_it' ? 1 : 0),
       mastered: prev.mastered + (rating === 'mastered' ? 1 : 0)
     }));
 
-    const newQueue = [...activeQueue];
-    const reviewedCard = newQueue.shift()!;
+    // Optimized: Use slice instead of spread for large arrays
+    const newQueue = activeQueue.slice(1);
+    const reviewedCard = activeQueue[0];
 
     if (rating === 'again') {
       // Reinsert card a few positions back for immediate practice
@@ -134,35 +155,30 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     }
 
     if (newQueue.length === 0) {
-      // Session complete
-      setIsFinished(true);
-      
-      const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
-      recordSession({
-        setId: set.id,
-        setTitle: set.title,
-        startTime: sessionStartTime,
-        endTime: Date.now(),
-        cardsStudied: totalCards,
-        cardsMastered: sessionStats.mastered + (rating === 'mastered' ? 1 : 0),
-        duration
+      // Session complete - use callback to get latest stats
+      setSessionStats(latestStats => {
+        const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
+        recordSession({
+          setId: set.id,
+          setTitle: set.title,
+          startTime: sessionStartTime,
+          endTime: Date.now(),
+          cardsStudied: totalCards,
+          cardsMastered: latestStats.mastered,
+          duration
+        });
+        return latestStats;
       });
+      
+      setIsFinished(true);
     } else {
       setActiveQueue(newQueue);
       setCurrentCard(newQueue[0]);
       setIsFlipped(false);
     }
-  }, [currentCard, set, activeQueue, sessionStartTime, totalCards, sessionStats]);
+  }, [currentCard, set, activeQueue, sessionStartTime, totalCards]);
 
-  const handlePlayAudio = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (currentCard) {
-      const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
-      audioService.speak(japaneseText);
-    }
-  };
-
-  // Keyboard shortcuts
+  // Keyboard shortcuts - now includes all dependencies
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (isFinished) return;
@@ -191,7 +207,10 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         case 'a':
         case 'A':
           e.preventDefault();
-          if (isFlipped) handlePlayAudio(e as any);
+          if (isFlipped && currentCard) {
+            const japaneseText = currentCard.front.split(/[\n,]|\s-\s/)[0].trim();
+            audioService.speak(japaneseText);
+          }
           break;
         case 'Escape':
           e.preventDefault();
@@ -202,15 +221,38 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isFlipped, isFinished, handleReview, onNavigateToHome]);
+  }, [isFlipped, isFinished, handleReview, onNavigateToHome, currentCard]);
 
-  const handleStudyAgain = () => {
+  const handleStudyAgain = useCallback(() => {
     if (!set) return;
     loadQueue(set, studyMode);
     setIsFlipped(false);
     setIsFinished(false);
     setSessionStats({ reviewed: 0, knowIt: 0, mastered: 0 });
-  };
+  }, [set, studyMode, loadQueue]);
+
+  // Memoize dynamic button styles to prevent recreation
+  const dueModeButtonStyle = useMemo(() => ({
+    ...styles.modeButton,
+    backgroundColor: studyMode === 'due' ? '#3b82f6' : '#f1f5f9',
+    color: studyMode === 'due' ? 'white' : '#64748b'
+  }), [studyMode]);
+
+  const allModeButtonStyle = useMemo(() => ({
+    ...styles.modeButton,
+    backgroundColor: studyMode === 'all' ? '#3b82f6' : '#f1f5f9',
+    color: studyMode === 'all' ? 'white' : '#64748b'
+  }), [studyMode]);
+
+  const audioButtonStyle = useMemo(() => ({
+    ...styles.audioButton,
+    opacity: audioEnabled ? 1 : 0.4
+  }), [audioEnabled]);
+
+  const progressBarStyle = useMemo(() => {
+    const progress = totalCards > 0 ? Math.min(100, ((totalCards - activeQueue.length) / totalCards) * 100) : 0;
+    return { ...styles.progressBar, width: `${progress}%` };
+  }, [totalCards, activeQueue.length]);
 
   if (!set) {
     return (
@@ -258,8 +300,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     );
   }
 
-  const progress = totalCards > 0 ? Math.min(100, ((totalCards - activeQueue.length) / totalCards) * 100) : 0;
-
   if (isFinished) {
     const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
     const minutesStudied = Math.floor(duration / 60);
@@ -301,7 +341,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
             </button>
             {studyMode === 'due' && (
               <button 
-                style={{ ...styles.homeButton, backgroundColor: '#3b82f6', color: 'white' }} 
+                style={switchToAllButtonStyle}
                 onClick={() => switchMode('all')}
               >
                 Study All Cards
@@ -324,28 +364,20 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <div style={styles.audioToggle}>
           <div style={styles.modeToggle}>
             <button
-              style={{
-                ...styles.modeButton,
-                backgroundColor: studyMode === 'due' ? '#3b82f6' : '#f1f5f9',
-                color: studyMode === 'due' ? 'white' : '#64748b'
-              }}
+              style={dueModeButtonStyle}
               onClick={() => switchMode('due')}
             >
               Due
             </button>
             <button
-              style={{
-                ...styles.modeButton,
-                backgroundColor: studyMode === 'all' ? '#3b82f6' : '#f1f5f9',
-                color: studyMode === 'all' ? 'white' : '#64748b'
-              }}
+              style={allModeButtonStyle}
               onClick={() => switchMode('all')}
             >
               All
             </button>
           </div>
           <button
-            style={{ ...styles.audioButton, opacity: audioEnabled ? 1 : 0.4 }}
+            style={audioButtonStyle}
             onClick={() => setAudioEnabled(!audioEnabled)}
             title={audioEnabled ? 'Audio ON' : 'Audio OFF'}
           >
@@ -356,7 +388,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       </header>
 
       <div style={styles.progressBarContainer}>
-        <div style={{ ...styles.progressBar, width: `${progress}%` }} />
+        <div style={progressBarStyle} />
       </div>
 
       <div style={styles.cardContainer}>
@@ -426,6 +458,18 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       </div>
     </div>
   );
+};
+
+// Extract static style for "Switch to All" button
+const switchToAllButtonStyle: CSSProperties = {
+  backgroundColor: '#3b82f6',
+  color: 'white',
+  border: '2px solid #e2e8f0',
+  borderRadius: '12px',
+  padding: '14px 32px',
+  fontSize: '16px',
+  fontWeight: 600,
+  cursor: 'pointer'
 };
 
 const styles: { [key: string]: CSSProperties } = {
