@@ -19,13 +19,27 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [isFinished, setIsFinished] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [sessionStartTime] = useState(Date.now());
-  const [studyMode, setStudyMode] = useState<'due' | 'all'>('due');
+  const [studyMode, setStudyMode] = useState<'due' | 'all'>('all'); // Default to 'all'
 
   useEffect(() => {
     const flashcardSet = getSet(setId);
     if (flashcardSet) {
       setSet(flashcardSet);
-      loadQueue(flashcardSet, 'due');
+      
+      // Check if user has any review history
+      const reviewedData = getSetReviewData(setId);
+      const hasSomeReviews = reviewedData.length > 0;
+      
+      // If they have review history, check for due cards
+      if (hasSomeReviews) {
+        const dueCards = getDueCards(setId);
+        // If there are due cards, start in due mode, otherwise all mode
+        const initialMode = dueCards.length > 0 ? 'due' : 'all';
+        loadQueue(flashcardSet, initialMode);
+      } else {
+        // First time studying this set - start in 'all' mode
+        loadQueue(flashcardSet, 'all');
+      }
     } else {
       onNavigateToHome();
     }
