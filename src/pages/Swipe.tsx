@@ -1,7 +1,8 @@
 import React, { useState, useEffect, CSSProperties, useCallback } from 'react';
-import { getSet, updateKnownCards, FlashcardSet, Card } from '../lib/storage';
+import { getSet, FlashcardSet, Card } from '../lib/storage';
 import { audioService } from '../lib/audioService';
 import { recordSession } from '../lib/studyStats';
+import { saveCardReview, ReviewRating, getDueCards } from '../lib/spacedRepetition';
 
 interface SwipeProps {
   setId: string;
@@ -13,7 +14,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [activeQueue, setActiveQueue] = useState<Card[]>([]);
   const [currentCard, setCurrentCard] = useState<Card | null>(null);
   const [isFlipped, setIsFlipped] = useState(false);
-  const [knownIds, setKnownIds] = useState<Set<string>>(new Set());
+  const [sessionStats, setSessionStats] = useState({ reviewed: 0, correct: 0 });
   const [totalCards, setTotalCards] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(true);
@@ -23,10 +24,23 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     const flashcardSet = getSet(setId);
     if (flashcardSet) {
       setSet(flashcardSet);
-      setKnownIds(new Set(flashcardSet.knownCardIds));
-      setActiveQueue([...flashcardSet.cards]);
-      setCurrentCard(flashcardSet.cards[0] || null);
-      setTotalCards(flashcardSet.cards.length);
+      
+      // We could filter by getDueCards, but for now we'll review all or just due ones.
+      // Let's mix due cards first, then new cards.
+      // For simplicity, let's load all cards but we'll apply the SRS algorithm to reviews.
+      const dueCardsData = getDueCards(setId);
+      const dueCardIds = new Set(dueCardsData.map(d => d.cardId));
+      
+      // Sort so due cards come first
+      const sortedCards = [...flashcardSet.cards].sort((a, b) => {
+        const aDue = dueCardIds.has(a.id) ? -1 : 1;
+        const bDue = dueCardIds.has(b.id) ? -1 : 1;
+        return aDue - bDue;
+      });
+
+      setActiveQueue(sortedCards);
+      setCurrentCard(sortedCards[0] || null);
+      setTotalCards(sortedCards.length);
     } else {
       onNavigateToHome();
     }
@@ -46,64 +60,53 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     }
   }, [isFlipped, audioEnabled, currentCard]);
 
-  const handleGotIt = useCallback(() => {
+  const handleReview = useCallback((rating: ReviewRating) => {
     if (!currentCard || !set) return;
 
-    // Mark card as known
-    const newKnownIds = new Set(knownIds);
-    newKnownIds.add(currentCard.id);
-    setKnownIds(newKnownIds);
+    // Save review to SM-2 system
+    saveCardReview(set.id, currentCard.id, rating);
+    
+    // Update session stats
+    setSessionStats(prev => ({
+      reviewed: prev.reviewed + 1,
+      correct: rating !== 'again' ? prev.correct + 1 : prev.correct
+    }));
 
-    // Remove from queue
-    const newQueue = activeQueue.slice(1);
+    const newQueue = [...activeQueue];
+    const reviewedCard = newQueue.shift()!; // Remove from front
+
+    if (rating === 'again') {
+      // If they forgot it, put it back in the queue
+      if (newQueue.length === 0) {
+        newQueue.push(reviewedCard);
+      } else {
+        // Insert a few cards down, or at the end if few cards left
+        const insertIndex = Math.min(newQueue.length, 3);
+        newQueue.splice(insertIndex, 0, reviewedCard);
+      }
+    }
 
     if (newQueue.length === 0) {
-      // All cards mastered! Record session
+      // All done!
       setIsFinished(true);
-      updateKnownCards(set.id, Array.from(newKnownIds));
       
       const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
+      // We still record to basic study stats
       recordSession({
         setId: set.id,
         setTitle: set.title,
         startTime: sessionStartTime,
         endTime: Date.now(),
         cardsStudied: totalCards,
-        cardsMastered: newKnownIds.size,
+        cardsMastered: sessionStats.correct + (rating !== 'again' ? 1 : 0),
         duration
       });
     } else {
-      // Move to next card
       setActiveQueue(newQueue);
       setCurrentCard(newQueue[0]);
       setIsFlipped(false);
     }
-  }, [currentCard, set, knownIds, activeQueue, sessionStartTime, totalCards]);
-
-  const handleAgain = useCallback(() => {
-    if (!currentCard) return;
-
-    // Mark card as not known
-    const newKnownIds = new Set(knownIds);
-    newKnownIds.delete(currentCard.id);
-    setKnownIds(newKnownIds);
-
-    const newQueue = [...activeQueue];
-    const missedCard = newQueue.shift()!; // Remove from front
-
-    if (newQueue.length === 0) {
-      // Last card - put it right back
-      newQueue.push(missedCard);
-    } else {
-      // Insert randomly into remaining cards (not at the front)
-      const randomIndex = Math.floor(Math.random() * newQueue.length) + 1;
-      newQueue.splice(randomIndex, 0, missedCard);
-    }
-
-    setActiveQueue(newQueue);
-    setCurrentCard(newQueue[0]);
-    setIsFlipped(false);
-  }, [currentCard, knownIds, activeQueue]);
+  }, [currentCard, set, activeQueue, sessionStartTime, totalCards, sessionStats]);
 
   const handlePlayAudio = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -118,7 +121,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (isFinished) return;
 
-      // Prevent shortcuts when typing in input fields
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
@@ -129,14 +131,20 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           setIsFlipped(prev => !prev);
           break;
         case '1':
-        case 'ArrowLeft':
           e.preventDefault();
-          if (isFlipped) handleAgain();
+          if (isFlipped) handleReview('again');
           break;
         case '2':
-        case 'ArrowRight':
           e.preventDefault();
-          if (isFlipped) handleGotIt();
+          if (isFlipped) handleReview('hard');
+          break;
+        case '3':
+          e.preventDefault();
+          if (isFlipped) handleReview('good');
+          break;
+        case '4':
+          e.preventDefault();
+          if (isFlipped) handleReview('easy');
           break;
         case 'a':
         case 'A':
@@ -152,7 +160,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isFlipped, isFinished, handleAgain, handleGotIt, onNavigateToHome]);
+  }, [isFlipped, isFinished, handleReview, onNavigateToHome]);
 
   const handleStudyAgain = () => {
     if (!set) return;
@@ -160,7 +168,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     setCurrentCard(set.cards[0]);
     setIsFlipped(false);
     setIsFinished(false);
-    setKnownIds(new Set());
+    setSessionStats({ reviewed: 0, correct: 0 });
   };
 
   if (!set || !currentCard) {
@@ -171,35 +179,30 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     );
   }
 
-  const cardsCompleted = totalCards - activeQueue.length;
-  const progress = (cardsCompleted / totalCards) * 100;
+  const cardsCompleted = totalCards - activeQueue.filter(c => !activeQueue.slice(activeQueue.indexOf(c) + 1).includes(c)).length;
+  // Approximation of progress
+  const progress = Math.min(100, Math.max(0, (cardsCompleted / totalCards) * 100));
 
   if (isFinished) {
-    const knownCount = knownIds.size;
-    const percentage = Math.round((knownCount / totalCards) * 100);
     const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
     const minutesStudied = Math.floor(duration / 60);
     const secondsStudied = duration % 60;
+    const accuracy = sessionStats.reviewed > 0 
+      ? Math.round((sessionStats.correct / sessionStats.reviewed) * 100) 
+      : 100;
 
     return (
       <div style={styles.container}>
         <header style={styles.header}>
-          <button
-            style={styles.closeButton}
-            onClick={onNavigateToHome}
-            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
-            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-          >
-            ✕
-          </button>
+          <button style={styles.closeButton} onClick={onNavigateToHome}>✕</button>
           <h2 style={styles.headerTitle}>{set.title}</h2>
           <div style={{ width: '40px' }} />
         </header>
 
         <div style={styles.finishedContainer}>
           <div style={styles.finishedIcon}>🎉</div>
-          <h1 style={styles.finishedTitle}>完璧！Perfect!</h1>
-          <p style={styles.finishedText}>You've mastered all cards in this set!</p>
+          <h1 style={styles.finishedTitle}>Session Complete!</h1>
+          <p style={styles.finishedText}>Great job reviewing these cards.</p>
           
           <div style={styles.statsContainer}>
             <div style={styles.statBox}>
@@ -207,36 +210,26 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               <div style={styles.statLabel}>Cards</div>
             </div>
             <div style={styles.statBox}>
-              <div style={styles.statValue}>{knownCount}</div>
-              <div style={styles.statLabel}>Mastered</div>
+              <div style={styles.statValue}>{sessionStats.reviewed}</div>
+              <div style={styles.statLabel}>Reviews</div>
             </div>
             <div style={styles.statBox}>
-              <div style={styles.statValue}>{percentage}%</div>
+              <div style={styles.statValue}>{accuracy}%</div>
               <div style={styles.statLabel}>Accuracy</div>
             </div>
             <div style={styles.statBox}>
               <div style={styles.statValue}>
-                {minutesStudied > 0 ? `${minutesStudied}m` : `${secondsStudied}s`}
+                {minutesStudied > 0 ? `${minutesStudied}m ` : ''}{secondsStudied}s
               </div>
               <div style={styles.statLabel}>Time</div>
             </div>
           </div>
 
           <div style={styles.finishedButtons}>
-            <button
-              style={styles.studyAgainButton}
-              onClick={handleStudyAgain}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-            >
-              もう一度 Study Again
+            <button style={styles.studyAgainButton} onClick={handleStudyAgain}>
+              Review Again
             </button>
-            <button
-              style={styles.homeButton}
-              onClick={onNavigateToHome}
-              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f1f5f9')}
-              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#fff')}
-            >
+            <button style={styles.homeButton} onClick={onNavigateToHome}>
               Back to Home
             </button>
           </div>
@@ -248,22 +241,11 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <button
-          style={styles.closeButton}
-          onClick={onNavigateToHome}
-          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
-          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-          title="ESC to exit"
-        >
-          ✕
-        </button>
+        <button style={styles.closeButton} onClick={onNavigateToHome} title="ESC to exit">✕</button>
         <h2 style={styles.headerTitle}>{set.title}</h2>
         <div style={styles.audioToggle}>
           <button
-            style={{
-              ...styles.audioButton,
-              opacity: audioEnabled ? 1 : 0.4
-            }}
+            style={{ ...styles.audioButton, opacity: audioEnabled ? 1 : 0.4 }}
             onClick={() => setAudioEnabled(!audioEnabled)}
             title={audioEnabled ? 'Audio ON' : 'Audio OFF'}
           >
@@ -278,10 +260,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       </div>
 
       <div style={styles.cardContainer}>
-        <div
-          style={styles.flashcard}
-          onClick={() => setIsFlipped(!isFlipped)}
-        >
+        <div style={styles.flashcard} onClick={() => setIsFlipped(!isFlipped)}>
           <div style={styles.cardContent}>
             {!isFlipped ? (
               <>
@@ -294,13 +273,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
                 <div style={styles.cardLabel}>BACK</div>
                 <div style={styles.cardText}>{currentCard.back}</div>
                 {audioService.isSupported() && (
-                  <button
-                    style={styles.speakerButton}
-                    onClick={handlePlayAudio}
-                    title="Play audio (A)"
-                    onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.1)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-                  >
+                  <button style={styles.speakerButton} onClick={handlePlayAudio} title="Play audio (A)">
                     🔊 Listen
                   </button>
                 )}
@@ -310,58 +283,51 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         </div>
 
         <div style={styles.queueInfo}>
-          💡 Cards remaining: {activeQueue.length} / {totalCards}
+          💡 Cards remaining: {activeQueue.length}
         </div>
 
         <div style={styles.keyboardHints}>
           <span style={styles.hint}><kbd style={styles.kbd}>Space</kbd> Flip</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> or <kbd style={styles.kbd}>←</kbd> Again</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> or <kbd style={styles.kbd}>→</kbd> Got It</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> Again</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> Hard</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>3</kbd> Good</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>4</kbd> Easy</span>
           <span style={styles.hint}><kbd style={styles.kbd}>A</kbd> Audio</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>ESC</kbd> Home</span>
         </div>
       </div>
 
       <div style={styles.actions}>
         <button
-          style={{
-            ...styles.againButton,
-            opacity: !isFlipped ? 0.5 : 1,
-            cursor: !isFlipped ? 'not-allowed' : 'pointer',
-          }}
-          onClick={() => {
-            if (isFlipped) handleAgain();
-          }}
-          onMouseEnter={(e) => {
-            if (isFlipped) e.currentTarget.style.transform = 'scale(1.05)';
-          }}
-          onMouseLeave={(e) => {
-            if (isFlipped) e.currentTarget.style.transform = 'scale(1)';
-          }}
+          style={{ ...styles.reviewBtn, ...styles.btnAgain, opacity: !isFlipped ? 0.5 : 1 }}
+          onClick={() => { if (isFlipped) handleReview('again'); }}
+          disabled={!isFlipped}
         >
-          <span style={styles.buttonIcon}>✕</span>
-          <span>もう一度<br/>Again</span>
-          <span style={styles.buttonShortcut}>1 or ←</span>
+          <span>Again</span>
+          <span style={styles.buttonShortcut}>1</span>
         </button>
         <button
-          style={{
-            ...styles.gotItButton,
-            opacity: !isFlipped ? 0.5 : 1,
-            cursor: !isFlipped ? 'not-allowed' : 'pointer',
-          }}
-          onClick={() => {
-            if (isFlipped) handleGotIt();
-          }}
-          onMouseEnter={(e) => {
-            if (isFlipped) e.currentTarget.style.transform = 'scale(1.05)';
-          }}
-          onMouseLeave={(e) => {
-            if (isFlipped) e.currentTarget.style.transform = 'scale(1)';
-          }}
+          style={{ ...styles.reviewBtn, ...styles.btnHard, opacity: !isFlipped ? 0.5 : 1 }}
+          onClick={() => { if (isFlipped) handleReview('hard'); }}
+          disabled={!isFlipped}
         >
-          <span style={styles.buttonIcon}>✓</span>
-          <span>覚えた<br/>Got It</span>
-          <span style={styles.buttonShortcut}>2 or →</span>
+          <span>Hard</span>
+          <span style={styles.buttonShortcut}>2</span>
+        </button>
+        <button
+          style={{ ...styles.reviewBtn, ...styles.btnGood, opacity: !isFlipped ? 0.5 : 1 }}
+          onClick={() => { if (isFlipped) handleReview('good'); }}
+          disabled={!isFlipped}
+        >
+          <span>Good</span>
+          <span style={styles.buttonShortcut}>3</span>
+        </button>
+        <button
+          style={{ ...styles.reviewBtn, ...styles.btnEasy, opacity: !isFlipped ? 0.5 : 1 }}
+          onClick={() => { if (isFlipped) handleReview('easy'); }}
+          disabled={!isFlipped}
+        >
+          <span>Easy</span>
+          <span style={styles.buttonShortcut}>4</span>
         </button>
       </div>
     </div>
@@ -390,7 +356,6 @@ const styles: { [key: string]: CSSProperties } = {
     cursor: 'pointer',
     color: '#64748b',
     padding: '4px 8px',
-    transition: 'opacity 0.2s',
     width: '40px'
   },
   headerTitle: {
@@ -411,8 +376,7 @@ const styles: { [key: string]: CSSProperties } = {
     border: 'none',
     fontSize: '20px',
     cursor: 'pointer',
-    padding: '4px',
-    transition: 'opacity 0.2s'
+    padding: '4px'
   },
   counter: {
     fontSize: '14px',
@@ -428,7 +392,7 @@ const styles: { [key: string]: CSSProperties } = {
   },
   progressBar: {
     height: '100%',
-    backgroundColor: '#22c55e',
+    backgroundColor: '#3b82f6',
     transition: 'width 0.3s'
   },
   cardContainer: {
@@ -489,8 +453,7 @@ const styles: { [key: string]: CSSProperties } = {
     borderRadius: '8px',
     fontSize: '14px',
     fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'transform 0.2s'
+    cursor: 'pointer'
   },
   queueInfo: {
     fontSize: '14px',
@@ -525,49 +488,32 @@ const styles: { [key: string]: CSSProperties } = {
   },
   actions: {
     display: 'flex',
-    gap: '16px',
+    gap: '12px',
     padding: '24px',
     maxWidth: '600px',
     margin: '0 auto',
     width: '100%'
   },
-  againButton: {
+  reviewBtn: {
     flex: 1,
-    backgroundColor: '#fff',
-    color: '#ef4444',
-    border: '2px solid #ef4444',
-    borderRadius: '16px',
-    padding: '20px',
-    fontSize: '16px',
-    fontWeight: 600,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
-    transition: 'all 0.2s',
-    lineHeight: '1.3'
-  },
-  gotItButton: {
-    flex: 1,
-    backgroundColor: '#22c55e',
-    color: 'white',
     border: 'none',
     borderRadius: '16px',
-    padding: '20px',
-    fontSize: '16px',
+    padding: '16px 8px',
+    fontSize: '14px',
     fontWeight: 600,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '8px',
+    gap: '4px',
+    cursor: 'pointer',
     transition: 'all 0.2s',
-    lineHeight: '1.3'
+    color: '#fff'
   },
-  buttonIcon: {
-    fontSize: '24px'
-  },
+  btnAgain: { backgroundColor: '#ef4444' }, // Red
+  btnHard: { backgroundColor: '#f97316' },  // Orange
+  btnGood: { backgroundColor: '#22c55e' },  // Green
+  btnEasy: { backgroundColor: '#3b82f6' },  // Blue
   buttonShortcut: {
     fontSize: '11px',
     opacity: 0.8,
@@ -609,7 +555,7 @@ const styles: { [key: string]: CSSProperties } = {
   statValue: {
     fontSize: '36px',
     fontWeight: 700,
-    color: '#22c55e',
+    color: '#3b82f6',
     marginBottom: '4px'
   },
   statLabel: {
@@ -632,8 +578,7 @@ const styles: { [key: string]: CSSProperties } = {
     padding: '14px 32px',
     fontSize: '16px',
     fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
+    cursor: 'pointer'
   },
   homeButton: {
     backgroundColor: '#fff',
@@ -643,8 +588,7 @@ const styles: { [key: string]: CSSProperties } = {
     padding: '14px 32px',
     fontSize: '16px',
     fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'background-color 0.2s'
+    cursor: 'pointer'
   },
   loading: {
     textAlign: 'center',
