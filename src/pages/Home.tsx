@@ -2,6 +2,7 @@ import React, { useState, useEffect, CSSProperties } from 'react';
 import { getAllSets, deleteSet, FlashcardSet } from '../lib/storage';
 import { exportToCSV } from '../lib/csvParser';
 import { getStreak, getTodayStats } from '../lib/studyStats';
+import { getSetStudyStats } from '../lib/spacedRepetition';
 import ImportModal from '../components/ImportModal';
 
 interface HomeProps {
@@ -69,11 +70,6 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
     document.body.removeChild(link);
   };
 
-  const calculateProgress = (set: FlashcardSet) => {
-    if (set.cards.length === 0) return 0;
-    return (set.knownCardIds.length / set.cards.length) * 100;
-  };
-
   return (
     <div style={styles.container}>
       <header style={styles.header}>
@@ -134,7 +130,7 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
           </div>
           <div style={styles.stat}>
             <span style={styles.statValue}>
-              {sets.reduce((sum, set) => sum + set.knownCardIds.length, 0)}
+              {sets.reduce((sum, set) => sum + getSetStudyStats(set.id, set.cards.length).masteredCards, 0)}
             </span>
             <span style={styles.statLabel}>Mastered</span>
           </div>
@@ -176,7 +172,10 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
       ) : (
         <div style={styles.grid}>
           {sets.map((set) => {
-            const progress = calculateProgress(set);
+            const stats = getSetStudyStats(set.id, set.cards.length);
+            const progress = set.cards.length === 0 ? 0 : (stats.masteredCards / set.cards.length) * 100;
+            const hasDue = stats.dueCards > 0;
+            
             return (
               <div
                 key={set.id}
@@ -218,11 +217,17 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
                 {set.description && (
                   <p style={styles.cardDescription}>{set.description}</p>
                 )}
+
+                {hasDue && (
+                  <div style={styles.dueBadge}>
+                    🎯 {stats.dueCards} {stats.dueCards === 1 ? 'card' : 'cards'} due
+                  </div>
+                )}
                 
                 <div style={styles.cardFooter}>
                   <span style={styles.cardCount}>{set.cards.length} cards</span>
                   <span style={styles.progressText}>
-                    {set.knownCardIds.length}/{set.cards.length}
+                    {stats.masteredCards}/{set.cards.length} mastered
                   </span>
                 </div>
                 
@@ -441,7 +446,9 @@ const styles: { [key: string]: CSSProperties } = {
     cursor: 'pointer',
     transition: 'all 0.3s',
     boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-    border: '1px solid #e2e8f0'
+    border: '1px solid #e2e8f0',
+    display: 'flex',
+    flexDirection: 'column'
   },
   cardHeader: {
     display: 'flex',
@@ -482,7 +489,18 @@ const styles: { [key: string]: CSSProperties } = {
     fontSize: '14px',
     color: '#64748b',
     marginBottom: '16px',
-    lineHeight: '1.5'
+    lineHeight: '1.5',
+    flex: 1
+  },
+  dueBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#ef4444',
+    color: 'white',
+    padding: '4px 10px',
+    borderRadius: '20px',
+    fontSize: '12px',
+    fontWeight: 600,
+    marginBottom: '16px'
   },
   cardFooter: {
     display: 'flex',
