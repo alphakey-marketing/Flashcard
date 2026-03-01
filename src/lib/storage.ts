@@ -13,6 +13,7 @@ export interface FlashcardSet {
   description: string;
   cards: Card[];
   tags?: string[]; // Tags for organization
+  jlptLevel?: 'N5' | 'N4' | 'N3' | 'N2' | 'N1'; // JLPT level category
   createdAt: number;
   updatedAt: number;
 }
@@ -88,12 +89,19 @@ export function getSetsByTag(tag: string): FlashcardSet[] {
   return sets.filter(set => set.tags?.includes(tag));
 }
 
+// Filter sets by JLPT level
+export function getSetsByJLPTLevel(level: 'N5' | 'N4' | 'N3' | 'N2' | 'N1'): FlashcardSet[] {
+  const sets = getSetsFromStorage();
+  return sets.filter(set => set.jlptLevel === level);
+}
+
 // CREATE operation
 export function createNewSet(
   title: string,
   description: string,
   cards: CardDraft[],
-  tags?: string[]
+  tags?: string[],
+  jlptLevel?: 'N5' | 'N4' | 'N3' | 'N2' | 'N1'
 ): FlashcardSet {
   const now = Date.now();
   return {
@@ -106,6 +114,7 @@ export function createNewSet(
       back: card.back
     })),
     tags: tags || [],
+    jlptLevel,
     createdAt: now,
     updatedAt: now
   };
