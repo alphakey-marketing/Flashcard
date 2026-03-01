@@ -2,7 +2,7 @@ import React, { useState, useEffect, CSSProperties, useCallback } from 'react';
 import { getSet, FlashcardSet, Card } from '../lib/storage';
 import { audioService } from '../lib/audioService';
 import { recordSession } from '../lib/studyStats';
-import { saveCardReview, ReviewRating, getDueCards, getSetReviewData } from '../lib/spacedRepetition';
+import { saveCardReview, ReviewRating, getDueCards, getSetReviewData, getLearningCards } from '../lib/spacedRepetition';
 
 interface SwipeProps {
   setId: string;
@@ -14,12 +14,12 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [activeQueue, setActiveQueue] = useState<Card[]>([]);
   const [currentCard, setCurrentCard] = useState<Card | null>(null);
   const [isFlipped, setIsFlipped] = useState(false);
-  const [sessionStats, setSessionStats] = useState({ reviewed: 0, correct: 0 });
+  const [sessionStats, setSessionStats] = useState({ reviewed: 0, knowIt: 0, mastered: 0 });
   const [totalCards, setTotalCards] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [sessionStartTime] = useState(Date.now());
-  const [studyMode, setStudyMode] = useState<'due' | 'all'>('all'); // Default to 'all'
+  const [studyMode, setStudyMode] = useState<'due' | 'all'>('all');
 
   useEffect(() => {
     const flashcardSet = getSet(setId);
@@ -30,11 +30,11 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       const reviewedData = getSetReviewData(setId);
       const hasSomeReviews = reviewedData.length > 0;
       
-      // If they have review history, check for due cards
+      // If they have review history, check for learning/due cards
       if (hasSomeReviews) {
-        const dueCards = getDueCards(setId);
-        // If there are due cards, start in due mode, otherwise all mode
-        const initialMode = dueCards.length > 0 ? 'due' : 'all';
+        const learningCards = getLearningCards(setId);
+        // If there are learning cards, start in due mode, otherwise all mode
+        const initialMode = learningCards.length > 0 ? 'due' : 'all';
         loadQueue(flashcardSet, initialMode);
       } else {
         // First time studying this set - start in 'all' mode
@@ -46,18 +46,22 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   }, [setId, onNavigateToHome]);
 
   const loadQueue = (flashcardSet: FlashcardSet, mode: 'due' | 'all') => {
+    const reviewedData = getSetReviewData(setId);
+    const learningCards = getLearningCards(setId);
+    const learningCardIds = new Set(learningCards.map(d => d.cardId));
     const dueCardsData = getDueCards(setId);
     const dueCardIds = new Set(dueCardsData.map(d => d.cardId));
     
     let queueCards: Card[];
     
     if (mode === 'due') {
-      // Only due cards
-      queueCards = flashcardSet.cards.filter(card => dueCardIds.has(card.id));
+      // Show learning/reviewing cards (not mastered yet) + due mastered cards
+      queueCards = flashcardSet.cards.filter(card => 
+        learningCardIds.has(card.id) || dueCardIds.has(card.id)
+      );
       
-      // If no due cards, check if we have any new cards (never studied)
+      // If no learning/due cards, check if we have any new cards (never studied)
       if (queueCards.length === 0) {
-        const reviewedData = getSetReviewData(setId);
         const reviewedIds = new Set(reviewedData.map(d => d.cardId));
         const newCards = flashcardSet.cards.filter(card => !reviewedIds.has(card.id));
         
@@ -67,10 +71,14 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         }
       }
     } else {
-      // All cards, but due cards first
-      const dueCards = flashcardSet.cards.filter(card => dueCardIds.has(card.id));
-      const otherCards = flashcardSet.cards.filter(card => !dueCardIds.has(card.id));
-      queueCards = [...dueCards, ...otherCards];
+      // All cards, but learning/due cards first
+      const priorityCards = flashcardSet.cards.filter(card => 
+        learningCardIds.has(card.id) || dueCardIds.has(card.id)
+      );
+      const otherCards = flashcardSet.cards.filter(card => 
+        !learningCardIds.has(card.id) && !dueCardIds.has(card.id)
+      );
+      queueCards = [...priorityCards, ...otherCards];
     }
 
     setActiveQueue(queueCards);
@@ -82,7 +90,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const switchMode = (mode: 'due' | 'all') => {
     if (!set) return;
     loadQueue(set, mode);
-    setSessionStats({ reviewed: 0, correct: 0 });
+    setSessionStats({ reviewed: 0, knowIt: 0, mastered: 0 });
     setIsFlipped(false);
     setIsFinished(false);
   };
@@ -108,14 +116,15 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     // Update session stats
     setSessionStats(prev => ({
       reviewed: prev.reviewed + 1,
-      correct: rating !== 'again' ? prev.correct + 1 : prev.correct
+      knowIt: prev.knowIt + (rating === 'know_it' ? 1 : 0),
+      mastered: prev.mastered + (rating === 'mastered' ? 1 : 0)
     }));
 
     const newQueue = [...activeQueue];
     const reviewedCard = newQueue.shift()!;
 
     if (rating === 'again') {
-      // Reinsert card a few positions back
+      // Reinsert card a few positions back for immediate practice
       if (newQueue.length === 0) {
         newQueue.push(reviewedCard);
       } else {
@@ -135,7 +144,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         startTime: sessionStartTime,
         endTime: Date.now(),
         cardsStudied: totalCards,
-        cardsMastered: sessionStats.correct + (rating !== 'again' ? 1 : 0),
+        cardsMastered: sessionStats.mastered + (rating === 'mastered' ? 1 : 0),
         duration
       });
     } else {
@@ -173,15 +182,11 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           break;
         case '2':
           e.preventDefault();
-          if (isFlipped) handleReview('hard');
+          if (isFlipped) handleReview('know_it');
           break;
         case '3':
           e.preventDefault();
-          if (isFlipped) handleReview('good');
-          break;
-        case '4':
-          e.preventDefault();
-          if (isFlipped) handleReview('easy');
+          if (isFlipped) handleReview('mastered');
           break;
         case 'a':
         case 'A':
@@ -204,7 +209,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     loadQueue(set, studyMode);
     setIsFlipped(false);
     setIsFinished(false);
-    setSessionStats({ reviewed: 0, correct: 0 });
+    setSessionStats({ reviewed: 0, knowIt: 0, mastered: 0 });
   };
 
   if (!set) {
@@ -217,7 +222,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   // No cards in queue
   if (!currentCard && !isFinished) {
-    const dueCardsData = getDueCards(setId);
+    const learningCards = getLearningCards(setId);
     const reviewedData = getSetReviewData(setId);
     const allReviewed = reviewedData.length === set.cards.length;
     
@@ -259,9 +264,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
     const minutesStudied = Math.floor(duration / 60);
     const secondsStudied = duration % 60;
-    const accuracy = sessionStats.reviewed > 0 
-      ? Math.round((sessionStats.correct / sessionStats.reviewed) * 100) 
-      : 100;
 
     return (
       <div style={styles.container}>
@@ -282,8 +284,8 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               <div style={styles.statLabel}>Reviews</div>
             </div>
             <div style={styles.statBox}>
-              <div style={styles.statValue}>{accuracy}%</div>
-              <div style={styles.statLabel}>Accuracy</div>
+              <div style={styles.statValue}>{sessionStats.mastered}</div>
+              <div style={styles.statLabel}>🎯 Mastered</div>
             </div>
             <div style={styles.statBox}>
               <div style={styles.statValue}>
@@ -387,9 +389,8 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <div style={styles.keyboardHints}>
           <span style={styles.hint}><kbd style={styles.kbd}>Space</kbd> Flip</span>
           <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> Again</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> Hard</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>3</kbd> Good</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>4</kbd> Easy</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> Know It</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>3</kbd> Mastered</span>
           <span style={styles.hint}><kbd style={styles.kbd}>A</kbd> Audio</span>
         </div>
       </div>
@@ -400,32 +401,27 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           onClick={() => { if (isFlipped) handleReview('again'); }}
           disabled={!isFlipped}
         >
+          <span style={styles.emoji}>😰</span>
           <span>Again</span>
           <span style={styles.buttonShortcut}>1</span>
         </button>
         <button
-          style={{ ...styles.reviewBtn, ...styles.btnHard, opacity: !isFlipped ? 0.5 : 1 }}
-          onClick={() => { if (isFlipped) handleReview('hard'); }}
+          style={{ ...styles.reviewBtn, ...styles.btnKnowIt, opacity: !isFlipped ? 0.5 : 1 }}
+          onClick={() => { if (isFlipped) handleReview('know_it'); }}
           disabled={!isFlipped}
         >
-          <span>Hard</span>
+          <span style={styles.emoji}>😊</span>
+          <span>Know It</span>
           <span style={styles.buttonShortcut}>2</span>
         </button>
         <button
-          style={{ ...styles.reviewBtn, ...styles.btnGood, opacity: !isFlipped ? 0.5 : 1 }}
-          onClick={() => { if (isFlipped) handleReview('good'); }}
+          style={{ ...styles.reviewBtn, ...styles.btnMastered, opacity: !isFlipped ? 0.5 : 1 }}
+          onClick={() => { if (isFlipped) handleReview('mastered'); }}
           disabled={!isFlipped}
         >
-          <span>Good</span>
+          <span style={styles.emoji}>🎯</span>
+          <span>Mastered</span>
           <span style={styles.buttonShortcut}>3</span>
-        </button>
-        <button
-          style={{ ...styles.reviewBtn, ...styles.btnEasy, opacity: !isFlipped ? 0.5 : 1 }}
-          onClick={() => { if (isFlipped) handleReview('easy'); }}
-          disabled={!isFlipped}
-        >
-          <span>Easy</span>
-          <span style={styles.buttonShortcut}>4</span>
         </button>
       </div>
     </div>
@@ -624,10 +620,13 @@ const styles: { [key: string]: CSSProperties } = {
     transition: 'all 0.2s',
     color: '#fff'
   },
+  emoji: {
+    fontSize: '24px',
+    marginBottom: '4px'
+  },
   btnAgain: { backgroundColor: '#ef4444' },
-  btnHard: { backgroundColor: '#f97316' },
-  btnGood: { backgroundColor: '#22c55e' },
-  btnEasy: { backgroundColor: '#3b82f6' },
+  btnKnowIt: { backgroundColor: '#22c55e' },
+  btnMastered: { backgroundColor: '#3b82f6' },
   buttonShortcut: {
     fontSize: '11px',
     opacity: 0.8,
