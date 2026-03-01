@@ -12,8 +12,7 @@ export interface FlashcardSet {
   title: string;
   description: string;
   cards: Card[];
-  knownCardIds: string[];
-  tags?: string[]; // NEW: Tags for organization
+  tags?: string[]; // Tags for organization
   createdAt: number;
   updatedAt: number;
 }
@@ -106,7 +105,6 @@ export function createNewSet(
       front: card.front,
       back: card.back
     })),
-    knownCardIds: [],
     tags: tags || [],
     createdAt: now,
     updatedAt: now
@@ -124,21 +122,6 @@ export function saveSet(set: FlashcardSet): void {
   }
   
   saveSetsToStorage(sets);
-}
-
-// UPDATE operation
-export function updateKnownCards(setId: string, knownCardIds: string[]): void {
-  const sets = getSetsFromStorage();
-  const setIndex = sets.findIndex(s => s.id === setId);
-  
-  if (setIndex >= 0) {
-    sets[setIndex] = {
-      ...sets[setIndex],
-      knownCardIds,
-      updatedAt: Date.now()
-    };
-    saveSetsToStorage(sets);
-  }
 }
 
 // DELETE operation
