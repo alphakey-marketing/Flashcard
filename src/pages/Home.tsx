@@ -9,9 +9,10 @@ interface HomeProps {
   onNavigateToCreate: () => void;
   onNavigateToSwipe: (setId: string) => void;
   onNavigateToStats: () => void;
+  onLogout: () => void;
 }
 
-const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNavigateToStats }) => {
+const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNavigateToStats, onLogout }) => {
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [showImportModal, setShowImportModal] = useState(false);
   const [streak, setStreak] = useState({ current: 0, longest: 0, lastStudyDate: '' });
@@ -78,6 +79,14 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
           <p style={styles.subtitle}>日本語を勉強しよう！</p>
         </div>
         <div style={styles.headerButtons}>
+          <button
+            style={styles.logoutButton}
+            onClick={onLogout}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.8')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            Log Out
+          </button>
           <button
             style={styles.statsButton}
             onClick={onNavigateToStats}
@@ -285,6 +294,17 @@ const styles: { [key: string]: CSSProperties } = {
   headerButtons: {
     display: 'flex',
     gap: '12px'
+  },
+  logoutButton: {
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+    border: 'none',
+    borderRadius: '12px',
+    padding: '12px 20px',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'opacity 0.2s'
   },
   statsButton: {
     backgroundColor: '#fff',
