@@ -1,16 +1,11 @@
 /**
  * Spaced Repetition System using SM-2 Algorithm
  * Modified to use 3-button system: Again / Know It / Mastered
- * 
- * Key concepts:
- * - easeFactor: How easy the card is (higher = easier, longer intervals)
- * - interval: Days until next review
- * - repetitions: Number of consecutive correct reviews
- * - nextReview: Timestamp when card should be reviewed next
- * - status: learning / reviewing / mastered
  */
 
 import { storageCache } from './storageCache';
+import { syncService } from './syncService';
+import { supabase } from './supabaseClient';
 
 export interface CardReviewData {
   cardId: string;
@@ -58,11 +53,20 @@ const CACHE_TTL = 5000; // 5 seconds cache for review data
 // SM-2 Algorithm Constants
 const MIN_EASE_FACTOR = 1.3;
 const DEFAULT_EASE_FACTOR = 2.5;
-const INITIAL_INTERVAL = 1; // 1 day for first successful review
+
+// Auth context logic (similar to storage)
+let currentUserId: string | null = null;
+export function setReviewUserId(id: string | null) {
+  currentUserId = id;
+}
 
 /**
- * Initialize review data for a new card
+ * Direct override for syncing cloud down to local storage
  */
+export function overrideReviewsWithCloud(reviews: CardReviewData[]) {
+  saveReviewDataToStorage(reviews);
+}
+
 export function initializeCardReview(setId: string, cardId: string): CardReviewData {
   const now = Date.now();
   return {
@@ -71,7 +75,7 @@ export function initializeCardReview(setId: string, cardId: string): CardReviewD
     easeFactor: DEFAULT_EASE_FACTOR,
     interval: 0,
     repetitions: 0,
-    nextReview: now, // Available for review immediately
+    nextReview: now, 
     status: 'learning',
     totalReviews: 0,
     knowItCount: 0,
@@ -83,19 +87,14 @@ export function initializeCardReview(setId: string, cardId: string): CardReviewD
   };
 }
 
-/**
- * Get all review data from storage (with caching)
- */
 function getReviewDataFromStorage(): CardReviewData[] {
   try {
     const data = storageCache.get<CardReviewData[]>(STORAGE_KEY_REVIEWS, CACHE_TTL);
     
     if (!data) return [];
     
-    // Migrate old data if needed
     return data.map((item: any) => {
       if (!item.status) {
-        // Migrate old 4-button data to new 3-button system
         return {
           ...item,
           status: item.repetitions >= 5 ? 'mastered' : item.repetitions > 0 ? 'reviewing' : 'learning',
@@ -112,9 +111,6 @@ function getReviewDataFromStorage(): CardReviewData[] {
   }
 }
 
-/**
- * Save review data to storage (invalidates cache)
- */
 function saveReviewDataToStorage(data: CardReviewData[]): void {
   try {
     storageCache.set(STORAGE_KEY_REVIEWS, data);
@@ -123,9 +119,6 @@ function saveReviewDataToStorage(data: CardReviewData[]): void {
   }
 }
 
-/**
- * Get review data for a specific card
- */
 export function getCardReviewData(setId: string, cardId: string): CardReviewData {
   const allData = getReviewDataFromStorage();
   const existing = allData.find(d => d.setId === setId && d.cardId === cardId);
@@ -134,32 +127,17 @@ export function getCardReviewData(setId: string, cardId: string): CardReviewData
     return existing;
   }
   
-  // Initialize if not found
   const newData = initializeCardReview(setId, cardId);
   allData.push(newData);
   saveReviewDataToStorage(allData);
   return newData;
 }
 
-/**
- * Get all review data for a set (cached)
- */
 export function getSetReviewData(setId: string): CardReviewData[] {
   const allData = getReviewDataFromStorage();
   return allData.filter(d => d.setId === setId);
 }
 
-/**
- * Calculate next interval based on 3-button system
- * 
- * Again: Reset progress, short interval (1 day)
- * Know It: Normal progress, medium intervals (2-5 days)
- * Mastered: Graduate card, long intervals (7+ days)
- * 
- * @param rating - User's rating (again / know_it / mastered)
- * @param currentData - Current review data for the card
- * @returns Updated review data
- */
 export function calculateNextReview(
   rating: ReviewRating,
   currentData: CardReviewData
@@ -167,61 +145,46 @@ export function calculateNextReview(
   const now = Date.now();
   let { easeFactor, interval, repetitions, status } = currentData;
   
-  // Update performance counters
   const totalReviews = currentData.totalReviews + 1;
   let knowItCount = currentData.knowItCount;
   let againCount = currentData.againCount;
   let masteredCount = currentData.masteredCount;
   
-  // Process rating
   switch (rating) {
     case 'again':
-      // Reset progress - card goes back to learning
       againCount++;
       repetitions = 0;
-      interval = 1; // 1 day
+      interval = 1; 
       status = 'learning';
-      // Decrease ease factor (make it harder)
       easeFactor = Math.max(MIN_EASE_FACTOR, easeFactor - 0.2);
       break;
       
     case 'know_it':
-      // Normal progress - card stays in reviewing
       knowItCount++;
-      
       if (repetitions === 0) {
-        interval = 2; // 2 days
-        status = 'reviewing';
+        interval = 2;
       } else if (repetitions === 1) {
-        interval = 4; // 4 days
-        status = 'reviewing';
+        interval = 4;
       } else {
-        interval = Math.round(interval * 1.5); // Gradual increase
-        status = 'reviewing';
+        interval = Math.round(interval * 1.5);
       }
-      
+      status = 'reviewing';
       repetitions++;
-      // Maintain ease factor
       break;
       
     case 'mastered':
-      // Graduate card - long intervals
       masteredCount++;
-      
       if (repetitions === 0) {
-        interval = 7; // 1 week
+        interval = 7;
       } else {
-        interval = Math.round(interval * easeFactor); // Use full ease factor
+        interval = Math.round(interval * easeFactor);
       }
-      
-      repetitions++;
       status = 'mastered';
-      // Increase ease factor (make it easier)
+      repetitions++;
       easeFactor = Math.min(3.0, easeFactor + 0.15);
       break;
   }
   
-  // Calculate next review date
   const nextReview = now + (interval * 24 * 60 * 60 * 1000);
   
   return {
@@ -240,9 +203,6 @@ export function calculateNextReview(
   };
 }
 
-/**
- * Save updated review data after a review
- */
 export function saveCardReview(
   setId: string,
   cardId: string,
@@ -267,12 +227,15 @@ export function saveCardReview(
   }
   
   saveReviewDataToStorage(allData);
+
+  // Background sync
+  if (currentUserId) {
+    syncService.pushReview(updatedData, currentUserId);
+  }
+
   return updatedData;
 }
 
-/**
- * Get cards that are due for review (includes learning and reviewing cards)
- */
 export function getDueCards(setId: string): CardReviewData[] {
   const now = Date.now();
   const setData = getSetReviewData(setId);
@@ -283,17 +246,11 @@ export function getDueCards(setId: string): CardReviewData[] {
   );
 }
 
-/**
- * Get cards in learning state (not yet mastered)
- */
 export function getLearningCards(setId: string): CardReviewData[] {
   const setData = getSetReviewData(setId);
   return setData.filter(card => card.status === 'learning' || card.status === 'reviewing');
 }
 
-/**
- * Get cards that need more practice (high "again" count)
- */
 export function getDifficultCards(
   setId: string,
   threshold: number = 3
@@ -304,17 +261,11 @@ export function getDifficultCards(
     .sort((a, b) => b.againCount - a.againCount);
 }
 
-/**
- * Get mastered cards (status = 'mastered')
- */
 export function getMasteredCards(setId: string): CardReviewData[] {
   const setData = getSetReviewData(setId);
   return setData.filter(card => card.status === 'mastered');
 }
 
-/**
- * Calculate study statistics for a set
- */
 export function getSetStudyStats(setId: string, totalCards: number) {
   const setData = getSetReviewData(setId);
   const now = Date.now();
@@ -329,7 +280,6 @@ export function getSetStudyStats(setId: string, totalCards: number) {
     ? setData.reduce((sum, card) => sum + card.easeFactor, 0) / setData.length
     : DEFAULT_EASE_FACTOR;
   
-  // Calculate success rate
   const totalAttempts = setData.reduce(
     (sum, card) => sum + card.totalReviews,
     0
@@ -354,9 +304,6 @@ export function getSetStudyStats(setId: string, totalCards: number) {
   };
 }
 
-/**
- * Start a new review session
- */
 export function startReviewSession(setId: string): ReviewSession {
   const session: ReviewSession = {
     setId,
@@ -371,26 +318,37 @@ export function startReviewSession(setId: string): ReviewSession {
   return session;
 }
 
-/**
- * End a review session and save it
- */
 export function endReviewSession(session: ReviewSession): ReviewSession {
   const endedSession = {
     ...session,
     endTime: Date.now(),
   };
   
-  // Save to storage (use cache for sessions too)
   try {
     const sessions = storageCache.get<ReviewSession[]>(STORAGE_KEY_SESSIONS) || [];
     sessions.push(endedSession);
     
-    // Keep only last 100 sessions
     if (sessions.length > 100) {
       sessions.shift();
     }
     
     storageCache.set(STORAGE_KEY_SESSIONS, sessions);
+
+    // If we wanted to sync sessions to study_sessions table, we would add that here.
+    if (currentUserId && endedSession.endTime) {
+      supabase.from('study_sessions').insert({
+        user_id: currentUserId,
+        deck_id: endedSession.setId,
+        start_time: new Date(endedSession.startTime).toISOString(),
+        end_time: new Date(endedSession.endTime).toISOString(),
+        duration_seconds: Math.floor((endedSession.endTime - endedSession.startTime) / 1000),
+        cards_studied: endedSession.cardsReviewed,
+        cards_mastered: endedSession.cardsMastered
+      }).then(({ error }) => {
+        if (error) console.error("Error syncing session: ", error);
+      });
+    }
+
   } catch (error) {
     console.error('Error saving session:', error);
   }
@@ -398,9 +356,6 @@ export function endReviewSession(session: ReviewSession): ReviewSession {
   return endedSession;
 }
 
-/**
- * Get review sessions for a set
- */
 export function getRecentSessions(
   setId: string,
   limit: number = 10
