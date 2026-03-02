@@ -1,4 +1,6 @@
 import { jlptTemplates } from '../data/jlpt-templates';
+import { syncService } from './syncService';
+import { supabase } from './supabaseClient';
 
 // Data models
 export interface Card {
@@ -31,6 +33,13 @@ const INIT_FLAG_KEY = 'flashcard-initialized';
 const TEMPLATE_VERSION_KEY = 'flashcard-template-version';
 const CURRENT_TEMPLATE_VERSION = '3.0'; // Version 3.0 includes example sentences
 
+// Internal variables
+let currentUserId: string | null = null;
+
+export function setUserId(id: string | null) {
+  currentUserId = id;
+}
+
 // Helper function to get all sets from localStorage
 function getSetsFromStorage(): FlashcardSet[] {
   try {
@@ -50,6 +59,13 @@ function saveSetsToStorage(sets: FlashcardSet[]): void {
   } catch (error) {
     console.error('Error writing to localStorage:', error);
   }
+}
+
+// Direct override for sync (called after login)
+export function overrideStorageWithCloud(sets: FlashcardSet[]) {
+  saveSetsToStorage(sets);
+  localStorage.setItem(INIT_FLAG_KEY, 'true');
+  localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
 }
 
 // Initialize with JLPT templates on first load or version upgrade
@@ -75,6 +91,13 @@ function initializeTemplates(): void {
     localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
     
     console.log(`Initialized with template version ${CURRENT_TEMPLATE_VERSION} - Added example sentences`);
+
+    // Sync templates up to cloud if user is logged in
+    if (currentUserId) {
+      jlptTemplates.forEach(template => {
+        syncService.pushDeck(template, currentUserId!);
+      });
+    }
   }
 }
 
@@ -127,7 +150,7 @@ export function createNewSet(
     title,
     description,
     cards: cards.map(card => ({
-      id: card.id,
+      id: card.id || crypto.randomUUID(),
       front: card.front,
       back: card.back,
       example: card.example
@@ -150,6 +173,11 @@ export function saveSet(set: FlashcardSet): void {
   }
   
   saveSetsToStorage(sets);
+
+  // Background sync to cloud
+  if (currentUserId) {
+    syncService.pushDeck(set, currentUserId);
+  }
 }
 
 // DELETE operation
@@ -157,6 +185,11 @@ export function deleteSet(id: string): void {
   const sets = getSetsFromStorage();
   const filteredSets = sets.filter(set => set.id !== id);
   saveSetsToStorage(filteredSets);
+
+  // Background delete from cloud
+  if (currentUserId) {
+    syncService.deleteDeck(id);
+  }
 }
 
 // Force reload templates (for debugging/admin purposes)
