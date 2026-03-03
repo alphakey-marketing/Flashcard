@@ -55,6 +55,32 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onImportSuccess }) =
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.name.endsWith('.json')) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const text = event.target?.result as string;
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) {
+            // It's a full backup JSON
+            data.forEach((set: any) => {
+              if (set.id && set.title && Array.isArray(set.cards)) {
+                saveSet(set);
+              }
+            });
+            onImportSuccess();
+            onClose();
+          } else {
+            setError('Invalid backup format. Expected an array of flashcard sets.');
+          }
+        } catch (err) {
+          setError('Failed to parse JSON backup file.');
+        }
+      };
+      reader.readAsText(file);
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
@@ -68,7 +94,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onImportSuccess }) =
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
           <h2 style={styles.title}>
-            {step === 'input' ? '📥 Import CSV' : '👀 Preview Import'}
+            {step === 'input' ? '📥 Import CSV or Backup' : '👀 Preview Import'}
           </h2>
           <button
             style={styles.closeButton}
@@ -84,26 +110,26 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onImportSuccess }) =
           <>
             <div style={styles.content}>
               <div style={styles.helpBox}>
-                <strong>📝 CSV Format:</strong>
+                <strong>📝 Supported Formats:</strong>
                 <ul style={styles.helpList}>
-                  <li>Each line = one flashcard</li>
-                  <li>Format: <code>Front,Back</code> or <code>Front,Back,Notes</code></li>
-                  <li>Example: <code>勉強,べんきょう - study</code></li>
-                  <li>Example: <code>学校,がっこう,school</code></li>
+                  <li><strong>JSON Backup:</strong> Upload a `.json` file from a previous backup to restore your sets.</li>
+                  <li><strong>CSV Format:</strong> Each line = one flashcard</li>
+                  <li>CSV Example: <code>Front,Back</code> or <code>Front,Back,Notes</code></li>
+                  <li>CSV Example: <code>学校,がっこう,school</code></li>
                 </ul>
               </div>
 
               <div style={styles.uploadSection}>
                 <label style={styles.fileLabel}>
-                  📂 Upload CSV File
+                  📂 Upload File
                   <input
                     type="file"
-                    accept=".csv,.txt"
+                    accept=".csv,.txt,.json"
                     onChange={handleFileUpload}
                     style={styles.fileInput}
                   />
                 </label>
-                <span style={styles.orText}>or paste text below</span>
+                <span style={styles.orText}>or paste CSV text below</span>
               </div>
 
               <textarea
@@ -251,7 +277,8 @@ const styles: { [key: string]: CSSProperties } = {
   },
   helpList: {
     margin: '8px 0 0 0',
-    paddingLeft: '20px'
+    paddingLeft: '20px',
+    lineHeight: '1.5'
   },
   uploadSection: {
     display: 'flex',
