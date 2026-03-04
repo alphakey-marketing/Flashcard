@@ -586,7 +586,7 @@ const styles: { [key: string]: CSSProperties } = {
   header: {
     backgroundColor: '#fff',
     borderBottom: '1px solid #e2e8f0',
-    padding: '16px 24px',
+    padding: '12px 16px',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center'
@@ -594,14 +594,14 @@ const styles: { [key: string]: CSSProperties } = {
   closeButton: {
     background: 'none',
     border: 'none',
-    fontSize: '24px',
+    fontSize: '20px',
     cursor: 'pointer',
     color: '#64748b',
-    padding: '4px 8px',
-    width: '40px'
+    padding: '4px',
+    width: '32px'
   },
   headerTitle: {
-    fontSize: '16px',
+    fontSize: '14px',
     fontWeight: 600,
     color: '#0f172a',
     margin: 0,
@@ -611,7 +611,7 @@ const styles: { [key: string]: CSSProperties } = {
   audioToggle: {
     display: 'flex',
     alignItems: 'center',
-    gap: '12px'
+    gap: '8px'
   },
   modeToggle: {
     display: 'flex',
@@ -622,9 +622,9 @@ const styles: { [key: string]: CSSProperties } = {
   },
   modeButton: {
     border: 'none',
-    padding: '6px 12px',
+    padding: '4px 10px',
     borderRadius: '6px',
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: 600,
     cursor: 'pointer',
     transition: 'all 0.2s'
@@ -632,19 +632,19 @@ const styles: { [key: string]: CSSProperties } = {
   audioButton: {
     background: 'none',
     border: 'none',
-    fontSize: '20px',
+    fontSize: '18px',
     cursor: 'pointer',
     padding: '4px'
   },
   counter: {
-    fontSize: '14px',
+    fontSize: '12px',
     color: '#3b82f6',
     fontWeight: 600,
-    minWidth: '60px',
+    minWidth: '50px',
     textAlign: 'right'
   },
   reverseModeContainer: {
-    padding: '12px 24px',
+    padding: '8px 16px',
     backgroundColor: '#fff',
     borderBottom: '1px solid #e2e8f0',
     display: 'flex',
@@ -653,22 +653,22 @@ const styles: { [key: string]: CSSProperties } = {
   reverseModeButton: {
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
-    padding: '8px 16px',
+    gap: '6px',
+    padding: '6px 12px',
     borderRadius: '8px',
-    fontSize: '13px',
+    fontSize: '11px',
     fontWeight: 600,
     cursor: 'pointer',
     transition: 'all 0.2s'
   },
   reverseModeIcon: {
-    fontSize: '16px'
+    fontSize: '14px'
   },
   reverseModeText: {
-    fontSize: '13px'
+    fontSize: '11px'
   },
   progressBarContainer: {
-    height: '4px',
+    height: '3px',
     backgroundColor: '#e2e8f0',
     width: '100%'
   },
@@ -683,21 +683,21 @@ const styles: { [key: string]: CSSProperties } = {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '24px',
-    gap: '16px'
+    padding: '12px 16px',
+    gap: '12px'
   },
   flashcard: {
     width: '100%',
-    maxWidth: '600px',
-    minHeight: '400px',
+    maxWidth: '500px',
+    minHeight: '200px',
     backgroundColor: '#fff',
-    borderRadius: '24px',
-    boxShadow: '0 8px 32px rgba(0,0,0,0.1)',
+    borderRadius: '16px',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '48px',
+    padding: '24px',
     transition: 'transform 0.2s',
     border: '2px solid #e2e8f0',
     userSelect: 'none'
@@ -707,130 +707,130 @@ const styles: { [key: string]: CSSProperties } = {
     width: '100%'
   },
   cardLabel: {
-    fontSize: '12px',
+    fontSize: '10px',
     fontWeight: 700,
     color: '#64748b',
     letterSpacing: '1px',
-    marginBottom: '24px'
+    marginBottom: '16px'
   },
   cardTextContainer: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     width: '100%',
-    gap: '24px'
+    gap: '16px'
   },
   cardText: {
-    fontSize: '32px',
+    fontSize: '24px',
     fontWeight: 600,
     color: '#0f172a',
-    lineHeight: '1.5',
+    lineHeight: '1.4',
     wordWrap: 'break-word',
     whiteSpace: 'pre-wrap'
   },
   exampleBox: {
     backgroundColor: '#f8fafc',
-    borderLeft: '4px solid #3b82f6',
-    borderRadius: '0 12px 12px 0',
-    padding: '16px',
+    borderLeft: '3px solid #3b82f6',
+    borderRadius: '0 8px 8px 0',
+    padding: '12px',
     width: '100%',
-    maxWidth: '450px',
+    maxWidth: '380px',
     textAlign: 'left'
   },
   exampleLabel: {
-    fontSize: '12px',
+    fontSize: '10px',
     fontWeight: 700,
     color: '#64748b',
-    marginBottom: '8px',
+    marginBottom: '6px',
     textTransform: 'uppercase',
     letterSpacing: '0.5px'
   },
   exampleText: {
-    fontSize: '18px',
+    fontSize: '14px',
     color: '#334155',
-    lineHeight: '1.6',
+    lineHeight: '1.5',
     fontWeight: 500
   },
   tapHint: {
-    fontSize: '14px',
+    fontSize: '12px',
     color: '#94a3b8',
-    marginTop: '24px'
+    marginTop: '16px'
   },
   speakerButton: {
-    marginTop: '20px',
-    padding: '10px 20px',
+    marginTop: '16px',
+    padding: '8px 16px',
     backgroundColor: '#3b82f6',
     color: 'white',
     border: 'none',
     borderRadius: '8px',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: 600,
     cursor: 'pointer'
   },
   queueInfo: {
-    fontSize: '14px',
+    fontSize: '12px',
     color: '#64748b',
     textAlign: 'center',
-    padding: '8px 16px',
+    padding: '6px 12px',
     backgroundColor: '#fff',
-    borderRadius: '20px',
+    borderRadius: '16px',
     border: '1px solid #e2e8f0'
   },
   keyboardHints: {
     display: 'flex',
-    gap: '16px',
+    gap: '12px',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    fontSize: '12px',
+    fontSize: '10px',
     color: '#94a3b8'
   },
   hint: {
     display: 'flex',
     alignItems: 'center',
-    gap: '6px'
+    gap: '4px'
   },
   kbd: {
     backgroundColor: '#f1f5f9',
     border: '1px solid #cbd5e1',
-    borderRadius: '4px',
-    padding: '2px 6px',
+    borderRadius: '3px',
+    padding: '2px 4px',
     fontFamily: 'monospace',
-    fontSize: '11px',
+    fontSize: '9px',
     color: '#475569'
   },
   actions: {
     display: 'flex',
-    gap: '12px',
-    padding: '24px',
-    maxWidth: '600px',
+    gap: '8px',
+    padding: '12px 16px',
+    maxWidth: '500px',
     margin: '0 auto',
     width: '100%'
   },
   reviewBtn: {
     flex: 1,
     border: 'none',
-    borderRadius: '16px',
-    padding: '16px 8px',
-    fontSize: '14px',
+    borderRadius: '12px',
+    padding: '12px 6px',
+    fontSize: '12px',
     fontWeight: 600,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '4px',
+    gap: '3px',
     cursor: 'pointer',
     transition: 'all 0.2s',
     color: '#fff'
   },
   emoji: {
-    fontSize: '24px',
-    marginBottom: '4px'
+    fontSize: '20px',
+    marginBottom: '2px'
   },
   btnAgain: { backgroundColor: '#ef4444' },
   btnKnowIt: { backgroundColor: '#22c55e' },
   btnMastered: { backgroundColor: '#3b82f6' },
   buttonShortcut: {
-    fontSize: '11px',
+    fontSize: '10px',
     opacity: 0.8,
     fontWeight: 400
   },
