@@ -21,6 +21,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [sessionStartTime] = useState(Date.now());
   const [studyMode, setStudyMode] = useState<'due' | 'all'>('all');
   const [reverseMode, setReverseMode] = useState(false);
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
 
   // Memoized queue loading logic to prevent recreating function
   const loadQueue = useCallback((flashcardSet: FlashcardSet, mode: 'due' | 'all') => {
@@ -141,7 +142,10 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   // Play audio sequence with pauses
   const playCardAudio = useCallback(() => {
-    if (!currentCard) return;
+    if (!currentCard || !audioService.isSupported()) return;
+
+    // Mark that user has interacted (for mobile autoplay)
+    setHasUserInteracted(true);
 
     // We only play Japanese text, which is always stored in currentCard.front
     const frontText = currentCard.front;
@@ -191,7 +195,12 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   // Auto-play audio logic
   useEffect(() => {
-    if (!audioEnabled || !currentCard) return;
+    if (!audioEnabled || !currentCard || !audioService.isSupported()) return;
+
+    // On mobile, require user interaction first before auto-playing
+    if (!hasUserInteracted && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+      return;
+    }
 
     // Recognition mode (JP -> EN): Front is Japanese -> play when NOT flipped
     // Production mode (EN -> JP): Back is Japanese -> play when FLIPPED
@@ -204,10 +213,15 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       
       return () => clearTimeout(timeoutId);
     }
-  }, [currentCard, isFlipped, reverseMode, audioEnabled, playCardAudio]);
+  }, [currentCard, isFlipped, reverseMode, audioEnabled, playCardAudio, hasUserInteracted]);
 
   const handleReview = useCallback((rating: ReviewRating) => {
     if (!currentCard || !set) return;
+
+    // Mark user interaction on first review
+    if (!hasUserInteracted) {
+      setHasUserInteracted(true);
+    }
 
     // Save review to SM-2 system
     saveCardReview(set.id, currentCard.id, rating);
@@ -255,7 +269,15 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       setCurrentCard(newQueue[0]);
       setIsFlipped(false);
     }
-  }, [currentCard, set, activeQueue, sessionStartTime, totalCards]);
+  }, [currentCard, set, activeQueue, sessionStartTime, totalCards, hasUserInteracted]);
+
+  // Handle card flip with user interaction tracking
+  const handleFlipCard = useCallback(() => {
+    if (!hasUserInteracted) {
+      setHasUserInteracted(true);
+    }
+    setIsFlipped(prev => !prev);
+  }, [hasUserInteracted]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -269,7 +291,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       switch (e.key) {
         case ' ':
           e.preventDefault();
-          setIsFlipped(prev => !prev);
+          handleFlipCard();
           break;
         case '1':
           e.preventDefault();
@@ -304,7 +326,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isFlipped, isFinished, handleReview, onNavigateToHome, currentCard, reverseMode, toggleReverseMode, playCardAudio]);
+  }, [isFlipped, isFinished, handleReview, onNavigateToHome, currentCard, reverseMode, toggleReverseMode, playCardAudio, handleFlipCard]);
 
   const handleStudyAgain = useCallback(() => {
     if (!set) return;
@@ -495,7 +517,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       </div>
 
       <div style={styles.cardContainer}>
-        <div style={styles.flashcard} onClick={() => setIsFlipped(!isFlipped)}>
+        <div style={styles.flashcard} onClick={handleFlipCard}>
           <div style={styles.cardContent}>
             {!isFlipped ? (
               <>
@@ -507,11 +529,9 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               <>
                 <div style={styles.cardLabel}>BACK</div>
                 {renderCardText(getCurrentBack())}
-                {audioService.isSupported() && (
-                  <button style={styles.speakerButton} onClick={handlePlayAudio} title="Play audio (A)">
-                    🔊 Listen
-                  </button>
-                )}
+                <button style={styles.speakerButton} onClick={handlePlayAudio} title="Play audio (A)">
+                  🔊 Listen
+                </button>
               </>
             )}
           </div>
