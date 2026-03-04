@@ -523,6 +523,9 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               <>
                 <div style={styles.cardLabel}>FRONT</div>
                 {renderCardText(getCurrentFront())}
+                <button style={styles.speakerButton} onClick={handlePlayAudio} title="Play audio (A)">
+                  🔊 Listen
+                </button>
                 <div style={styles.tapHint}>👆 Tap to flip (or press Space)</div>
               </>
             ) : (
