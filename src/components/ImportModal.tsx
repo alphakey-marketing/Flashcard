@@ -1,6 +1,6 @@
 import React, { useState, CSSProperties } from 'react';
 import { parseCSV, validateCSV } from '../lib/csvParser';
-import { createNewSet, saveSet } from '../lib/storage';
+import { createNewSet, saveSet, FlashcardSet } from '../lib/storage';
 
 interface ImportModalProps {
   onClose: () => void;
@@ -14,6 +14,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onImportSuccess }) =
   const [error, setError] = useState('');
   const [step, setStep] = useState<'input' | 'preview'>('input');
   const [previewCount, setPreviewCount] = useState(0);
+  const [importing, setImporting] = useState(false);
 
   const handleValidate = () => {
     const validation = validateCSV(csvText);
@@ -51,9 +52,27 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onImportSuccess }) =
     onClose();
   };
 
+  const validateFlashcardSet = (set: any): set is FlashcardSet => {
+    return (
+      set &&
+      typeof set.id === 'string' &&
+      typeof set.title === 'string' &&
+      Array.isArray(set.cards) &&
+      set.cards.every((card: any) => 
+        card &&
+        typeof card.id === 'string' &&
+        typeof card.front === 'string' &&
+        typeof card.back === 'string'
+      )
+    );
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    setError('');
+    setImporting(true);
 
     if (file.name.endsWith('.json')) {
       const reader = new FileReader();
@@ -61,30 +80,69 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onImportSuccess }) =
         try {
           const text = event.target?.result as string;
           const data = JSON.parse(text);
-          if (Array.isArray(data)) {
-            // It's a full backup JSON
-            data.forEach((set: any) => {
-              if (set.id && set.title && Array.isArray(set.cards)) {
-                saveSet(set);
-              }
-            });
+          
+          if (!Array.isArray(data)) {
+            setError('Invalid backup format. Expected an array of flashcard sets.');
+            setImporting(false);
+            return;
+          }
+
+          let importedCount = 0;
+          let skippedCount = 0;
+
+          data.forEach((set: any) => {
+            if (validateFlashcardSet(set)) {
+              // Ensure timestamps are numbers
+              const validSet: FlashcardSet = {
+                ...set,
+                createdAt: typeof set.createdAt === 'number' ? set.createdAt : Date.now(),
+                updatedAt: typeof set.updatedAt === 'number' ? set.updatedAt : Date.now(),
+                tags: Array.isArray(set.tags) ? set.tags : [],
+                description: set.description || ''
+              };
+              saveSet(validSet);
+              importedCount++;
+            } else {
+              skippedCount++;
+              console.warn('Skipped invalid set:', set);
+            }
+          });
+
+          setImporting(false);
+          
+          if (importedCount > 0) {
+            alert(`Successfully imported ${importedCount} flashcard set(s)!${skippedCount > 0 ? ` (${skippedCount} invalid sets were skipped)` : ''}`);
             onImportSuccess();
             onClose();
           } else {
-            setError('Invalid backup format. Expected an array of flashcard sets.');
+            setError(`No valid flashcard sets found in the backup file. ${skippedCount} invalid sets were detected.`);
           }
         } catch (err) {
-          setError('Failed to parse JSON backup file.');
+          console.error('JSON parse error:', err);
+          setError(`Failed to parse JSON file: ${err instanceof Error ? err.message : 'Unknown error'}`);
+          setImporting(false);
         }
       };
+      
+      reader.onerror = () => {
+        setError('Failed to read file. Please try again.');
+        setImporting(false);
+      };
+      
       reader.readAsText(file);
       return;
     }
 
+    // Handle CSV files
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
       setCsvText(text);
+      setImporting(false);
+    };
+    reader.onerror = () => {
+      setError('Failed to read file. Please try again.');
+      setImporting(false);
     };
     reader.readAsText(file);
   };
@@ -112,21 +170,26 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onImportSuccess }) =
               <div style={styles.helpBox}>
                 <strong>📝 Supported Formats:</strong>
                 <ul style={styles.helpList}>
-                  <li><strong>JSON Backup:</strong> Upload a `.json` file from a previous backup to restore your sets.</li>
+                  <li><strong>JSON Backup:</strong> Upload a <code>.json</code> file from "💾 Backup All" to restore all your flashcard sets</li>
                   <li><strong>CSV Format:</strong> Each line = one flashcard</li>
-                  <li>CSV Example: <code>Front,Back</code> or <code>Front,Back,Notes</code></li>
+                  <li>CSV Example: <code>Front,Back</code> or <code>Front,Back,Example</code></li>
                   <li>CSV Example: <code>学校,がっこう,school</code></li>
                 </ul>
               </div>
 
               <div style={styles.uploadSection}>
-                <label style={styles.fileLabel}>
-                  📂 Upload File
+                <label style={{
+                  ...styles.fileLabel,
+                  opacity: importing ? 0.5 : 1,
+                  cursor: importing ? 'not-allowed' : 'pointer'
+                }}>
+                  {importing ? '⏳ Loading...' : '📂 Upload File'}
                   <input
                     type="file"
-                    accept=".csv,.txt,.json"
+                    accept=".csv,.txt,.json,application/json"
                     onChange={handleFileUpload}
                     style={styles.fileInput}
+                    disabled={importing}
                   />
                 </label>
                 <span style={styles.orText}>or paste CSV text below</span>
@@ -138,6 +201,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onImportSuccess }) =
                 onChange={(e) => setCsvText(e.target.value)}
                 style={styles.textarea}
                 rows={12}
+                disabled={importing}
               />
 
               {error && <div style={styles.error}>{error}</div>}
@@ -149,14 +213,15 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onImportSuccess }) =
                 onClick={onClose}
                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f1f5f9')}
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#fff')}
+                disabled={importing}
               >
                 Cancel
               </button>
               <button
                 style={styles.nextButton}
                 onClick={handleValidate}
-                disabled={!csvText.trim()}
-                onMouseEnter={(e) => !csvText.trim() ? null : (e.currentTarget.style.opacity = '0.9')}
+                disabled={!csvText.trim() || importing}
+                onMouseEnter={(e) => (!csvText.trim() || importing) ? null : (e.currentTarget.style.opacity = '0.9')}
                 onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
               >
                 Next →
@@ -278,7 +343,7 @@ const styles: { [key: string]: CSSProperties } = {
   helpList: {
     margin: '8px 0 0 0',
     paddingLeft: '20px',
-    lineHeight: '1.5'
+    lineHeight: '1.6'
   },
   uploadSection: {
     display: 'flex',
@@ -356,7 +421,8 @@ const styles: { [key: string]: CSSProperties } = {
     padding: '12px',
     borderRadius: '8px',
     marginTop: '12px',
-    fontSize: '14px'
+    fontSize: '14px',
+    lineHeight: '1.5'
   },
   footer: {
     padding: '16px 24px',
