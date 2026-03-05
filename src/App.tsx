@@ -46,18 +46,32 @@ const App: React.FC = () => {
       setIsSyncing(true);
       try {
         // Pull latest from cloud
-        const { decks, reviews } = await syncService.pullAll(userId);
+        const { decks: cloudDecks, reviews: cloudReviews } = await syncService.pullAll(userId);
         
-        if (decks.length > 0) {
-          // Cloud has data -> Override local
-          overrideStorageWithCloud(decks);
-          overrideReviewsWithCloud(reviews);
-        } else {
-          // Cloud is empty (new account) -> Push local data (like templates) to cloud
-          const localSets = getAllSets();
-          for (const set of localSets) {
-            await syncService.pushDeck(set, userId);
+        // Get local decks to prevent data loss
+        const localDecks = getAllSets();
+        const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
+        
+        // Find local decks that are NOT in the cloud yet
+        const missingLocalDecks = localDecks.filter(d => !cloudDeckIds.has(d.id));
+        
+        let finalDecks = [...cloudDecks];
+        
+        if (missingLocalDecks.length > 0) {
+          console.log(`Found ${missingLocalDecks.length} local decks not in cloud. Merging...`);
+          // Push missing local decks to cloud to back them up
+          for (const deck of missingLocalDecks) {
+            await syncService.pushDeck(deck, userId);
+            finalDecks.push(deck);
           }
+        }
+        
+        // Update local storage with the merged decks
+        if (finalDecks.length > 0) {
+          overrideStorageWithCloud(finalDecks);
+          overrideReviewsWithCloud(cloudReviews);
+        } else {
+          // Cloud is empty and local is empty (very rare, but handled)
         }
       } catch (err) {
         console.error("Sync failed", err);
