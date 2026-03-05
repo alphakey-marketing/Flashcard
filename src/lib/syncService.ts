@@ -86,7 +86,7 @@ export const syncService = {
       return;
     }
 
-    // Upsert cards (delete old cards not in current list could be added here later)
+    // Upsert cards in chunks to avoid payload limits
     const cardsToUpsert = deck.cards.map((card, index) => ({
       id: card.id,
       deck_id: deck.id,
@@ -96,13 +96,15 @@ export const syncService = {
       position: index
     }));
 
-    if (cardsToUpsert.length > 0) {
+    const CHUNK_SIZE = 100;
+    for (let i = 0; i < cardsToUpsert.length; i += CHUNK_SIZE) {
+      const chunk = cardsToUpsert.slice(i, i + CHUNK_SIZE);
       const { error: cardsError } = await supabase
         .from('cards')
-        .upsert(cardsToUpsert, { onConflict: 'id' });
+        .upsert(chunk, { onConflict: 'id' });
 
       if (cardsError) {
-        console.error('Error syncing cards:', cardsError);
+        console.error('Error syncing cards chunk:', cardsError);
       }
     }
   },
