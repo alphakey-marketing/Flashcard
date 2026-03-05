@@ -59,19 +59,19 @@ const App: React.FC = () => {
         
         if (missingLocalDecks.length > 0) {
           console.log(`Found ${missingLocalDecks.length} local decks not in cloud. Merging...`);
-          // Push missing local decks to cloud to back them up
-          for (const deck of missingLocalDecks) {
-            await syncService.pushDeck(deck, userId);
-            finalDecks.push(deck);
-          }
+          // Add them locally immediately so they show up
+          finalDecks = [...finalDecks, ...missingLocalDecks];
+          
+          // Push them to the cloud IN THE BACKGROUND to not block the UI
+          Promise.all(missingLocalDecks.map(deck => syncService.pushDeck(deck, userId)))
+            .then(() => console.log('Background sync of missing decks complete'))
+            .catch(err => console.error('Background sync failed', err));
         }
         
         // Update local storage with the merged decks
         if (finalDecks.length > 0) {
           overrideStorageWithCloud(finalDecks);
           overrideReviewsWithCloud(cloudReviews);
-        } else {
-          // Cloud is empty and local is empty (very rare, but handled)
         }
       } catch (err) {
         console.error("Sync failed", err);
