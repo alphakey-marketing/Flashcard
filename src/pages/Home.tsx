@@ -49,6 +49,7 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
           .map(d => d.id)
       );
       
+      console.log(`🔍 Check result: ${unsynced.size} unsynced decks out of ${localDecks.length} local decks`);
       setUnsyncedDeckIds(unsynced);
     } catch (err) {
       console.error('Failed to check unsynced decks:', err);
@@ -72,38 +73,64 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
     }
 
     setIsSyncing(true);
+    console.log('🔄 Manual sync initiated...');
+    
     try {
       const localDecks = getAllSets();
-      const { decks: cloudDecks } = await syncService.pullAll(userId);
-      const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
+      console.log(`📊 Local: ${localDecks.length} decks`);
       
+      const { decks: cloudDecks } = await syncService.pullAll(userId);
+      console.log(`☁️ Cloud: ${cloudDecks.length} decks`);
+      
+      const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
       const missingLocalDecks = localDecks.filter(d => !cloudDeckIds.has(d.id));
+      
+      console.log(`🔍 Found ${missingLocalDecks.length} decks to sync:`, missingLocalDecks.map(d => d.title));
       
       if (missingLocalDecks.length > 0) {
         // Push all missing decks
-        await Promise.all(missingLocalDecks.map(deck => syncService.pushDeck(deck, userId)));
+        const results = await Promise.allSettled(
+          missingLocalDecks.map(deck => syncService.pushDeck(deck, userId))
+        );
         
-        // Immediately clear the unsynced deck IDs since we just pushed them
-        const syncedDeckIds = new Set(missingLocalDecks.map(d => d.id));
+        const successful = results.filter(r => r.status === 'fulfilled').length;
+        const failed = results.filter(r => r.status === 'rejected');
+        
+        console.log(`✅ ${successful} decks synced successfully`);
+        
+        if (failed.length > 0) {
+          console.error(`❌ ${failed.length} decks failed to sync:`, failed);
+          alert(`⚠️ Partially synced: ${successful}/${missingLocalDecks.length} decks succeeded.\n\nErrors:\n${failed.map((f: any) => f.reason?.message || 'Unknown error').join('\n')}`);
+        } else {
+          alert(`✅ Successfully synced ${missingLocalDecks.length} deck(s) to cloud!`);
+        }
+        
+        // Immediately clear the synced deck IDs
+        const syncedDeckIds = new Set(
+          missingLocalDecks
+            .filter((_, index) => results[index].status === 'fulfilled')
+            .map(d => d.id)
+        );
+        
         setUnsyncedDeckIds(prevUnsynced => {
           const newUnsynced = new Set(prevUnsynced);
           syncedDeckIds.forEach(id => newUnsynced.delete(id));
+          console.log(`💾 Updated unsynced state: ${newUnsynced.size} remaining`);
           return newUnsynced;
         });
         
-        alert(`✅ Successfully synced ${missingLocalDecks.length} deck(s) to cloud!`);
-        
-        // Wait a bit then verify with cloud (to confirm it worked)
+        // Wait then verify with cloud
         setTimeout(async () => {
+          console.log('🔍 Running verification check...');
           await checkUnsyncedDecks(userId);
-        }, 1500);
+        }, 2000);
       } else {
         alert('✅ All decks are already synced!');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Sync failed:', err);
-      alert('❌ Sync failed. Please try again.');
-      // Recheck in case of partial failure
+      alert(`❌ Sync failed: ${err.message || 'Unknown error'}\n\nCheck browser console (F12) for details.`);
+      // Recheck in case of failure
       await checkUnsyncedDecks(userId);
     } finally {
       setIsSyncing(false);
