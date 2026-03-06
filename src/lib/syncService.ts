@@ -16,7 +16,10 @@ export const syncService = {
       `)
       .eq('user_id', userId);
 
-    if (decksError) throw decksError;
+    if (decksError) {
+      console.error('Error pulling decks:', decksError);
+      throw decksError;
+    }
 
     // 2. Fetch reviews
     const { data: dbReviews, error: reviewsError } = await supabase
@@ -24,7 +27,10 @@ export const syncService = {
       .select('*')
       .eq('user_id', userId);
 
-    if (reviewsError) throw reviewsError;
+    if (reviewsError) {
+      console.error('Error pulling reviews:', reviewsError);
+      throw reviewsError;
+    }
 
     // Map database models to local models
     const mappedDecks: FlashcardSet[] = (dbDecks || []).map((dbDeck: any) => ({
@@ -60,6 +66,7 @@ export const syncService = {
       updatedAt: new Date(r.last_review_date).getTime()
     }));
 
+    console.log(`✅ Pulled ${mappedDecks.length} decks and ${mappedReviews.length} reviews from cloud`);
     return { decks: mappedDecks, reviews: mappedReviews };
   },
 
@@ -67,6 +74,8 @@ export const syncService = {
    * Push a single deck (and its cards) to Supabase
    */
   async pushDeck(deck: FlashcardSet, userId: string) {
+    console.log(`📤 Pushing deck "${deck.title}" (ID: ${deck.id}) to cloud...`);
+    
     // Upsert deck
     const { error: deckError } = await supabase
       .from('decks')
@@ -82,9 +91,11 @@ export const syncService = {
       }, { onConflict: 'id' });
 
     if (deckError) {
-      console.error('Error syncing deck:', deckError);
-      return;
+      console.error(`❌ Error syncing deck "${deck.title}":`, deckError);
+      throw new Error(`Failed to sync deck: ${deckError.message}`);
     }
+
+    console.log(`✅ Deck "${deck.title}" synced, now syncing ${deck.cards.length} cards...`);
 
     // Upsert cards in chunks to avoid payload limits
     const cardsToUpsert = deck.cards.map((card, index) => ({
@@ -104,9 +115,14 @@ export const syncService = {
         .upsert(chunk, { onConflict: 'id' });
 
       if (cardsError) {
-        console.error('Error syncing cards chunk:', cardsError);
+        console.error(`❌ Error syncing cards chunk ${i}-${i + chunk.length}:`, cardsError);
+        throw new Error(`Failed to sync cards: ${cardsError.message}`);
       }
+      
+      console.log(`✅ Synced cards ${i + 1}-${i + chunk.length} of ${deck.cards.length}`);
     }
+    
+    console.log(`✅ Successfully synced deck "${deck.title}" with all ${deck.cards.length} cards`);
   },
 
   /**
@@ -118,7 +134,10 @@ export const syncService = {
       .delete()
       .eq('id', deckId);
       
-    if (error) console.error('Error deleting deck from cloud:', error);
+    if (error) {
+      console.error('Error deleting deck from cloud:', error);
+      throw error;
+    }
   },
 
   /**
@@ -143,6 +162,7 @@ export const syncService = {
 
     if (error) {
       console.error('Error syncing review:', error);
+      // Don't throw for review errors to avoid blocking deck sync
     }
   }
 };
