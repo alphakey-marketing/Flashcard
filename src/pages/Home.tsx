@@ -80,16 +80,31 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
       const missingLocalDecks = localDecks.filter(d => !cloudDeckIds.has(d.id));
       
       if (missingLocalDecks.length > 0) {
+        // Push all missing decks
         await Promise.all(missingLocalDecks.map(deck => syncService.pushDeck(deck, userId)));
+        
+        // Immediately clear the unsynced deck IDs since we just pushed them
+        const syncedDeckIds = new Set(missingLocalDecks.map(d => d.id));
+        setUnsyncedDeckIds(prevUnsynced => {
+          const newUnsynced = new Set(prevUnsynced);
+          syncedDeckIds.forEach(id => newUnsynced.delete(id));
+          return newUnsynced;
+        });
+        
         alert(`✅ Successfully synced ${missingLocalDecks.length} deck(s) to cloud!`);
+        
+        // Wait a bit then verify with cloud (to confirm it worked)
+        setTimeout(async () => {
+          await checkUnsyncedDecks(userId);
+        }, 1500);
       } else {
         alert('✅ All decks are already synced!');
       }
-      
-      await checkUnsyncedDecks(userId);
     } catch (err) {
       console.error('Sync failed:', err);
       alert('❌ Sync failed. Please try again.');
+      // Recheck in case of partial failure
+      await checkUnsyncedDecks(userId);
     } finally {
       setIsSyncing(false);
     }
