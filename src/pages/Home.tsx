@@ -3,6 +3,8 @@ import { getAllSets, deleteSet, FlashcardSet } from '../lib/storage';
 import { exportToCSV } from '../lib/csvParser';
 import { getStreak, getTodayStats } from '../lib/studyStats';
 import { getSetStudyStats } from '../lib/spacedRepetition';
+import { syncService } from '../lib/syncService';
+import { supabase } from '../lib/supabaseClient';
 import ImportModal from '../components/ImportModal';
 
 interface HomeProps {
@@ -17,11 +19,41 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
   const [showImportModal, setShowImportModal] = useState(false);
   const [streak, setStreak] = useState({ current: 0, longest: 0, lastStudyDate: '' });
   const [todayStats, setTodayStats] = useState({ totalCards: 0, totalDuration: 0 });
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [unsyncedDeckIds, setUnsyncedDeckIds] = useState<Set<string>>(new Set());
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
     loadSets();
     loadStats();
+    checkAuth();
   }, []);
+
+  const checkAuth = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+      setUserId(session.user.id);
+      await checkUnsyncedDecks(session.user.id);
+    }
+  };
+
+  const checkUnsyncedDecks = async (currentUserId: string) => {
+    try {
+      const localDecks = getAllSets();
+      const { decks: cloudDecks } = await syncService.pullAll(currentUserId);
+      const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
+      
+      const unsynced = new Set(
+        localDecks
+          .filter(d => !cloudDeckIds.has(d.id))
+          .map(d => d.id)
+      );
+      
+      setUnsyncedDeckIds(unsynced);
+    } catch (err) {
+      console.error('Failed to check unsynced decks:', err);
+    }
+  };
 
   const loadSets = () => {
     setSets(getAllSets());
@@ -33,11 +65,44 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
     setTodayStats({ totalCards: today.totalCards, totalDuration: today.totalDuration });
   };
 
+  const handleManualSync = async () => {
+    if (!userId) {
+      alert('Please log in to sync your data');
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      const localDecks = getAllSets();
+      const { decks: cloudDecks } = await syncService.pullAll(userId);
+      const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
+      
+      const missingLocalDecks = localDecks.filter(d => !cloudDeckIds.has(d.id));
+      
+      if (missingLocalDecks.length > 0) {
+        await Promise.all(missingLocalDecks.map(deck => syncService.pushDeck(deck, userId)));
+        alert(`✅ Successfully synced ${missingLocalDecks.length} deck(s) to cloud!`);
+      } else {
+        alert('✅ All decks are already synced!');
+      }
+      
+      await checkUnsyncedDecks(userId);
+    } catch (err) {
+      console.error('Sync failed:', err);
+      alert('❌ Sync failed. Please try again.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handleDelete = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (window.confirm('Are you sure you want to delete this flashcard set?')) {
       deleteSet(id);
       loadSets();
+      if (userId) {
+        checkUnsyncedDecks(userId);
+      }
     }
   };
 
@@ -71,6 +136,8 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
     document.body.removeChild(link);
   };
 
+  const hasUnsyncedDecks = unsyncedDeckIds.size > 0;
+
   return (
     <div style={styles.container}>
       <header style={styles.header}>
@@ -79,6 +146,23 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
           <p style={styles.subtitle}>日本語を勉強しよう！</p>
         </div>
         <div style={styles.headerButtons}>
+          {userId && (
+            <button
+              style={{
+                ...styles.syncButton,
+                backgroundColor: hasUnsyncedDecks ? '#ef4444' : '#10b981',
+                cursor: isSyncing ? 'not-allowed' : 'pointer',
+                opacity: isSyncing ? 0.6 : 1
+              }}
+              onClick={handleManualSync}
+              disabled={isSyncing}
+              title={hasUnsyncedDecks ? `${unsyncedDeckIds.size} deck(s) not synced to cloud` : 'All decks synced'}
+              onMouseEnter={(e) => !isSyncing && (e.currentTarget.style.transform = 'scale(1.05)')}
+              onMouseLeave={(e) => !isSyncing && (e.currentTarget.style.transform = 'scale(1)')}
+            >
+              {isSyncing ? '🔄 Syncing...' : hasUnsyncedDecks ? `⚠️ Sync (${unsyncedDeckIds.size})` : '✅ Synced'}
+            </button>
+          )}
           <button
             style={styles.logoutButton}
             onClick={onLogout}
@@ -122,6 +206,23 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
           {todayStats.totalCards > 0 && (
             <span style={styles.todayBadge}>{todayStats.totalCards} cards today</span>
           )}
+        </div>
+      )}
+
+      {/* Unsynced Warning Banner */}
+      {hasUnsyncedDecks && userId && (
+        <div style={styles.warningBanner}>
+          <span style={styles.warningIcon}>⚠️</span>
+          <span style={styles.warningText}>
+            {unsyncedDeckIds.size} deck(s) not backed up to cloud. Click "Sync" to save them.
+          </span>
+          <button
+            style={styles.syncNowButton}
+            onClick={handleManualSync}
+            disabled={isSyncing}
+          >
+            {isSyncing ? 'Syncing...' : 'Sync Now'}
+          </button>
         </div>
       )}
 
@@ -182,7 +283,7 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
         <div style={styles.grid}>
           {sets.map((set) => {
             const stats = getSetStudyStats(set.id, set.cards.length);
-            // Show progress as "reviewed" (have SM-2 data) rather than just "mastered"
+            const isUnsynced = unsyncedDeckIds.has(set.id);
             const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
             const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
             const hasDue = stats.dueCards > 0;
@@ -190,7 +291,10 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
             return (
               <div
                 key={set.id}
-                style={styles.card}
+                style={{
+                  ...styles.card,
+                  border: isUnsynced ? '2px solid #ef4444' : '1px solid #e2e8f0'
+                }}
                 onClick={() => onNavigateToSwipe(set.id)}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.transform = 'translateY(-4px)';
@@ -202,7 +306,10 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
                 }}
               >
                 <div style={styles.cardHeader}>
-                  <h3 style={styles.cardTitle}>{set.title}</h3>
+                  <h3 style={styles.cardTitle}>
+                    {isUnsynced && <span style={styles.unsyncedBadge}>☁️</span>}
+                    {set.title}
+                  </h3>
                   <div style={styles.cardActions}>
                     <button
                       style={styles.exportButton}
@@ -258,8 +365,19 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
 
       {showImportModal && (
         <ImportModal
-          onClose={() => setShowImportModal(false)}
-          onImportSuccess={loadSets}
+          onClose={() => {
+            setShowImportModal(false);
+            loadSets();
+            if (userId) {
+              checkUnsyncedDecks(userId);
+            }
+          }}
+          onImportSuccess={() => {
+            loadSets();
+            if (userId) {
+              checkUnsyncedDecks(userId);
+            }
+          }}
         />
       )}
     </div>
@@ -277,7 +395,9 @@ const styles: { [key: string]: CSSProperties } = {
     margin: '0 auto 24px',
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '12px'
   },
   title: {
     fontSize: '32px',
@@ -293,7 +413,18 @@ const styles: { [key: string]: CSSProperties } = {
   },
   headerButtons: {
     display: 'flex',
-    gap: '12px'
+    gap: '12px',
+    flexWrap: 'wrap'
+  },
+  syncButton: {
+    color: 'white',
+    border: 'none',
+    borderRadius: '12px',
+    padding: '12px 20px',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'transform 0.2s'
   },
   logoutButton: {
     backgroundColor: '#f1f5f9',
@@ -369,6 +500,37 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 600,
     color: '#16a34a'
   },
+  warningBanner: {
+    maxWidth: '1000px',
+    margin: '0 auto 16px',
+    backgroundColor: '#fee2e2',
+    borderRadius: '12px',
+    padding: '16px 20px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    border: '2px solid #ef4444'
+  },
+  warningIcon: {
+    fontSize: '24px'
+  },
+  warningText: {
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#7f1d1d',
+    flex: 1
+  },
+  syncNowButton: {
+    backgroundColor: '#ef4444',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px',
+    padding: '8px 16px',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'opacity 0.2s'
+  },
   statsBar: {
     maxWidth: '1000px',
     margin: '0 auto 32px',
@@ -378,7 +540,8 @@ const styles: { [key: string]: CSSProperties } = {
     display: 'flex',
     gap: '32px',
     alignItems: 'center',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
+    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+    flexWrap: 'wrap'
   },
   stat: {
     display: 'flex',
@@ -430,7 +593,8 @@ const styles: { [key: string]: CSSProperties } = {
   emptyButtons: {
     display: 'flex',
     gap: '12px',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    flexWrap: 'wrap'
   },
   createButton: {
     backgroundColor: '#3b82f6',
@@ -468,7 +632,6 @@ const styles: { [key: string]: CSSProperties } = {
     cursor: 'pointer',
     transition: 'all 0.3s',
     boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-    border: '1px solid #e2e8f0',
     display: 'flex',
     flexDirection: 'column'
   },
@@ -483,7 +646,14 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 600,
     color: '#0f172a',
     margin: 0,
-    flex: 1
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px'
+  },
+  unsyncedBadge: {
+    fontSize: '16px',
+    opacity: 0.7
   },
   cardActions: {
     display: 'flex',
