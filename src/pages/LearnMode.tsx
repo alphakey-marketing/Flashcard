@@ -179,34 +179,48 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
 
   const currentQuestion = questions[currentIndex];
 
-  const playAudio = async (text: string) => {
+  // Helper to extract main and example text safely
+  const getCardTextParts = (text: string, legacyExample?: string) => {
+    if (!text) return { main: '', example: legacyExample || '' };
+    const parts = text.split('\n');
+    return {
+      main: parts[0].trim(),
+      example: parts.length > 1 ? parts.slice(1).join('\n').trim() : (legacyExample || '')
+    };
+  };
+
+  const playAudio = async (text: string, legacyExample?: string) => {
     if (isPlayingAudio || !text || !audioService.isSupported()) return;
     
     try {
       setIsPlayingAudio(true);
       
-      let cleanText = text;
+      const { main, example } = getCardTextParts(text, legacyExample);
+      const sequence: { text: string; pauseAfter: number }[] = [];
+
       // Handle Kanji[kana] format for better TTS
-      const bracketMatch = text.match(/^(.*?)\[(.*?)\]/);
+      const bracketMatch = main.match(/^(.*?)\[(.*?)\]/);
       if (bracketMatch) {
         const kanji = bracketMatch[1].trim();
         const kana = bracketMatch[2].trim();
         // Read both with a pause if they're different
         if (kanji !== kana && kanji && kana) {
-          await audioService.playSequence([
-            { text: kanji, pauseAfter: 1000 },
-            { text: kana, pauseAfter: 0 }
-          ]);
-          return; // Exit early since we handled the sequence
+          sequence.push({ text: kanji, pauseAfter: 1000 });
+          sequence.push({ text: kana, pauseAfter: example ? 1500 : 0 });
         } else {
-          cleanText = kanji || kana;
+          sequence.push({ text: kanji || kana, pauseAfter: example ? 1500 : 0 });
         }
       } else {
         // Remove markdown or other brackets if any exist
-        cleanText = text.replace(/\[.*?\]/g, '').trim();
+        const cleanText = main.replace(/\[.*?\]/g, '').trim();
+        sequence.push({ text: cleanText, pauseAfter: example ? 1500 : 0 });
       }
 
-      await audioService.playSequence([{ text: cleanText, pauseAfter: 0 }]);
+      if (example) {
+        sequence.push({ text: example.replace(/\[.*?\]/g, '').trim(), pauseAfter: 0 });
+      }
+
+      await audioService.playSequence(sequence);
       
     } catch (error) {
       console.error('Audio playback error:', error);
@@ -236,7 +250,8 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const handleTypeInSubmit = () => {
     if (showAnswer) return;
     
-    const correct = normalizeAnswer(userAnswer) === normalizeAnswer(currentQuestion.card.back);
+    const { main: expectedAnswer } = getCardTextParts(currentQuestion.card.back);
+    const correct = normalizeAnswer(userAnswer) === normalizeAnswer(expectedAnswer);
     setIsCorrect(correct);
     setShowAnswer(true);
     
@@ -401,6 +416,9 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     );
   }
 
+  const frontParts = getCardTextParts(currentQuestion.card.front, currentQuestion.card.example);
+  const backParts = getCardTextParts(currentQuestion.card.back);
+
   return (
     <div style={styles.container}>
       {/* Header with progress */}
@@ -430,10 +448,10 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
         {/* Question prompt with audio */}
         <div style={styles.questionPrompt}>
           <div style={styles.questionFrontRow}>
-            <div style={styles.questionFront}>{currentQuestion.card.front}</div>
+            <div style={styles.questionFront}>{frontParts.main}</div>
             <button
               style={styles.audioButton}
-              onClick={() => playAudio(currentQuestion.card.front)}
+              onClick={() => playAudio(currentQuestion.card.front, currentQuestion.card.example)}
               disabled={isPlayingAudio}
               title="Play audio"
               onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
@@ -442,21 +460,11 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               {isPlayingAudio ? '🔊' : '🔈'}
             </button>
           </div>
-          {currentQuestion.card.example && (
+          {frontParts.example && (
             <div style={styles.questionExampleRow}>
               <div style={styles.questionExample}>
-                Example: {currentQuestion.card.example}
+                例文: {frontParts.example}
               </div>
-              <button
-                style={styles.audioButtonSmall}
-                onClick={() => playAudio(currentQuestion.card.example!)}
-                disabled={isPlayingAudio}
-                title="Play example audio"
-                onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
-                onMouseLeave={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1)')}
-              >
-                {isPlayingAudio ? '🔊' : '🔈'}
-              </button>
             </div>
           )}
         </div>
@@ -467,6 +475,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
             {currentQuestion.options?.map((option, idx) => {
               const isSelected = selectedOption === option;
               const isCorrectOption = option === currentQuestion.card.back;
+              const optionParts = getCardTextParts(option);
               
               let buttonStyle = styles.optionButton;
               if (showAnswer) {
@@ -488,7 +497,12 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
                   onMouseEnter={(e) => !showAnswer && (e.currentTarget.style.transform = 'scale(1.02)')}
                   onMouseLeave={(e) => !showAnswer && (e.currentTarget.style.transform = 'scale(1)')}
                 >
-                  {option}
+                  <div style={{ fontWeight: 600 }}>{optionParts.main}</div>
+                  {optionParts.example && (
+                    <div style={{ fontSize: '14px', marginTop: '6px', color: 'inherit', fontWeight: 400 }}>
+                      {optionParts.example}
+                    </div>
+                  )}
                 </button>
               );
             })}
@@ -504,7 +518,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               value={userAnswer}
               onChange={(e) => setUserAnswer(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && !showAnswer && handleTypeInSubmit()}
-              placeholder="Type your answer..."
+              placeholder="Type English meaning..."
               disabled={showAnswer}
               autoFocus
             />
@@ -522,7 +536,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
             {showAnswer && (
               <div style={styles.feedbackContainer}>
                 <div style={isCorrect ? styles.feedbackCorrect : styles.feedbackWrong}>
-                  {isCorrect ? '✓ Correct!' : `✗ Expected: ${currentQuestion.card.back}`}
+                  {isCorrect ? '✓ Correct!' : `✗ Expected: ${backParts.main}`}
                 </div>
                 {!isCorrect && (
                   <div style={styles.overrideButtons}>
@@ -564,7 +578,14 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
             ) : (
               <>
                 <div style={styles.flashcardAnswerRow}>
-                  <div style={styles.flashcardAnswer}>{currentQuestion.card.back}</div>
+                  <div style={styles.flashcardAnswerContainer}>
+                    <div style={styles.flashcardAnswer}>{backParts.main}</div>
+                    {backParts.example && (
+                      <div style={styles.questionExample}>
+                        Example: {backParts.example}
+                      </div>
+                    )}
+                  </div>
                   <button
                     style={styles.audioButton}
                     onClick={() => playAudio(currentQuestion.card.back)}
@@ -735,20 +756,6 @@ const styles: { [key: string]: CSSProperties } = {
     transition: 'all 0.2s',
     flexShrink: 0
   },
-  audioButtonSmall: {
-    backgroundColor: '#f1f5f9',
-    border: '2px solid #cbd5e1',
-    borderRadius: '50%',
-    width: '36px',
-    height: '36px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    fontSize: '16px',
-    transition: 'all 0.2s',
-    flexShrink: 0
-  },
   optionsContainer: {
     display: 'flex',
     flexDirection: 'column',
@@ -763,7 +770,9 @@ const styles: { [key: string]: CSSProperties } = {
     borderRadius: '12px',
     cursor: 'pointer',
     transition: 'all 0.2s',
-    textAlign: 'left'
+    textAlign: 'left',
+    display: 'flex',
+    flexDirection: 'column'
   },
   optionSelected: {
     backgroundColor: '#dbeafe',
@@ -874,8 +883,16 @@ const styles: { [key: string]: CSSProperties } = {
   flashcardAnswerRow: {
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: '16px',
-    marginBottom: '8px'
+    marginBottom: '8px',
+    width: '100%'
+  },
+  flashcardAnswerContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '8px'
   },
   flashcardAnswer: {
     fontSize: '24px',
