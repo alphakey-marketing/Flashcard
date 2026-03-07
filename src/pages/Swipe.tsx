@@ -1,5 +1,5 @@
 import React, { useState, useEffect, CSSProperties, useCallback, useMemo } from 'react';
-import { getSet, FlashcardSet, Card } from '../lib/storage';
+import { getSet, getAllSets, FlashcardSet, Card } from '../lib/storage';
 import { audioService } from '../lib/audioService';
 import { recordSession } from '../lib/studyStats';
 import { saveCardReview, ReviewRating, getDueCards, getSetReviewData, getLearningCards } from '../lib/spacedRepetition';
@@ -125,55 +125,61 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   // Memoized queue loading logic to prevent recreating function
   const loadQueue = useCallback((flashcardSet: FlashcardSet, mode: 'due' | 'all') => {
-    const reviewedData = getSetReviewData(setId);
-    const learningCards = getLearningCards(setId);
-    const dueCardsData = getDueCards(setId);
-    
-    // Optimized: Create single Set for all priority cards
-    const priorityCardIds = new Set([
-      ...learningCards.map(d => d.cardId),
-      ...dueCardsData.map(d => d.cardId)
-    ]);
-    
-    let queueCards: Card[];
-    
-    if (mode === 'due') {
-      // Show learning/reviewing cards (not mastered yet) + due mastered cards
-      const dueCards = flashcardSet.cards.filter(card => priorityCardIds.has(card.id));
+    let queueCards: Card[] = [];
+
+    if (flashcardSet.id === 'due-today') {
+      // For 'due-today', the flashcardSet.cards already contains ONLY the due cards.
+      // We just need to shuffle them.
+      queueCards = shuffleArray(flashcardSet.cards);
+    } else {
+      const reviewedData = getSetReviewData(setId);
+      const learningCards = getLearningCards(setId);
+      const dueCardsData = getDueCards(setId);
       
-      // If no learning/due cards, check if we have any new cards (never studied)
-      if (dueCards.length === 0) {
-        const reviewedIds = new Set(reviewedData.map(d => d.cardId));
-        const newCards = flashcardSet.cards.filter(card => !reviewedIds.has(card.id));
+      // Optimized: Create single Set for all priority cards
+      const priorityCardIds = new Set([
+        ...learningCards.map(d => d.cardId),
+        ...dueCardsData.map(d => d.cardId)
+      ]);
+      
+      if (mode === 'due') {
+        // Show learning/reviewing cards (not mastered yet) + due mastered cards
+        const dueCards = flashcardSet.cards.filter(card => priorityCardIds.has(card.id));
         
-        if (newCards.length > 0) {
-          // Start with first 10 new cards, randomized
-          queueCards = shuffleArray(newCards.slice(0, 10));
+        // If no learning/due cards, check if we have any new cards (never studied)
+        if (dueCards.length === 0) {
+          const reviewedIds = new Set(reviewedData.map(d => d.cardId));
+          const newCards = flashcardSet.cards.filter(card => !reviewedIds.has(card.id));
+          
+          if (newCards.length > 0) {
+            // Start with first 10 new cards, randomized
+            queueCards = shuffleArray(newCards.slice(0, 10));
+          } else {
+            queueCards = [];
+          }
         } else {
-          queueCards = [];
+          // Randomize due cards
+          queueCards = shuffleArray(dueCards);
         }
       } else {
-        // Randomize due cards
-        queueCards = shuffleArray(dueCards);
-      }
-    } else {
-      // All cards: priority cards first (randomized), then other cards (randomized)
-      const priorityCards: Card[] = [];
-      const otherCards: Card[] = [];
-      
-      for (const card of flashcardSet.cards) {
-        if (priorityCardIds.has(card.id)) {
-          priorityCards.push(card);
-        } else {
-          otherCards.push(card);
+        // All cards: priority cards first (randomized), then other cards (randomized)
+        const priorityCards: Card[] = [];
+        const otherCards: Card[] = [];
+        
+        for (const card of flashcardSet.cards) {
+          if (priorityCardIds.has(card.id)) {
+            priorityCards.push(card);
+          } else {
+            otherCards.push(card);
+          }
         }
+        
+        // Randomize each group separately, then combine
+        queueCards = [
+          ...shuffleArray(priorityCards),
+          ...shuffleArray(otherCards)
+        ];
       }
-      
-      // Randomize each group separately, then combine
-      queueCards = [
-        ...shuffleArray(priorityCards),
-        ...shuffleArray(otherCards)
-      ];
     }
 
     setActiveQueue(queueCards);
@@ -183,7 +189,34 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   }, [setId]);
 
   useEffect(() => {
-    const flashcardSet = getSet(setId);
+    let flashcardSet: FlashcardSet | undefined;
+    
+    if (setId === 'due-today') {
+      const allSets = getAllSets();
+      let allDueCards: Card[] = [];
+      
+      allSets.forEach(s => {
+        const dueCardsData = getDueCards(s.id);
+        const dueCardIds = new Set(dueCardsData.map(d => d.cardId));
+        const dueCardsForSet = s.cards.filter(c => dueCardIds.has(c.id)).map(c => ({
+          ...c,
+          setId: s.id // Inject original set ID for tracking!
+        }));
+        allDueCards = [...allDueCards, ...dueCardsForSet];
+      });
+
+      flashcardSet = {
+        id: 'due-today',
+        title: 'Review Due Today',
+        description: 'All your due cards across all sets.',
+        cards: allDueCards,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+    } else {
+      flashcardSet = getSet(setId);
+    }
+    
     if (flashcardSet) {
       setSet(flashcardSet);
       
@@ -196,19 +229,19 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       }
       
       // No saved session, start new
-      // Check if user has any review history
-      const reviewedData = getSetReviewData(setId);
-      const hasSomeReviews = reviewedData.length > 0;
-      
-      // If they have review history, check for learning/due cards
-      if (hasSomeReviews) {
-        const learningCards = getLearningCards(setId);
-        // If there are learning cards, start in due mode, otherwise all mode
-        const initialMode = learningCards.length > 0 ? 'due' : 'all';
-        loadQueue(flashcardSet, initialMode);
+      if (setId === 'due-today') {
+        loadQueue(flashcardSet, 'due');
       } else {
-        // First time studying this set - start in 'all' mode
-        loadQueue(flashcardSet, 'all');
+        const reviewedData = getSetReviewData(setId);
+        const hasSomeReviews = reviewedData.length > 0;
+        
+        if (hasSomeReviews) {
+          const learningCards = getLearningCards(setId);
+          const initialMode = learningCards.length > 0 ? 'due' : 'all';
+          loadQueue(flashcardSet, initialMode);
+        } else {
+          loadQueue(flashcardSet, 'all');
+        }
       }
     } else {
       onNavigateToHome();
@@ -217,12 +250,13 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   const switchMode = useCallback((mode: 'due' | 'all') => {
     if (!set) return;
+    if (setId === 'due-today') return; // Cannot switch mode in global due view
     clearSavedSession(); // Clear saved session when explicitly switching modes
     loadQueue(set, mode);
     setSessionStats({ reviewed: 0, knowIt: 0, mastered: 0 });
     setIsFlipped(false);
     setIsFinished(false);
-  }, [set, loadQueue]);
+  }, [set, loadQueue, setId]);
 
   const toggleReverseMode = useCallback(() => {
     setReverseMode(prev => !prev);
@@ -239,7 +273,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     return reverseMode ? currentCard.front : currentCard.back;
   }, [currentCard, reverseMode]);
 
-  // Handle parsing text into main text and example sentence
   const renderCardText = (text: string) => {
     if (!text) return null;
     const parts = text.split('\n');
@@ -259,14 +292,11 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     );
   };
 
-  // Play audio sequence with pauses
   const playCardAudio = useCallback(() => {
     if (!currentCard || !audioService.isSupported()) return;
 
-    // Mark that user has interacted (for mobile autoplay)
     setHasUserInteracted(true);
 
-    // We only play Japanese text, which is always stored in currentCard.front
     const frontText = currentCard.front;
     const parts = frontText.split('\n');
     const mainLine = parts[0].trim();
@@ -275,7 +305,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     let kanji = mainLine;
     let kana = '';
     
-    // Check for "Kanji[kana]" format
     const bracketMatch = mainLine.match(/^(.*?)\[(.*?)\]/);
     if (bracketMatch) {
       kanji = bracketMatch[1].trim();
@@ -286,7 +315,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
     const sequence: { text: string; pauseAfter: number }[] = [];
     
-    // If kanji and kana are present and different, play both with a 2-second wait in between
     if (kanji && kana && kanji !== kana) {
       sequence.push({ text: kanji, pauseAfter: 2000 });
       sequence.push({ text: kana, pauseAfter: exampleText ? 2000 : 0 });
@@ -301,29 +329,22 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     audioService.playSequence(sequence);
   }, [currentCard]);
 
-  // Memoize manual audio play handler
   const handlePlayAudio = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     playCardAudio();
   }, [playCardAudio]);
 
-  // Cleanup audio when card changes
   useEffect(() => {
     audioService.stop();
   }, [currentCard]);
 
-  // Auto-play audio logic - ONLY for Japanese side
   useEffect(() => {
     if (!audioEnabled || !currentCard || !audioService.isSupported()) return;
 
-    // On mobile, require user interaction first before auto-playing
     if (!hasUserInteracted && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
       return;
     }
 
-    // Recognition mode (JP -> EN): Front is Japanese -> play when NOT flipped
-    // Production mode (EN -> JP): Back is Japanese -> play when FLIPPED
-    // IMPORTANT: Only auto-play when Japanese is visible
     const isJapaneseSideVisible = (!reverseMode && !isFlipped) || (reverseMode && isFlipped);
 
     if (isJapaneseSideVisible) {
@@ -338,27 +359,27 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const handleReview = useCallback((rating: ReviewRating) => {
     if (!currentCard || !set) return;
 
-    // Mark user interaction on first review
     if (!hasUserInteracted) {
       setHasUserInteracted(true);
     }
 
+    // Determine the actual set ID for this card. 
+    // In 'due-today' mode, currentCard.setId has the original set ID.
+    const actualSetId = (currentCard as any).setId || set.id;
+
     // Save review to SM-2 system
-    saveCardReview(set.id, currentCard.id, rating);
+    saveCardReview(actualSetId, currentCard.id, rating);
     
-    // Update session stats using functional update to avoid stale closure
     setSessionStats(prev => ({
       reviewed: prev.reviewed + 1,
       knowIt: prev.knowIt + (rating === 'know_it' ? 1 : 0),
       mastered: prev.mastered + (rating === 'mastered' ? 1 : 0)
     }));
 
-    // Optimized: Use slice instead of spread for large arrays
     const newQueue = activeQueue.slice(1);
     const reviewedCard = activeQueue[0];
 
     if (rating === 'again') {
-      // Reinsert card a few positions back for immediate practice
       if (newQueue.length === 0) {
         newQueue.push(reviewedCard);
       } else {
@@ -368,22 +389,25 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     }
 
     if (newQueue.length === 0) {
-      // Session complete - use callback to get latest stats
       setSessionStats(latestStats => {
         const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
-        recordSession({
-          setId: set.id,
-          setTitle: set.title,
-          startTime: sessionStartTime,
-          endTime: Date.now(),
-          cardsStudied: totalCards,
-          cardsMastered: latestStats.mastered,
-          duration
-        });
+        
+        // Only record session if it's a real set
+        if (set.id !== 'due-today') {
+          recordSession({
+            setId: set.id,
+            setTitle: set.title,
+            startTime: sessionStartTime,
+            endTime: Date.now(),
+            cardsStudied: totalCards,
+            cardsMastered: latestStats.mastered,
+            duration
+          });
+        }
         return latestStats;
       });
       
-      clearSavedSession(); // Clear saved session on completion
+      clearSavedSession();
       setIsFinished(true);
     } else {
       setActiveQueue(newQueue);
@@ -392,7 +416,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     }
   }, [currentCard, set, activeQueue, sessionStartTime, totalCards, hasUserInteracted]);
 
-  // Handle card flip with user interaction tracking
   const handleFlipCard = useCallback(() => {
     if (!hasUserInteracted) {
       setHasUserInteracted(true);
@@ -400,14 +423,10 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     setIsFlipped(prev => !prev);
   }, [hasUserInteracted]);
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (isFinished) return;
-
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       switch (e.key) {
         case ' ':
@@ -429,9 +448,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         case 'a':
         case 'A':
           e.preventDefault();
-          if (currentCard) {
-            playCardAudio();
-          }
+          if (currentCard) playCardAudio();
           break;
         case 'r':
         case 'R':
@@ -451,25 +468,26 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   const handleStudyAgain = useCallback(() => {
     if (!set) return;
-    clearSavedSession(); // Clear saved session when starting fresh
+    clearSavedSession(); 
     loadQueue(set, studyMode);
     setIsFlipped(false);
     setIsFinished(false);
     setSessionStats({ reviewed: 0, knowIt: 0, mastered: 0 });
   }, [set, studyMode, loadQueue]);
 
-  // Memoize dynamic button styles to prevent recreation
   const dueModeButtonStyle = useMemo(() => ({
     ...styles.modeButton,
     backgroundColor: studyMode === 'due' ? '#3b82f6' : '#f1f5f9',
-    color: studyMode === 'due' ? 'white' : '#64748b'
-  }), [studyMode]);
+    color: studyMode === 'due' ? 'white' : '#64748b',
+    display: setId === 'due-today' ? 'none' : 'block'
+  }), [studyMode, setId]);
 
   const allModeButtonStyle = useMemo(() => ({
     ...styles.modeButton,
     backgroundColor: studyMode === 'all' ? '#3b82f6' : '#f1f5f9',
-    color: studyMode === 'all' ? 'white' : '#64748b'
-  }), [studyMode]);
+    color: studyMode === 'all' ? 'white' : '#64748b',
+    display: setId === 'due-today' ? 'none' : 'block'
+  }), [studyMode, setId]);
 
   const reverseModeButtonStyle = useMemo(() => ({
     ...styles.reverseModeButton,
@@ -488,7 +506,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     return { ...styles.progressBar, width: `${progress}%` };
   }, [totalCards, activeQueue.length]);
 
-  // Resume prompt screen
   if (showResumePrompt && savedSession) {
     const cardsLeft = savedSession.activeQueue.length;
     const progress = totalCards > 0 ? Math.round(((totalCards - cardsLeft) / totalCards) * 100) : 0;
@@ -513,20 +530,10 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               </div>
             </div>
             <div style={styles.resumeButtons}>
-              <button
-                style={styles.primaryButton}
-                onClick={handleResumeSession}
-                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-              >
+              <button style={styles.primaryButton} onClick={handleResumeSession}>
                 ▶️ Resume Session
               </button>
-              <button
-                style={styles.secondaryButton}
-                onClick={handleStartNewSession}
-                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-              >
+              <button style={styles.secondaryButton} onClick={handleStartNewSession}>
                 🔄 Start New Session
               </button>
             </div>
@@ -544,12 +551,12 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     );
   }
 
-  // No cards in queue
   if (!currentCard && !isFinished) {
-    const learningCards = getLearningCards(setId);
-    const reviewedData = getSetReviewData(setId);
-    const allReviewed = reviewedData.length === set.cards.length;
-    
+    const isDueToday = setId === 'due-today';
+    const message = isDueToday 
+      ? 'No cards due right now across any of your sets. Great work!'
+      : 'You\'ve reviewed all cards. Come back later for more reviews!';
+      
     return (
       <div style={styles.container}>
         <header style={styles.header}>
@@ -561,14 +568,10 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <div style={styles.finishedContainer}>
           <div style={styles.finishedIcon}>✅</div>
           <h1 style={styles.finishedTitle}>All caught up!</h1>
-          <p style={styles.finishedText}>
-            {allReviewed 
-              ? 'You\'ve reviewed all cards. Come back later for more reviews!' 
-              : 'No cards due right now. Great work!'}
-          </p>
+          <p style={styles.finishedText}>{message}</p>
           
           <div style={styles.finishedButtons}>
-            {set.cards.length > reviewedData.length && (
+            {!isDueToday && (
               <button style={styles.studyAgainButton} onClick={() => switchMode('all')}>
                 Study All Cards
               </button>
@@ -621,7 +624,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
             <button style={styles.studyAgainButton} onClick={handleStudyAgain}>
               Study Again
             </button>
-            {studyMode === 'due' && (
+            {studyMode === 'due' && setId !== 'due-today' && (
               <button 
                 style={switchToAllButtonStyle}
                 onClick={() => switchMode('all')}
@@ -645,24 +648,10 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <h2 style={styles.headerTitle}>{set.title}</h2>
         <div style={styles.audioToggle}>
           <div style={styles.modeToggle}>
-            <button
-              style={dueModeButtonStyle}
-              onClick={() => switchMode('due')}
-            >
-              Due
-            </button>
-            <button
-              style={allModeButtonStyle}
-              onClick={() => switchMode('all')}
-            >
-              All
-            </button>
+            <button style={dueModeButtonStyle} onClick={() => switchMode('due')}>Due</button>
+            <button style={allModeButtonStyle} onClick={() => switchMode('all')}>All</button>
           </div>
-          <button
-            style={audioButtonStyle}
-            onClick={() => setAudioEnabled(!audioEnabled)}
-            title={audioEnabled ? 'Audio ON' : 'Audio OFF'}
-          >
+          <button style={audioButtonStyle} onClick={() => setAudioEnabled(!audioEnabled)}>
             {audioEnabled ? '🔊' : '🔇'}
           </button>
           <span style={styles.counter}>{activeQueue.length} left</span>
@@ -674,11 +663,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       </div>
 
       <div style={styles.reverseModeContainer}>
-        <button
-          style={reverseModeButtonStyle}
-          onClick={toggleReverseMode}
-          title="Toggle between JP→EN and EN→JP (Press R)"
-        >
+        <button style={reverseModeButtonStyle} onClick={toggleReverseMode}>
           <span style={styles.reverseModeIcon}>{reverseMode ? '🔄' : '➡️'}</span>
           <span style={styles.reverseModeText}>
             {reverseMode ? 'EN → JP (Production)' : 'JP → EN (Recognition)'}
@@ -693,18 +678,14 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               <>
                 <div style={styles.cardLabel}>FRONT</div>
                 {renderCardText(getCurrentFront())}
-                <button style={styles.speakerButton} onClick={handlePlayAudio} title="Play audio (A)">
-                  🔊 Listen
-                </button>
+                <button style={styles.speakerButton} onClick={handlePlayAudio}>🔊 Listen</button>
                 <div style={styles.tapHint}>👆 Tap to flip (or press Space)</div>
               </>
             ) : (
               <>
                 <div style={styles.cardLabel}>BACK</div>
                 {renderCardText(getCurrentBack())}
-                <button style={styles.speakerButton} onClick={handlePlayAudio} title="Play audio (A)">
-                  🔊 Listen
-                </button>
+                <button style={styles.speakerButton} onClick={handlePlayAudio}>🔊 Listen</button>
               </>
             )}
           </div>
@@ -757,7 +738,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   );
 };
 
-// Extract static style for "Switch to All" button
 const switchToAllButtonStyle: CSSProperties = {
   backgroundColor: '#3b82f6',
   color: 'white',
@@ -770,419 +750,67 @@ const switchToAllButtonStyle: CSSProperties = {
 };
 
 const styles: { [key: string]: CSSProperties } = {
-  container: {
-    minHeight: '100vh',
-    backgroundColor: '#f8fafc',
-    display: 'flex',
-    flexDirection: 'column'
-  },
-  header: {
-    backgroundColor: '#fff',
-    borderBottom: '1px solid #e2e8f0',
-    padding: '12px 16px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  closeButton: {
-    background: 'none',
-    border: 'none',
-    fontSize: '20px',
-    cursor: 'pointer',
-    color: '#64748b',
-    padding: '4px',
-    width: '32px'
-  },
-  headerTitle: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: '#0f172a',
-    margin: 0,
-    flex: 1,
-    textAlign: 'center'
-  },
-  audioToggle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px'
-  },
-  modeToggle: {
-    display: 'flex',
-    gap: '4px',
-    backgroundColor: '#f1f5f9',
-    borderRadius: '8px',
-    padding: '2px'
-  },
-  modeButton: {
-    border: 'none',
-    padding: '4px 10px',
-    borderRadius: '6px',
-    fontSize: '11px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'all 0.2s'
-  },
-  audioButton: {
-    background: 'none',
-    border: 'none',
-    fontSize: '18px',
-    cursor: 'pointer',
-    padding: '4px'
-  },
-  counter: {
-    fontSize: '12px',
-    color: '#3b82f6',
-    fontWeight: 600,
-    minWidth: '50px',
-    textAlign: 'right'
-  },
-  reverseModeContainer: {
-    padding: '8px 16px',
-    backgroundColor: '#fff',
-    borderBottom: '1px solid #e2e8f0',
-    display: 'flex',
-    justifyContent: 'center'
-  },
-  reverseModeButton: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '6px 12px',
-    borderRadius: '8px',
-    fontSize: '11px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'all 0.2s'
-  },
-  reverseModeIcon: {
-    fontSize: '14px'
-  },
-  reverseModeText: {
-    fontSize: '11px'
-  },
-  progressBarContainer: {
-    height: '3px',
-    backgroundColor: '#e2e8f0',
-    width: '100%'
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: '#3b82f6',
-    transition: 'width 0.3s'
-  },
-  cardContainer: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '12px 16px',
-    gap: '12px'
-  },
-  flashcard: {
-    width: '100%',
-    maxWidth: '500px',
-    minHeight: '200px',
-    backgroundColor: '#fff',
-    borderRadius: '16px',
-    boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '24px',
-    transition: 'transform 0.2s',
-    border: '2px solid #e2e8f0',
-    userSelect: 'none'
-  },
-  cardContent: {
-    textAlign: 'center',
-    width: '100%'
-  },
-  cardLabel: {
-    fontSize: '10px',
-    fontWeight: 700,
-    color: '#64748b',
-    letterSpacing: '1px',
-    marginBottom: '16px'
-  },
-  cardTextContainer: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    width: '100%',
-    gap: '16px'
-  },
-  cardText: {
-    fontSize: '24px',
-    fontWeight: 600,
-    color: '#0f172a',
-    lineHeight: '1.4',
-    wordWrap: 'break-word',
-    whiteSpace: 'pre-wrap'
-  },
-  exampleBox: {
-    backgroundColor: '#f8fafc',
-    borderLeft: '3px solid #3b82f6',
-    borderRadius: '0 8px 8px 0',
-    padding: '12px',
-    width: '100%',
-    maxWidth: '380px',
-    textAlign: 'left'
-  },
-  exampleLabel: {
-    fontSize: '10px',
-    fontWeight: 700,
-    color: '#64748b',
-    marginBottom: '6px',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px'
-  },
-  exampleText: {
-    fontSize: '14px',
-    color: '#334155',
-    lineHeight: '1.5',
-    fontWeight: 500
-  },
-  tapHint: {
-    fontSize: '12px',
-    color: '#94a3b8',
-    marginTop: '16px'
-  },
-  speakerButton: {
-    marginTop: '16px',
-    padding: '8px 16px',
-    backgroundColor: '#3b82f6',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '13px',
-    fontWeight: 600,
-    cursor: 'pointer'
-  },
-  queueInfo: {
-    fontSize: '12px',
-    color: '#64748b',
-    textAlign: 'center',
-    padding: '6px 12px',
-    backgroundColor: '#fff',
-    borderRadius: '16px',
-    border: '1px solid #e2e8f0'
-  },
-  keyboardHints: {
-    display: 'flex',
-    gap: '12px',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    fontSize: '10px',
-    color: '#94a3b8'
-  },
-  hint: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px'
-  },
-  kbd: {
-    backgroundColor: '#f1f5f9',
-    border: '1px solid #cbd5e1',
-    borderRadius: '3px',
-    padding: '2px 4px',
-    fontFamily: 'monospace',
-    fontSize: '9px',
-    color: '#475569'
-  },
-  actions: {
-    display: 'flex',
-    gap: '8px',
-    padding: '12px 16px',
-    maxWidth: '500px',
-    margin: '0 auto',
-    width: '100%'
-  },
-  reviewBtn: {
-    flex: 1,
-    border: 'none',
-    borderRadius: '12px',
-    padding: '12px 6px',
-    fontSize: '12px',
-    fontWeight: 600,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '3px',
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    color: '#fff'
-  },
-  emoji: {
-    fontSize: '20px',
-    marginBottom: '2px'
-  },
+  container: { minHeight: '100vh', backgroundColor: '#f8fafc', display: 'flex', flexDirection: 'column' },
+  header: { backgroundColor: '#fff', borderBottom: '1px solid #e2e8f0', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  closeButton: { background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#64748b', padding: '4px', width: '32px' },
+  headerTitle: { fontSize: '14px', fontWeight: 600, color: '#0f172a', margin: 0, flex: 1, textAlign: 'center' },
+  audioToggle: { display: 'flex', alignItems: 'center', gap: '8px' },
+  modeToggle: { display: 'flex', gap: '4px', backgroundColor: '#f1f5f9', borderRadius: '8px', padding: '2px' },
+  modeButton: { border: 'none', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' },
+  audioButton: { background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', padding: '4px' },
+  counter: { fontSize: '12px', color: '#3b82f6', fontWeight: 600, minWidth: '50px', textAlign: 'right' },
+  reverseModeContainer: { padding: '8px 16px', backgroundColor: '#fff', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'center' },
+  reverseModeButton: { display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' },
+  reverseModeIcon: { fontSize: '14px' },
+  reverseModeText: { fontSize: '11px' },
+  progressBarContainer: { height: '3px', backgroundColor: '#e2e8f0', width: '100%' },
+  progressBar: { height: '100%', backgroundColor: '#3b82f6', transition: 'width 0.3s' },
+  cardContainer: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 16px', gap: '12px' },
+  flashcard: { width: '100%', maxWidth: '500px', minHeight: '200px', backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 4px 16px rgba(0,0,0,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', transition: 'transform 0.2s', border: '2px solid #e2e8f0', userSelect: 'none' },
+  cardContent: { textAlign: 'center', width: '100%' },
+  cardLabel: { fontSize: '10px', fontWeight: 700, color: '#64748b', letterSpacing: '1px', marginBottom: '16px' },
+  cardTextContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', gap: '16px' },
+  cardText: { fontSize: '24px', fontWeight: 600, color: '#0f172a', lineHeight: '1.4', wordWrap: 'break-word', whiteSpace: 'pre-wrap' },
+  exampleBox: { backgroundColor: '#f8fafc', borderLeft: '3px solid #3b82f6', borderRadius: '0 8px 8px 0', padding: '12px', width: '100%', maxWidth: '380px', textAlign: 'left' },
+  exampleLabel: { fontSize: '10px', fontWeight: 700, color: '#64748b', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' },
+  exampleText: { fontSize: '14px', color: '#334155', lineHeight: '1.5', fontWeight: 500 },
+  tapHint: { fontSize: '12px', color: '#94a3b8', marginTop: '16px' },
+  speakerButton: { marginTop: '16px', padding: '8px 16px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' },
+  queueInfo: { fontSize: '12px', color: '#64748b', textAlign: 'center', padding: '6px 12px', backgroundColor: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0' },
+  keyboardHints: { display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center', fontSize: '10px', color: '#94a3b8' },
+  hint: { display: 'flex', alignItems: 'center', gap: '4px' },
+  kbd: { backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '3px', padding: '2px 4px', fontFamily: 'monospace', fontSize: '9px', color: '#475569' },
+  actions: { display: 'flex', gap: '8px', padding: '12px 16px', maxWidth: '500px', margin: '0 auto', width: '100%' },
+  reviewBtn: { flex: 1, border: 'none', borderRadius: '12px', padding: '12px 6px', fontSize: '12px', fontWeight: 600, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3px', cursor: 'pointer', transition: 'all 0.2s', color: '#fff' },
+  emoji: { fontSize: '20px', marginBottom: '2px' },
   btnAgain: { backgroundColor: '#ef4444' },
   btnKnowIt: { backgroundColor: '#22c55e' },
   btnMastered: { backgroundColor: '#3b82f6' },
-  buttonShortcut: {
-    fontSize: '10px',
-    opacity: 0.8,
-    fontWeight: 400
-  },
-  resumeContainer: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '24px'
-  },
-  resumeCard: {
-    backgroundColor: '#fff',
-    borderRadius: '24px',
-    padding: '48px',
-    maxWidth: '500px',
-    textAlign: 'center',
-    boxShadow: '0 8px 24px rgba(0,0,0,0.1)'
-  },
-  resumeIcon: {
-    fontSize: '64px',
-    marginBottom: '24px'
-  },
-  resumeTitle: {
-    fontSize: '32px',
-    fontWeight: 700,
-    color: '#0f172a',
-    marginBottom: '16px'
-  },
-  resumeText: {
-    fontSize: '16px',
-    color: '#64748b',
-    marginBottom: '32px'
-  },
-  resumeStats: {
-    display: 'flex',
-    gap: '48px',
-    justifyContent: 'center',
-    marginBottom: '32px'
-  },
-  resumeStatItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px'
-  },
-  resumeStatValue: {
-    fontSize: '28px',
-    fontWeight: 700,
-    color: '#3b82f6'
-  },
-  resumeStatLabel: {
-    fontSize: '14px',
-    color: '#64748b',
-    fontWeight: 500
-  },
-  resumeButtons: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px'
-  },
-  primaryButton: {
-    padding: '16px 32px',
-    fontSize: '16px',
-    fontWeight: 600,
-    backgroundColor: '#3b82f6',
-    color: 'white',
-    border: 'none',
-    borderRadius: '12px',
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  },
-  secondaryButton: {
-    padding: '16px 32px',
-    fontSize: '16px',
-    fontWeight: 600,
-    backgroundColor: '#f1f5f9',
-    color: '#475569',
-    border: 'none',
-    borderRadius: '12px',
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  },
-  finishedContainer: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '24px'
-  },
-  finishedIcon: {
-    fontSize: '64px',
-    marginBottom: '16px'
-  },
-  finishedTitle: {
-    fontSize: '32px',
-    fontWeight: 700,
-    color: '#0f172a',
-    marginBottom: '8px'
-  },
-  finishedText: {
-    fontSize: '16px',
-    color: '#64748b',
-    marginBottom: '32px',
-    textAlign: 'center'
-  },
-  statsContainer: {
-    display: 'flex',
-    gap: '24px',
-    marginBottom: '32px',
-    flexWrap: 'wrap',
-    justifyContent: 'center'
-  },
-  statBox: {
-    textAlign: 'center'
-  },
-  statValue: {
-    fontSize: '36px',
-    fontWeight: 700,
-    color: '#3b82f6',
-    marginBottom: '4px'
-  },
-  statLabel: {
-    fontSize: '14px',
-    color: '#64748b',
-    fontWeight: 500
-  },
-  finishedButtons: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-    width: '100%',
-    maxWidth: '300px'
-  },
-  studyAgainButton: {
-    backgroundColor: '#3b82f6',
-    color: 'white',
-    border: 'none',
-    borderRadius: '12px',
-    padding: '14px 32px',
-    fontSize: '16px',
-    fontWeight: 600,
-    cursor: 'pointer'
-  },
-  homeButton: {
-    backgroundColor: '#fff',
-    color: '#0f172a',
-    border: '2px solid #e2e8f0',
-    borderRadius: '12px',
-    padding: '14px 32px',
-    fontSize: '16px',
-    fontWeight: 600,
-    cursor: 'pointer'
-  },
-  loading: {
-    textAlign: 'center',
-    marginTop: '48px',
-    fontSize: '18px',
-    color: '#64748b'
-  }
+  buttonShortcut: { fontSize: '10px', opacity: 0.8, fontWeight: 400 },
+  resumeContainer: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' },
+  resumeCard: { backgroundColor: '#fff', borderRadius: '24px', padding: '48px', maxWidth: '500px', textAlign: 'center', boxShadow: '0 8px 24px rgba(0,0,0,0.1)' },
+  resumeIcon: { fontSize: '64px', marginBottom: '24px' },
+  resumeTitle: { fontSize: '32px', fontWeight: 700, color: '#0f172a', marginBottom: '16px' },
+  resumeText: { fontSize: '16px', color: '#64748b', marginBottom: '32px' },
+  resumeStats: { display: 'flex', gap: '48px', justifyContent: 'center', marginBottom: '32px' },
+  resumeStatItem: { display: 'flex', flexDirection: 'column', gap: '8px' },
+  resumeStatValue: { fontSize: '28px', fontWeight: 700, color: '#3b82f6' },
+  resumeStatLabel: { fontSize: '14px', color: '#64748b', fontWeight: 500 },
+  resumeButtons: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  primaryButton: { padding: '16px 32px', fontSize: '16px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer', transition: 'opacity 0.2s' },
+  secondaryButton: { padding: '16px 32px', fontSize: '16px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '12px', cursor: 'pointer', transition: 'opacity 0.2s' },
+  finishedContainer: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px' },
+  finishedIcon: { fontSize: '64px', marginBottom: '16px' },
+  finishedTitle: { fontSize: '32px', fontWeight: 700, color: '#0f172a', marginBottom: '8px' },
+  finishedText: { fontSize: '16px', color: '#64748b', marginBottom: '32px', textAlign: 'center' },
+  statsContainer: { display: 'flex', gap: '24px', marginBottom: '32px', flexWrap: 'wrap', justifyContent: 'center' },
+  statBox: { textAlign: 'center' },
+  statValue: { fontSize: '36px', fontWeight: 700, color: '#3b82f6', marginBottom: '4px' },
+  statLabel: { fontSize: '14px', color: '#64748b', fontWeight: 500 },
+  finishedButtons: { display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', maxWidth: '300px' },
+  studyAgainButton: { backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', padding: '14px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
+  homeButton: { backgroundColor: '#fff', color: '#0f172a', border: '2px solid #e2e8f0', borderRadius: '12px', padding: '14px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
+  loading: { textAlign: 'center', marginTop: '48px', fontSize: '18px', color: '#64748b' }
 };
 
 export default Swipe;
