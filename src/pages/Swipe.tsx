@@ -9,6 +9,18 @@ interface SwipeProps {
   onNavigateToHome: () => void;
 }
 
+interface SavedSwipeSession {
+  setId: string;
+  activeQueue: Card[];
+  studyMode: 'due' | 'all';
+  reverseMode: boolean;
+  sessionStats: { reviewed: number; knowIt: number; mastered: number };
+  timestamp: number;
+}
+
+const STORAGE_KEY = 'swipe-mode-session';
+const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [set, setSet] = useState<FlashcardSet | null>(null);
   const [activeQueue, setActiveQueue] = useState<Card[]>([]);
@@ -22,6 +34,84 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [studyMode, setStudyMode] = useState<'due' | 'all'>('all');
   const [reverseMode, setReverseMode] = useState(false);
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
+  const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const [savedSession, setSavedSession] = useState<SavedSwipeSession | null>(null);
+
+  const loadSavedSession = (): SavedSwipeSession | null => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (!saved) return null;
+      
+      const session: SavedSwipeSession = JSON.parse(saved);
+      
+      // Check if session is expired
+      if (Date.now() - session.timestamp > SESSION_EXPIRY_MS) {
+        localStorage.removeItem(STORAGE_KEY);
+        return null;
+      }
+      
+      return session;
+    } catch (error) {
+      console.error('Error loading saved session:', error);
+      return null;
+    }
+  };
+
+  const saveCurrentSession = useCallback(() => {
+    if (activeQueue.length === 0 || isFinished) return;
+    
+    try {
+      const session: SavedSwipeSession = {
+        setId,
+        activeQueue,
+        studyMode,
+        reverseMode,
+        sessionStats,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    } catch (error) {
+      console.error('Error saving session:', error);
+    }
+  }, [setId, activeQueue, studyMode, reverseMode, sessionStats, isFinished]);
+
+  const clearSavedSession = () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (error) {
+      console.error('Error clearing session:', error);
+    }
+  };
+
+  const handleResumeSession = () => {
+    if (savedSession) {
+      setActiveQueue(savedSession.activeQueue);
+      setCurrentCard(savedSession.activeQueue[0] || null);
+      setTotalCards(savedSession.activeQueue.length);
+      setStudyMode(savedSession.studyMode);
+      setReverseMode(savedSession.reverseMode);
+      setSessionStats(savedSession.sessionStats);
+      setShowResumePrompt(false);
+    }
+  };
+
+  const handleStartNewSession = () => {
+    clearSavedSession();
+    setShowResumePrompt(false);
+    // Will trigger loadQueue in the next useEffect
+  };
+
+  // Auto-save session when state changes
+  useEffect(() => {
+    saveCurrentSession();
+  }, [saveCurrentSession]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      saveCurrentSession();
+    };
+  }, [saveCurrentSession]);
 
   // Memoized queue loading logic to prevent recreating function
   const loadQueue = useCallback((flashcardSet: FlashcardSet, mode: 'due' | 'all') => {
@@ -78,6 +168,15 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     if (flashcardSet) {
       setSet(flashcardSet);
       
+      // Check for saved session first
+      const saved = loadSavedSession();
+      if (saved && saved.setId === setId && saved.activeQueue.length > 0) {
+        setSavedSession(saved);
+        setShowResumePrompt(true);
+        return;
+      }
+      
+      // No saved session, start new
       // Check if user has any review history
       const reviewedData = getSetReviewData(setId);
       const hasSomeReviews = reviewedData.length > 0;
@@ -99,6 +198,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   const switchMode = useCallback((mode: 'due' | 'all') => {
     if (!set) return;
+    clearSavedSession(); // Clear saved session when explicitly switching modes
     loadQueue(set, mode);
     setSessionStats({ reviewed: 0, knowIt: 0, mastered: 0 });
     setIsFlipped(false);
@@ -263,6 +363,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         return latestStats;
       });
       
+      clearSavedSession(); // Clear saved session on completion
       setIsFinished(true);
     } else {
       setActiveQueue(newQueue);
@@ -330,6 +431,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   const handleStudyAgain = useCallback(() => {
     if (!set) return;
+    clearSavedSession(); // Clear saved session when starting fresh
     loadQueue(set, studyMode);
     setIsFlipped(false);
     setIsFinished(false);
@@ -365,6 +467,54 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     const progress = totalCards > 0 ? Math.min(100, ((totalCards - activeQueue.length) / totalCards) * 100) : 0;
     return { ...styles.progressBar, width: `${progress}%` };
   }, [totalCards, activeQueue.length]);
+
+  // Resume prompt screen
+  if (showResumePrompt && savedSession) {
+    const cardsLeft = savedSession.activeQueue.length;
+    const progress = totalCards > 0 ? Math.round(((totalCards - cardsLeft) / totalCards) * 100) : 0;
+    
+    return (
+      <div style={styles.container}>
+        <div style={styles.resumeContainer}>
+          <div style={styles.resumeCard}>
+            <div style={styles.resumeIcon}>💭</div>
+            <h2 style={styles.resumeTitle}>Resume Session?</h2>
+            <p style={styles.resumeText}>
+              You have an in-progress review session.
+            </p>
+            <div style={styles.resumeStats}>
+              <div style={styles.resumeStatItem}>
+                <span style={styles.resumeStatValue}>{cardsLeft}</span>
+                <span style={styles.resumeStatLabel}>Cards Remaining</span>
+              </div>
+              <div style={styles.resumeStatItem}>
+                <span style={styles.resumeStatValue}>{savedSession.sessionStats.reviewed}</span>
+                <span style={styles.resumeStatLabel}>Already Reviewed</span>
+              </div>
+            </div>
+            <div style={styles.resumeButtons}>
+              <button
+                style={styles.primaryButton}
+                onClick={handleResumeSession}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+              >
+                ▶️ Resume Session
+              </button>
+              <button
+                style={styles.secondaryButton}
+                onClick={handleStartNewSession}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+              >
+                🔄 Start New Session
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!set) {
     return (
@@ -856,6 +1006,84 @@ const styles: { [key: string]: CSSProperties } = {
     fontSize: '10px',
     opacity: 0.8,
     fontWeight: 400
+  },
+  resumeContainer: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '24px'
+  },
+  resumeCard: {
+    backgroundColor: '#fff',
+    borderRadius: '24px',
+    padding: '48px',
+    maxWidth: '500px',
+    textAlign: 'center',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.1)'
+  },
+  resumeIcon: {
+    fontSize: '64px',
+    marginBottom: '24px'
+  },
+  resumeTitle: {
+    fontSize: '32px',
+    fontWeight: 700,
+    color: '#0f172a',
+    marginBottom: '16px'
+  },
+  resumeText: {
+    fontSize: '16px',
+    color: '#64748b',
+    marginBottom: '32px'
+  },
+  resumeStats: {
+    display: 'flex',
+    gap: '48px',
+    justifyContent: 'center',
+    marginBottom: '32px'
+  },
+  resumeStatItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px'
+  },
+  resumeStatValue: {
+    fontSize: '28px',
+    fontWeight: 700,
+    color: '#3b82f6'
+  },
+  resumeStatLabel: {
+    fontSize: '14px',
+    color: '#64748b',
+    fontWeight: 500
+  },
+  resumeButtons: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px'
+  },
+  primaryButton: {
+    padding: '16px 32px',
+    fontSize: '16px',
+    fontWeight: 600,
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '12px',
+    cursor: 'pointer',
+    transition: 'opacity 0.2s'
+  },
+  secondaryButton: {
+    padding: '16px 32px',
+    fontSize: '16px',
+    fontWeight: 600,
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+    border: 'none',
+    borderRadius: '12px',
+    cursor: 'pointer',
+    transition: 'opacity 0.2s'
   },
   finishedContainer: {
     flex: 1,
