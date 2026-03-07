@@ -4,13 +4,16 @@ import Create from './pages/Create';
 import Swipe from './pages/Swipe';
 import Stats from './pages/Stats';
 import Auth from './pages/Auth';
+import LearnSession from './components/LearnSession';
+import LearnComplete from './components/LearnComplete';
 import ErrorBoundary from './components/ErrorBoundary';
 import { supabase } from './lib/supabaseClient';
 import { syncService } from './lib/syncService';
-import { setUserId, getAllSets, overrideStorageWithCloud } from './lib/storage';
+import { setUserId, getAllSets, overrideStorageWithCloud, getSet } from './lib/storage';
 import { setReviewUserId, overrideReviewsWithCloud } from './lib/spacedRepetition';
+import { LearnSessionResult } from './types/learnSession';
 
-type Page = 'home' | 'create' | 'swipe' | 'stats';
+type Page = 'home' | 'create' | 'swipe' | 'stats' | 'learn' | 'learn-complete';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -18,6 +21,7 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
+  const [learnResult, setLearnResult] = useState<LearnSessionResult | null>(null);
 
   useEffect(() => {
     // Check active session
@@ -95,6 +99,19 @@ const App: React.FC = () => {
     setSelectedSetId(setId);
     setCurrentPage('swipe');
   };
+  const navigateToLearn = (setId: string) => {
+    setSelectedSetId(setId);
+    setCurrentPage('learn');
+  };
+
+  const handleLearnComplete = (result: LearnSessionResult) => {
+    setLearnResult(result);
+    setCurrentPage('learn-complete');
+  };
+
+  const handleLearnContinue = () => {
+    setCurrentPage('learn');
+  };
 
   if (isLoadingSession) {
     return (
@@ -124,6 +141,7 @@ const App: React.FC = () => {
           <Home
             onNavigateToCreate={navigateToCreate}
             onNavigateToSwipe={navigateToSwipe}
+            onNavigateToLearn={navigateToLearn}
             onNavigateToStats={navigateToStats}
             onLogout={handleLogout}
           />
@@ -133,6 +151,21 @@ const App: React.FC = () => {
         )}
         {currentPage === 'swipe' && selectedSetId && (
           <Swipe setId={selectedSetId} onNavigateToHome={navigateToHome} />
+        )}
+        {currentPage === 'learn' && selectedSetId && (
+          <LearnSession
+            set={getSet(selectedSetId)!}
+            onComplete={handleLearnComplete}
+            onExit={navigateToHome}
+          />
+        )}
+        {currentPage === 'learn-complete' && selectedSetId && learnResult && (
+          <LearnComplete
+            result={learnResult}
+            deckTitle={getSet(selectedSetId)!.title}
+            onContinue={handleLearnContinue}
+            onExit={navigateToHome}
+          />
         )}
         {currentPage === 'stats' && (
           <Stats onNavigateToHome={navigateToHome} />
