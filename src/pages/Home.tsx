@@ -5,6 +5,7 @@ import { getStreak, getTodayStats } from '../lib/studyStats';
 import { getSetStudyStats } from '../lib/spacedRepetition';
 import { syncService } from '../lib/syncService';
 import { supabase } from '../lib/supabaseClient';
+import { getTodayPrompt, getPromptStreak } from '../lib/sentenceBuilder';
 import ImportModal from '../components/ImportModal';
 import LearningTips from '../components/LearningTips';
 
@@ -13,13 +14,26 @@ interface HomeProps {
   onNavigateToSwipe: (setId: string) => void;
   onNavigateToLearn: (setId: string) => void;
   onNavigateToStats: () => void;
+  onNavigateToSentenceBuilder: (setId: string) => void;
+  onNavigateToSpeechPractice: (setId: string) => void;
+  onNavigateToDailyWriting: (setId: string) => void;
   onLogout: () => void;
 }
 
-const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNavigateToLearn, onNavigateToStats, onLogout }) => {
+const Home: React.FC<HomeProps> = ({ 
+  onNavigateToCreate, 
+  onNavigateToSwipe, 
+  onNavigateToLearn, 
+  onNavigateToStats,
+  onNavigateToSentenceBuilder,
+  onNavigateToSpeechPractice,
+  onNavigateToDailyWriting,
+  onLogout 
+}) => {
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showLearningTips, setShowLearningTips] = useState(false);
+  const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [streak, setStreak] = useState({ current: 0, longest: 0, lastStudyDate: '' });
   const [todayStats, setTodayStats] = useState({ totalCards: 0, totalDuration: 0 });
   const [isSyncing, setIsSyncing] = useState(false);
@@ -175,6 +189,10 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const toggleCardExpansion = (cardId: string) => {
+    setExpandedCardId(expandedCardId === cardId ? null : cardId);
   };
 
   const hasUnsyncedDecks = unsyncedDeckIds.size > 0;
@@ -334,9 +352,16 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
           {sets.map((set) => {
             const stats = getSetStudyStats(set.id, set.cards.length);
             const isUnsynced = unsyncedDeckIds.has(set.id);
+            const isExpanded = expandedCardId === set.id;
             const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
             const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
             const hasDue = stats.dueCards > 0;
+            
+            // Check if daily writing is available
+            const todayPrompt = getTodayPrompt(set.id, set.cards);
+            const writingStreak = getPromptStreak(set.id);
+            const hasDailyPrompt = todayPrompt !== null;
+            const isDailyCompleted = todayPrompt?.completedAt !== undefined;
             
             return (
               <div
@@ -382,6 +407,17 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
                     🎯 {stats.dueCards} {stats.dueCards === 1 ? 'card' : 'cards'} due
                   </div>
                 )}
+
+                {hasDailyPrompt && (
+                  <div style={{
+                    ...styles.dailyBadge,
+                    backgroundColor: isDailyCompleted ? '#d1fae5' : '#fef3c7',
+                    color: isDailyCompleted ? '#065f46' : '#92400e'
+                  }}>
+                    {isDailyCompleted ? '✅ Daily writing complete!' : '✍️ Daily writing available'}
+                    {writingStreak > 0 && <span style={styles.dailyStreakIcon}> 🔥{writingStreak}</span>}
+                  </div>
+                )}
                 
                 <div style={styles.cardFooter}>
                   <span style={styles.cardCount}>{set.cards.length} cards</span>
@@ -399,7 +435,7 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
                   />
                 </div>
 
-                {/* Study buttons */}
+                {/* Primary Study Buttons */}
                 <div style={styles.studyButtons}>
                   <button
                     style={styles.learnButton}
@@ -417,6 +453,64 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
                   >
                     💭 Review
                   </button>
+                </div>
+
+                {/* Active Learning Section - Expandable */}
+                <div style={styles.activeLearningSection}>
+                  <button
+                    style={styles.expandButton}
+                    onClick={() => toggleCardExpansion(set.id)}
+                  >
+                    <span style={styles.expandIcon}>🎤</span>
+                    <span style={styles.expandText}>Active Practice</span>
+                    <span style={styles.expandArrow}>{isExpanded ? '▲' : '▼'}</span>
+                  </button>
+
+                  {isExpanded && (
+                    <div style={styles.activeButtons}>
+                      <button
+                        style={styles.activeButton}
+                        onClick={() => onNavigateToSentenceBuilder(set.id)}
+                        onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-2px)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
+                      >
+                        <div style={styles.activeButtonIcon}>🏗️</div>
+                        <div style={styles.activeButtonText}>
+                          <div style={styles.activeButtonTitle}>Sentence Builder</div>
+                          <div style={styles.activeButtonDesc}>Create sentences</div>
+                        </div>
+                      </button>
+
+                      <button
+                        style={styles.activeButton}
+                        onClick={() => onNavigateToSpeechPractice(set.id)}
+                        onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-2px)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
+                      >
+                        <div style={styles.activeButtonIcon}>🎤</div>
+                        <div style={styles.activeButtonText}>
+                          <div style={styles.activeButtonTitle}>Speech Practice</div>
+                          <div style={styles.activeButtonDesc}>Record & compare</div>
+                        </div>
+                      </button>
+
+                      <button
+                        style={styles.activeButton}
+                        onClick={() => onNavigateToDailyWriting(set.id)}
+                        onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-2px)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
+                      >
+                        <div style={styles.activeButtonIcon}>✍️</div>
+                        <div style={styles.activeButtonText}>
+                          <div style={styles.activeButtonTitle}>Daily Writing</div>
+                          <div style={styles.activeButtonDesc}>
+                            {isDailyCompleted ? 'Complete! ✅' : 'Today\'s prompt'}
+                            {writingStreak > 0 && ` 🔥${writingStreak}`}
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -767,7 +861,21 @@ const styles: { [key: string]: CSSProperties } = {
     borderRadius: '20px',
     fontSize: '12px',
     fontWeight: 600,
-    marginBottom: '16px'
+    marginBottom: '8px'
+  },
+  dailyBadge: {
+    alignSelf: 'flex-start',
+    padding: '4px 10px',
+    borderRadius: '20px',
+    fontSize: '12px',
+    fontWeight: 600,
+    marginBottom: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px'
+  },
+  dailyStreakIcon: {
+    fontSize: '11px'
   },
   cardFooter: {
     display: 'flex',
@@ -800,7 +908,8 @@ const styles: { [key: string]: CSSProperties } = {
   },
   studyButtons: {
     display: 'flex',
-    gap: '8px'
+    gap: '8px',
+    marginBottom: '12px'
   },
   learnButton: {
     flex: 1,
@@ -825,6 +934,71 @@ const styles: { [key: string]: CSSProperties } = {
     borderRadius: '8px',
     cursor: 'pointer',
     transition: 'opacity 0.2s'
+  },
+  activeLearningSection: {
+    borderTop: '1px solid #e2e8f0',
+    paddingTop: '12px'
+  },
+  expandButton: {
+    width: '100%',
+    backgroundColor: '#f8fafc',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
+    padding: '10px 12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    cursor: 'pointer',
+    transition: 'background-color 0.2s',
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#475569'
+  },
+  expandIcon: {
+    fontSize: '16px'
+  },
+  expandText: {
+    flex: 1,
+    textAlign: 'left'
+  },
+  expandArrow: {
+    fontSize: '12px',
+    color: '#94a3b8'
+  },
+  activeButtons: {
+    marginTop: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px'
+  },
+  activeButton: {
+    backgroundColor: '#fff',
+    border: '2px solid #e2e8f0',
+    borderRadius: '8px',
+    padding: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    textAlign: 'left'
+  },
+  activeButtonIcon: {
+    fontSize: '24px',
+    flexShrink: 0
+  },
+  activeButtonText: {
+    flex: 1
+  },
+  activeButtonTitle: {
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#0f172a',
+    marginBottom: '2px'
+  },
+  activeButtonDesc: {
+    fontSize: '12px',
+    color: '#64748b'
   }
 };
 
