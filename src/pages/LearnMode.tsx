@@ -1,6 +1,7 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
 import { FlashcardSet, Flashcard } from '../lib/storage';
 import { CardReviewData, saveCardReview, ReviewRating } from '../lib/spacedRepetition';
+import { audioService } from '../lib/audioService';
 
 interface LearnModeProps {
   set: FlashcardSet;
@@ -53,6 +54,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     // Save session on unmount (when navigating away)
     return () => {
       saveCurrentSession();
+      audioService.stop(); // Stop audio when leaving
     };
   }, []);
 
@@ -177,34 +179,38 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
 
   const currentQuestion = questions[currentIndex];
 
-  const playAudio = async (text: string, lang: string = 'ja-JP') => {
-    if (isPlayingAudio || !text) return;
+  const playAudio = async (text: string) => {
+    if (isPlayingAudio || !text || !audioService.isSupported()) return;
     
     try {
       setIsPlayingAudio(true);
       
-      // Cancel any ongoing speech first
-      window.speechSynthesis.cancel();
+      let cleanText = text;
+      // Handle Kanji[kana] format for better TTS
+      const bracketMatch = text.match(/^(.*?)\[(.*?)\]/);
+      if (bracketMatch) {
+        const kanji = bracketMatch[1].trim();
+        const kana = bracketMatch[2].trim();
+        // Read both with a pause if they're different
+        if (kanji !== kana && kanji && kana) {
+          await audioService.playSequence([
+            { text: kanji, pauseAfter: 1000 },
+            { text: kana, pauseAfter: 0 }
+          ]);
+          return; // Exit early since we handled the sequence
+        } else {
+          cleanText = kanji || kana;
+        }
+      } else {
+        // Remove markdown or other brackets if any exist
+        cleanText = text.replace(/\[.*?\]/g, '').trim();
+      }
+
+      await audioService.playSequence([{ text: cleanText, pauseAfter: 0 }]);
       
-      // Small delay to ensure cancellation is complete
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = lang;
-      utterance.rate = 0.85; // Slightly slower for learning
-      
-      utterance.onend = () => {
-        setIsPlayingAudio(false);
-      };
-      
-      utterance.onerror = (error) => {
-        console.error('Speech synthesis error:', error);
-        setIsPlayingAudio(false);
-      };
-      
-      window.speechSynthesis.speak(utterance);
     } catch (error) {
       console.error('Audio playback error:', error);
+    } finally {
       setIsPlayingAudio(false);
     }
   };
@@ -272,6 +278,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   };
 
   const handleNext = () => {
+    audioService.stop(); // Stop any playing audio before proceeding
     if (currentIndex < questions.length - 1) {
       setCurrentIndex(currentIndex + 1);
       setShowAnswer(false);
@@ -426,7 +433,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
             <div style={styles.questionFront}>{currentQuestion.card.front}</div>
             <button
               style={styles.audioButton}
-              onClick={() => playAudio(currentQuestion.card.front, 'ja-JP')}
+              onClick={() => playAudio(currentQuestion.card.front)}
               disabled={isPlayingAudio}
               title="Play audio"
               onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
@@ -442,7 +449,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               </div>
               <button
                 style={styles.audioButtonSmall}
-                onClick={() => playAudio(currentQuestion.card.example!, 'ja-JP')}
+                onClick={() => playAudio(currentQuestion.card.example!)}
                 disabled={isPlayingAudio}
                 title="Play example audio"
                 onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
@@ -560,7 +567,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
                   <div style={styles.flashcardAnswer}>{currentQuestion.card.back}</div>
                   <button
                     style={styles.audioButton}
-                    onClick={() => playAudio(currentQuestion.card.back, 'ja-JP')}
+                    onClick={() => playAudio(currentQuestion.card.back)}
                     disabled={isPlayingAudio}
                     title="Play answer audio"
                     onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
