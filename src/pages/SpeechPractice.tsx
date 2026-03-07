@@ -115,21 +115,43 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
     audioRef.current.play();
   };
 
-  const playTTS = () => {
+  const playTTS = async () => {
     if (!currentCard) return;
     
     setIsPlaying(true);
     setPlaybackType('tts');
     
-    const text = currentCard.front.split('\n')[0];
-    // Removed 'ja-JP' which was causing the string-to-number type error 
-    // since audioService.speak expects (text: string, rate: number)
-    audioService.speak(text); 
+    // Parse the card front to extract vocab and example sentence
+    const lines = currentCard.front.split('\n').filter(line => line.trim());
     
-    setTimeout(() => {
+    if (lines.length === 0) {
       setIsPlaying(false);
       setPlaybackType(null);
-    }, 3000);
+      return;
+    }
+
+    // Build sequence: vocab, then example sentence with pauses
+    const sequence: { text: string; pauseAfter: number }[] = [];
+    
+    // First line is typically the vocab word
+    const vocabLine = lines[0].split('[')[0].trim(); // Remove furigana brackets
+    sequence.push({ text: vocabLine, pauseAfter: 800 });
+    
+    // Additional lines are example sentences
+    if (lines.length > 1) {
+      for (let i = 1; i < lines.length; i++) {
+        const sentence = lines[i].trim();
+        if (sentence) {
+          sequence.push({ text: sentence, pauseAfter: 500 });
+        }
+      }
+    }
+
+    // Use playSequence for better control and natural pauses
+    await audioService.playSequence(sequence, 0.85);
+    
+    setIsPlaying(false);
+    setPlaybackType(null);
   };
 
   const handleAudioEnded = () => {
@@ -270,8 +292,8 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
           <div style={styles.tips}>
             <div style={styles.tipsTitle}>💡 Tips:</div>
             <ul style={styles.tipsList}>
-              <li>Listen to the native pronunciation first</li>
-              <li>Record yourself saying the word/phrase</li>
+              <li>Listen to the vocab word and example sentence</li>
+              <li>Record yourself saying both the word and sentence</li>
               <li>Compare your recording with the native audio</li>
               <li>Practice until you're confident!</li>
             </ul>
@@ -369,7 +391,8 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 700,
     color: '#0f172a',
     marginBottom: '12px',
-    textAlign: 'center'
+    textAlign: 'center',
+    whiteSpace: 'pre-line'
   },
   cardMeaning: {
     fontSize: '18px',
