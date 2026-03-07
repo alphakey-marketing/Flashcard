@@ -25,6 +25,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const [correctCount, setCorrectCount] = useState(0);
   const [showCongrats, setShowCongrats] = useState(false);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
   useEffect(() => {
     initializeSession();
@@ -84,6 +85,26 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
 
   const currentQuestion = questions[currentIndex];
 
+  const playAudio = async (text: string, lang: string = 'ja-JP') => {
+    if (isPlayingAudio) return;
+    
+    try {
+      setIsPlayingAudio(true);
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = lang;
+      utterance.rate = 0.85; // Slightly slower for learning
+      
+      utterance.onend = () => setIsPlayingAudio(false);
+      utterance.onerror = () => setIsPlayingAudio(false);
+      
+      window.speechSynthesis.cancel(); // Cancel any ongoing speech
+      window.speechSynthesis.speak(utterance);
+    } catch (error) {
+      console.error('Audio playback error:', error);
+      setIsPlayingAudio(false);
+    }
+  };
+
   const handleMultipleChoiceSelect = (option: string) => {
     if (showAnswer) return;
     
@@ -113,8 +134,21 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       setCorrectCount(correctCount + 1);
       saveCardReview(set.id, currentQuestion.card.id, 'know_it');
     } else {
-      saveCardReview(set.id, currentQuestion.card.id, 'again');
+      // Don't record yet - let user decide with override button
     }
+  };
+
+  const handleTypeInOverride = () => {
+    // User says their answer was correct
+    setIsCorrect(true);
+    setCorrectCount(correctCount + 1);
+    saveCardReview(set.id, currentQuestion.card.id, 'know_it');
+  };
+
+  const handleTypeInConfirmWrong = () => {
+    // User confirms their answer was wrong
+    saveCardReview(set.id, currentQuestion.card.id, 'again');
+    handleNext();
   };
 
   const handleFlashcardRate = (rating: ReviewRating) => {
@@ -147,7 +181,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     return (
       <div style={styles.loading}>
         <p>No cards available in this deck.</p>
-        <button style={styles.exitButton} onClick={onExit}>← Go Back</button>
+        <button style={styles.exitButtonStandalone} onClick={onExit}>← Go Back</button>
       </div>
     );
   }
@@ -226,12 +260,36 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
 
       {/* Question card */}
       <div style={styles.questionCard}>
-        {/* Question prompt */}
+        {/* Question prompt with audio */}
         <div style={styles.questionPrompt}>
-          <div style={styles.questionFront}>{currentQuestion.card.front}</div>
+          <div style={styles.questionFrontRow}>
+            <div style={styles.questionFront}>{currentQuestion.card.front}</div>
+            <button
+              style={styles.audioButton}
+              onClick={() => playAudio(currentQuestion.card.front, 'ja-JP')}
+              disabled={isPlayingAudio}
+              title="Play audio"
+              onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
+              onMouseLeave={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1)')}
+            >
+              {isPlayingAudio ? '🔊' : '🔈'}
+            </button>
+          </div>
           {currentQuestion.card.example && (
-            <div style={styles.questionExample}>
-              Example: {currentQuestion.card.example}
+            <div style={styles.questionExampleRow}>
+              <div style={styles.questionExample}>
+                Example: {currentQuestion.card.example}
+              </div>
+              <button
+                style={styles.audioButtonSmall}
+                onClick={() => playAudio(currentQuestion.card.example!, 'ja-JP')}
+                disabled={isPlayingAudio}
+                title="Play example audio"
+                onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
+                onMouseLeave={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1)')}
+              >
+                {isPlayingAudio ? '🔊' : '🔈'}
+              </button>
             </div>
           )}
         </div>
@@ -278,7 +336,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               style={styles.typeInInput}
               value={userAnswer}
               onChange={(e) => setUserAnswer(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleTypeInSubmit()}
+              onKeyPress={(e) => e.key === 'Enter' && !showAnswer && handleTypeInSubmit()}
               placeholder="Type your answer..."
               disabled={showAnswer}
               autoFocus
@@ -295,8 +353,30 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               </button>
             )}
             {showAnswer && (
-              <div style={isCorrect ? styles.feedbackCorrect : styles.feedbackWrong}>
-                {isCorrect ? '✓ Correct!' : `✗ Correct answer: ${currentQuestion.card.back}`}
+              <div style={styles.feedbackContainer}>
+                <div style={isCorrect ? styles.feedbackCorrect : styles.feedbackWrong}>
+                  {isCorrect ? '✓ Correct!' : `✗ Expected: ${currentQuestion.card.back}`}
+                </div>
+                {!isCorrect && (
+                  <div style={styles.overrideButtons}>
+                    <button
+                      style={styles.overrideCorrectButton}
+                      onClick={handleTypeInOverride}
+                      onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                      onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                    >
+                      ✓ My answer was correct
+                    </button>
+                    <button
+                      style={styles.overrideWrongButton}
+                      onClick={handleTypeInConfirmWrong}
+                      onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                      onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                    >
+                      ✗ No, I was wrong
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -316,7 +396,19 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               </button>
             ) : (
               <>
-                <div style={styles.flashcardAnswer}>{currentQuestion.card.back}</div>
+                <div style={styles.flashcardAnswerRow}>
+                  <div style={styles.flashcardAnswer}>{currentQuestion.card.back}</div>
+                  <button
+                    style={styles.audioButton}
+                    onClick={() => playAudio(currentQuestion.card.back, 'ja-JP')}
+                    disabled={isPlayingAudio}
+                    title="Play answer audio"
+                    onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
+                    onMouseLeave={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1)')}
+                  >
+                    {isPlayingAudio ? '🔊' : '🔈'}
+                  </button>
+                </div>
                 <div style={styles.ratingButtons}>
                   <button
                     style={{ ...styles.ratingButton, ...styles.ratingAgain }}
@@ -348,8 +440,8 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
           </div>
         )}
 
-        {/* Next button (for non-flashcard types) */}
-        {showAnswer && currentQuestion.type !== 'flashcard' && (
+        {/* Next button (for non-flashcard types and correct type-in) */}
+        {showAnswer && currentQuestion.type !== 'flashcard' && isCorrect && (
           <button
             style={styles.nextButton}
             onClick={handleNext}
@@ -379,6 +471,17 @@ const styles: { [key: string]: CSSProperties } = {
     flexDirection: 'column',
     alignItems: 'center',
     gap: '16px'
+  },
+  exitButtonStandalone: {
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '12px',
+    padding: '12px 24px',
+    fontSize: '16px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'opacity 0.2s'
   },
   header: {
     maxWidth: '800px',
@@ -424,19 +527,60 @@ const styles: { [key: string]: CSSProperties } = {
     boxShadow: '0 4px 16px rgba(0,0,0,0.1)'
   },
   questionPrompt: {
-    marginBottom: '32px',
-    textAlign: 'center'
+    marginBottom: '32px'
+  },
+  questionFrontRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '16px',
+    marginBottom: '16px'
   },
   questionFront: {
     fontSize: '28px',
     fontWeight: 600,
     color: '#0f172a',
-    marginBottom: '16px'
+    textAlign: 'center'
+  },
+  questionExampleRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '12px'
   },
   questionExample: {
     fontSize: '16px',
     color: '#64748b',
-    fontStyle: 'italic'
+    fontStyle: 'italic',
+    textAlign: 'center'
+  },
+  audioButton: {
+    backgroundColor: '#f1f5f9',
+    border: '2px solid #cbd5e1',
+    borderRadius: '50%',
+    width: '48px',
+    height: '48px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    fontSize: '20px',
+    transition: 'all 0.2s',
+    flexShrink: 0
+  },
+  audioButtonSmall: {
+    backgroundColor: '#f1f5f9',
+    border: '2px solid #cbd5e1',
+    borderRadius: '50%',
+    width: '36px',
+    height: '36px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    fontSize: '16px',
+    transition: 'all 0.2s',
+    flexShrink: 0
   },
   optionsContainer: {
     display: 'flex',
@@ -492,6 +636,11 @@ const styles: { [key: string]: CSSProperties } = {
     cursor: 'pointer',
     transition: 'opacity 0.2s'
   },
+  feedbackContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px'
+  },
   feedbackCorrect: {
     padding: '16px',
     backgroundColor: '#d1fae5',
@@ -510,6 +659,34 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 600,
     textAlign: 'center'
   },
+  overrideButtons: {
+    display: 'flex',
+    gap: '12px'
+  },
+  overrideCorrectButton: {
+    flex: 1,
+    padding: '12px 20px',
+    fontSize: '14px',
+    fontWeight: 600,
+    backgroundColor: '#10b981',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'opacity 0.2s'
+  },
+  overrideWrongButton: {
+    flex: 1,
+    padding: '12px 20px',
+    fontSize: '14px',
+    fontWeight: 600,
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'opacity 0.2s'
+  },
   flashcardContainer: {
     display: 'flex',
     flexDirection: 'column',
@@ -527,12 +704,17 @@ const styles: { [key: string]: CSSProperties } = {
     cursor: 'pointer',
     transition: 'opacity 0.2s'
   },
+  flashcardAnswerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '16px',
+    marginBottom: '8px'
+  },
   flashcardAnswer: {
     fontSize: '24px',
     fontWeight: 600,
     color: '#0f172a',
-    textAlign: 'center',
-    marginBottom: '8px'
+    textAlign: 'center'
   },
   ratingButtons: {
     display: 'flex',
