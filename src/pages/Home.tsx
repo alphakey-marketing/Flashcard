@@ -22,6 +22,8 @@ interface HomeProps {
 
 type JLPTLevel = 'N5' | 'N4' | 'N3' | 'N2' | 'N1' | undefined;
 
+const CATEGORY_COLLAPSE_KEY = 'flashmind-collapsed-categories';
+
 const Home: React.FC<HomeProps> = ({ 
   onNavigateToCreate, 
   onNavigateToSwipe, 
@@ -37,6 +39,7 @@ const Home: React.FC<HomeProps> = ({
   const [showLearningTips, setShowLearningTips] = useState(false);
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [editingLevelSetId, setEditingLevelSetId] = useState<string | null>(null);
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [streak, setStreak] = useState({ current: 0, longest: 0, lastStudyDate: '' });
   const [todayStats, setTodayStats] = useState({ totalCards: 0, totalDuration: 0 });
   const [isSyncing, setIsSyncing] = useState(false);
@@ -47,7 +50,40 @@ const Home: React.FC<HomeProps> = ({
     loadSets();
     loadStats();
     checkAuth();
+    loadCollapsedCategories();
   }, []);
+
+  const loadCollapsedCategories = () => {
+    try {
+      const saved = localStorage.getItem(CATEGORY_COLLAPSE_KEY);
+      if (saved) {
+        setCollapsedCategories(new Set(JSON.parse(saved)));
+      }
+    } catch (error) {
+      console.error('Error loading collapsed categories:', error);
+    }
+  };
+
+  const saveCollapsedCategories = (collapsed: Set<string>) => {
+    try {
+      localStorage.setItem(CATEGORY_COLLAPSE_KEY, JSON.stringify(Array.from(collapsed)));
+    } catch (error) {
+      console.error('Error saving collapsed categories:', error);
+    }
+  };
+
+  const toggleCategoryCollapse = (category: string) => {
+    setCollapsedCategories(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(category)) {
+        newSet.delete(category);
+      } else {
+        newSet.add(category);
+      }
+      saveCollapsedCategories(newSet);
+      return newSet;
+    });
+  };
 
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -548,17 +584,52 @@ const Home: React.FC<HomeProps> = ({
         </div>
       ) : (
         <div style={styles.categoriesContainer}>
-          {categories.map(category => (
-            <div key={category} style={styles.categorySection}>
-              <h2 style={styles.categoryHeader}>
-                {category === 'Custom' ? 'My Custom Sets' : `${category} Level Sets`}
-                <span style={styles.categoryBadge}>{groupedSets[category].length}</span>
-              </h2>
-              <div style={styles.grid}>
-                {groupedSets[category].map(set => renderSetCard(set))}
+          {categories.map(category => {
+            const isCollapsed = collapsedCategories.has(category);
+            const categoryStats = groupedSets[category].reduce(
+              (acc, set) => {
+                const stats = getSetStudyStats(set.id, set.cards.length);
+                return {
+                  totalCards: acc.totalCards + set.cards.length,
+                  dueCards: acc.dueCards + stats.dueCards,
+                  masteredCards: acc.masteredCards + stats.masteredCards
+                };
+              },
+              { totalCards: 0, dueCards: 0, masteredCards: 0 }
+            );
+
+            return (
+              <div key={category} style={styles.categorySection}>
+                <div 
+                  style={styles.categoryHeaderContainer}
+                  onClick={() => toggleCategoryCollapse(category)}
+                >
+                  <h2 style={styles.categoryHeader}>
+                    <span style={styles.categoryToggle}>{isCollapsed ? '▶' : '▼'}</span>
+                    <span>
+                      {category === 'Custom' ? 'My Custom Sets' : `${category} Level Sets`}
+                    </span>
+                    <span style={styles.categoryBadge}>{groupedSets[category].length}</span>
+                  </h2>
+                  {isCollapsed && (
+                    <div style={styles.categoryPreview}>
+                      <span style={styles.previewStat}>{categoryStats.totalCards} cards</span>
+                      {categoryStats.dueCards > 0 && (
+                        <span style={styles.previewDue}>🎯 {categoryStats.dueCards} due</span>
+                      )}
+                      <span style={styles.previewStat}>✅ {categoryStats.masteredCards} mastered</span>
+                    </div>
+                  )}
+                </div>
+                
+                {!isCollapsed && (
+                  <div style={styles.grid}>
+                    {groupedSets[category].map(set => renderSetCard(set))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -621,10 +692,15 @@ const styles: { [key: string]: CSSProperties } = {
   emptyButtons: { display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' },
   createButton: { backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', padding: '12px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
   importButtonLarge: { backgroundColor: '#fff', color: '#3b82f6', border: '2px solid #3b82f6', borderRadius: '12px', padding: '12px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
-  categoriesContainer: { maxWidth: '1000px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '40px' },
+  categoriesContainer: { maxWidth: '1000px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' },
   categorySection: { display: 'flex', flexDirection: 'column', gap: '16px' },
-  categoryHeader: { margin: 0, fontSize: '22px', fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '12px', paddingBottom: '8px', borderBottom: '2px solid #e2e8f0' },
+  categoryHeaderContainer: { cursor: 'pointer', userSelect: 'none', backgroundColor: '#fff', borderRadius: '12px', padding: '16px 20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', transition: 'all 0.2s', border: '2px solid #e2e8f0' },
+  categoryHeader: { margin: 0, fontSize: '20px', fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '12px' },
+  categoryToggle: { fontSize: '16px', color: '#64748b', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '20px' },
   categoryBadge: { backgroundColor: '#e2e8f0', color: '#475569', fontSize: '14px', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 },
+  categoryPreview: { marginTop: '12px', display: 'flex', gap: '16px', alignItems: 'center', fontSize: '13px', color: '#64748b', flexWrap: 'wrap' },
+  previewStat: { fontWeight: 500 },
+  previewDue: { backgroundColor: '#fef2f2', color: '#dc2626', padding: '4px 8px', borderRadius: '8px', fontSize: '12px', fontWeight: 600 },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' },
   card: { backgroundColor: '#fff', borderRadius: '16px', padding: '20px', transition: 'all 0.3s', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column' },
   cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' },
