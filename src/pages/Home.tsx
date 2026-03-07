@@ -196,6 +196,186 @@ const Home: React.FC<HomeProps> = ({
   };
 
   const hasUnsyncedDecks = unsyncedDeckIds.size > 0;
+  
+  const totalDueCards = sets.reduce((sum, set) => {
+    return sum + getSetStudyStats(set.id, set.cards.length).dueCards;
+  }, 0);
+
+  // Group sets by category
+  const groupedSets = sets.reduce((acc, set) => {
+    const level = set.jlptLevel || 'Custom';
+    if (!acc[level]) acc[level] = [];
+    acc[level].push(set);
+    return acc;
+  }, {} as Record<string, FlashcardSet[]>);
+
+  const categories = ['N5', 'N4', 'N3', 'N2', 'N1', 'Custom'].filter(cat => groupedSets[cat] && groupedSets[cat].length > 0);
+
+  const renderSetCard = (set: FlashcardSet) => {
+    const stats = getSetStudyStats(set.id, set.cards.length);
+    const isUnsynced = unsyncedDeckIds.has(set.id);
+    const isExpanded = expandedCardId === set.id;
+    const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
+    const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
+    const hasDue = stats.dueCards > 0;
+    
+    let todayPrompt = null;
+    let writingStreak = 0;
+    let hasDailyPrompt = false;
+    let isDailyCompleted = false;
+
+    try {
+      const reviewData = getSetReviewData(set.id);
+      const masteredCardIds = new Set(
+        reviewData
+          .filter(r => r.status === 'mastered')
+          .map(r => r.cardId)
+      );
+      const masteredCards = set.cards.filter(card => masteredCardIds.has(card.id));
+      
+      if (masteredCards.length >= 3) {
+        todayPrompt = getTodayPrompt(set.id, masteredCards);
+        writingStreak = getPromptStreak(set.id);
+        hasDailyPrompt = todayPrompt !== null;
+        isDailyCompleted = todayPrompt?.completedAt !== undefined;
+      }
+    } catch (error) {
+      console.error('Error checking daily prompt:', error);
+    }
+    
+    return (
+      <div
+        key={set.id}
+        style={{
+          ...styles.card,
+          border: isUnsynced ? '2px solid #ef4444' : '1px solid #e2e8f0'
+        }}
+      >
+        <div style={styles.cardHeader}>
+          <h3 style={styles.cardTitle}>
+            {isUnsynced && <span style={styles.unsyncedBadge}>☁️</span>}
+            {set.title}
+          </h3>
+          <div style={styles.cardActions}>
+            <button
+              style={styles.exportButton}
+              onClick={(e) => handleExport(e, set)}
+              title="Export to CSV"
+            >
+              📤
+            </button>
+            <button
+              style={styles.deleteButton}
+              onClick={(e) => handleDelete(e, set.id)}
+              title="Delete set"
+            >
+              🗑️
+            </button>
+          </div>
+        </div>
+        
+        {set.description && (
+          <p style={styles.cardDescription}>{set.description}</p>
+        )}
+
+        {hasDue && (
+          <div style={styles.dueBadge}>
+            🎯 {stats.dueCards} {stats.dueCards === 1 ? 'card' : 'cards'} due
+          </div>
+        )}
+
+        {hasDailyPrompt && (
+          <div style={{
+            ...styles.dailyBadge,
+            backgroundColor: isDailyCompleted ? '#d1fae5' : '#fef3c7',
+            color: isDailyCompleted ? '#065f46' : '#92400e'
+          }}>
+            {isDailyCompleted ? '✅ Daily writing complete!' : '✍️ Daily writing available'}
+            {writingStreak > 0 && <span style={styles.dailyStreakIcon}> 🔥{writingStreak}</span>}
+          </div>
+        )}
+        
+        <div style={styles.cardFooter}>
+          <span style={styles.cardCount}>{set.cards.length} cards</span>
+          <span style={styles.progressText}>
+            {reviewedCards}/{set.cards.length} reviewed
+          </span>
+        </div>
+        
+        <div style={styles.progressBarContainer}>
+          <div style={{ ...styles.progressBar, width: `${progress}%` }} />
+        </div>
+
+        {/* Primary Study Buttons */}
+        <div style={styles.studyButtons}>
+          <button
+            style={styles.learnButton}
+            onClick={() => onNavigateToLearn(set.id)}
+          >
+            🎯 Learn Mode
+          </button>
+          <button
+            style={styles.reviewButton}
+            onClick={() => onNavigateToSwipe(set.id)}
+          >
+            💭 Review
+          </button>
+        </div>
+
+        {/* Active Learning Section - Expandable */}
+        <div style={styles.activeLearningSection}>
+          <button
+            style={styles.expandButton}
+            onClick={() => toggleCardExpansion(set.id)}
+          >
+            <span style={styles.expandIcon}>🎤</span>
+            <span style={styles.expandText}>Active Practice</span>
+            <span style={styles.expandArrow}>{isExpanded ? '▲' : '▼'}</span>
+          </button>
+
+          {isExpanded && (
+            <div style={styles.activeButtons}>
+              <button
+                style={styles.activeButton}
+                onClick={() => onNavigateToSentenceBuilder(set.id)}
+              >
+                <div style={styles.activeButtonIcon}>🏗️</div>
+                <div style={styles.activeButtonText}>
+                  <div style={styles.activeButtonTitle}>Sentence Builder</div>
+                  <div style={styles.activeButtonDesc}>Create sentences</div>
+                </div>
+              </button>
+
+              <button
+                style={styles.activeButton}
+                onClick={() => onNavigateToSpeechPractice(set.id)}
+              >
+                <div style={styles.activeButtonIcon}>🎤</div>
+                <div style={styles.activeButtonText}>
+                  <div style={styles.activeButtonTitle}>Speech Practice</div>
+                  <div style={styles.activeButtonDesc}>Record & compare</div>
+                </div>
+              </button>
+
+              <button
+                style={styles.activeButton}
+                onClick={() => onNavigateToDailyWriting(set.id)}
+              >
+                <div style={styles.activeButtonIcon}>✍️</div>
+                <div style={styles.activeButtonText}>
+                  <div style={styles.activeButtonTitle}>Daily Writing</div>
+                  <div style={styles.activeButtonDesc}>
+                    {isDailyCompleted ? 'Complete! ✅' : 'Today\'s prompt'}
+                    {writingStreak > 0 && ` 🔥${writingStreak}`}
+                  </div>
+                </div>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={styles.container}>
@@ -216,53 +396,15 @@ const Home: React.FC<HomeProps> = ({
               onClick={handleManualSync}
               disabled={isSyncing}
               title={hasUnsyncedDecks ? `${unsyncedDeckIds.size} deck(s) not synced to cloud` : 'All decks synced'}
-              onMouseEnter={(e) => !isSyncing && (e.currentTarget.style.transform = 'scale(1.05)')}
-              onMouseLeave={(e) => !isSyncing && (e.currentTarget.style.transform = 'scale(1)')}
             >
               {isSyncing ? '🔄 Syncing...' : hasUnsyncedDecks ? `⚠️ Sync (${unsyncedDeckIds.size})` : '✅ Synced'}
             </button>
           )}
-          <button
-            style={styles.tipsButton}
-            onClick={() => setShowLearningTips(true)}
-            onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
-            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-            title="View Learning Tips"
-          >
-            🎯 Tips
-          </button>
-          <button
-            style={styles.logoutButton}
-            onClick={onLogout}
-            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.8')}
-            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-          >
-            Log Out
-          </button>
-          <button
-            style={styles.statsButton}
-            onClick={onNavigateToStats}
-            onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
-            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-          >
-            📊 Stats
-          </button>
-          <button
-            style={styles.importButton}
-            onClick={() => setShowImportModal(true)}
-            onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
-            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-          >
-            📥 Import
-          </button>
-          <button
-            style={styles.addButton}
-            onClick={onNavigateToCreate}
-            onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
-            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-          >
-            + Create
-          </button>
+          <button style={styles.tipsButton} onClick={() => setShowLearningTips(true)}>🎯 Tips</button>
+          <button style={styles.logoutButton} onClick={onLogout}>Log Out</button>
+          <button style={styles.statsButton} onClick={onNavigateToStats}>📊 Stats</button>
+          <button style={styles.importButton} onClick={() => setShowImportModal(true)}>📥 Import</button>
+          <button style={styles.addButton} onClick={onNavigateToCreate}>+ Create</button>
         </div>
       </header>
 
@@ -277,6 +419,22 @@ const Home: React.FC<HomeProps> = ({
         </div>
       )}
 
+      {/* Review Due Today Banner */}
+      {totalDueCards > 0 && (
+        <div style={styles.dueTodayBanner}>
+          <div style={styles.dueTodayInfo}>
+            <span style={styles.dueTodayIcon}>⏰</span>
+            <div>
+              <h3 style={styles.dueTodayTitle}>{totalDueCards} Cards Due Today</h3>
+              <p style={styles.dueTodayDesc}>Review cards across all your sets to maintain your progress.</p>
+            </div>
+          </div>
+          <button style={styles.dueTodayButton} onClick={() => onNavigateToSwipe('due-today')}>
+            Review All Due Now
+          </button>
+        </div>
+      )}
+
       {/* Unsynced Warning Banner */}
       {hasUnsyncedDecks && userId && (
         <div style={styles.warningBanner}>
@@ -284,11 +442,7 @@ const Home: React.FC<HomeProps> = ({
           <span style={styles.warningText}>
             {unsyncedDeckIds.size} deck(s) not backed up to cloud. Click "Sync" to save them.
           </span>
-          <button
-            style={styles.syncNowButton}
-            onClick={handleManualSync}
-            disabled={isSyncing}
-          >
+          <button style={styles.syncNowButton} onClick={handleManualSync} disabled={isSyncing}>
             {isSyncing ? 'Syncing...' : 'Sync Now'}
           </button>
         </div>
@@ -312,12 +466,7 @@ const Home: React.FC<HomeProps> = ({
             </span>
             <span style={styles.statLabel}>Mastered</span>
           </div>
-          <button
-            style={styles.exportAllButton}
-            onClick={handleExportAll}
-            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.8')}
-            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-          >
+          <button style={styles.exportAllButton} onClick={handleExportAll}>
             💾 Backup All
           </button>
         </div>
@@ -329,214 +478,23 @@ const Home: React.FC<HomeProps> = ({
           <h2 style={styles.emptyTitle}>No Flashcard Sets Yet</h2>
           <p style={styles.emptyText}>Create your first set or import existing cards to start studying!</p>
           <div style={styles.emptyButtons}>
-            <button
-              style={styles.createButton}
-              onClick={onNavigateToCreate}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-            >
-              + Create New Set
-            </button>
-            <button
-              style={styles.importButtonLarge}
-              onClick={() => setShowImportModal(true)}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-            >
-              📥 Import CSV
-            </button>
+            <button style={styles.createButton} onClick={onNavigateToCreate}>+ Create New Set</button>
+            <button style={styles.importButtonLarge} onClick={() => setShowImportModal(true)}>📥 Import CSV</button>
           </div>
         </div>
       ) : (
-        <div style={styles.grid}>
-          {sets.map((set) => {
-            const stats = getSetStudyStats(set.id, set.cards.length);
-            const isUnsynced = unsyncedDeckIds.has(set.id);
-            const isExpanded = expandedCardId === set.id;
-            const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
-            const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
-            const hasDue = stats.dueCards > 0;
-            
-            // Check if daily writing is available - with error handling
-            let todayPrompt = null;
-            let writingStreak = 0;
-            let hasDailyPrompt = false;
-            let isDailyCompleted = false;
-
-            try {
-              // Get mastered cards for this set
-              const reviewData = getSetReviewData(set.id);
-              const masteredCardIds = new Set(
-                reviewData
-                  .filter(r => r.status === 'mastered')
-                  .map(r => r.cardId)
-              );
-              const masteredCards = set.cards.filter(card => masteredCardIds.has(card.id));
-              
-              // Only check prompt if there are enough mastered cards
-              if (masteredCards.length >= 3) {
-                todayPrompt = getTodayPrompt(set.id, masteredCards);
-                writingStreak = getPromptStreak(set.id);
-                hasDailyPrompt = todayPrompt !== null;
-                isDailyCompleted = todayPrompt?.completedAt !== undefined;
-              }
-            } catch (error) {
-              console.error('Error checking daily prompt:', error);
-              // Silently fail - don't crash the UI
-            }
-            
-            return (
-              <div
-                key={set.id}
-                style={{
-                  ...styles.card,
-                  border: isUnsynced ? '2px solid #ef4444' : '1px solid #e2e8f0'
-                }}
-              >
-                <div style={styles.cardHeader}>
-                  <h3 style={styles.cardTitle}>
-                    {isUnsynced && <span style={styles.unsyncedBadge}>☁️</span>}
-                    {set.title}
-                  </h3>
-                  <div style={styles.cardActions}>
-                    <button
-                      style={styles.exportButton}
-                      onClick={(e) => handleExport(e, set)}
-                      title="Export to CSV"
-                      onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-                      onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.6')}
-                    >
-                      📤
-                    </button>
-                    <button
-                      style={styles.deleteButton}
-                      onClick={(e) => handleDelete(e, set.id)}
-                      title="Delete set"
-                      onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-                      onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.6')}
-                    >
-                      🗑️
-                    </button>
-                  </div>
-                </div>
-                
-                {set.description && (
-                  <p style={styles.cardDescription}>{set.description}</p>
-                )}
-
-                {hasDue && (
-                  <div style={styles.dueBadge}>
-                    🎯 {stats.dueCards} {stats.dueCards === 1 ? 'card' : 'cards'} due
-                  </div>
-                )}
-
-                {hasDailyPrompt && (
-                  <div style={{
-                    ...styles.dailyBadge,
-                    backgroundColor: isDailyCompleted ? '#d1fae5' : '#fef3c7',
-                    color: isDailyCompleted ? '#065f46' : '#92400e'
-                  }}>
-                    {isDailyCompleted ? '✅ Daily writing complete!' : '✍️ Daily writing available'}
-                    {writingStreak > 0 && <span style={styles.dailyStreakIcon}> 🔥{writingStreak}</span>}
-                  </div>
-                )}
-                
-                <div style={styles.cardFooter}>
-                  <span style={styles.cardCount}>{set.cards.length} cards</span>
-                  <span style={styles.progressText}>
-                    {reviewedCards}/{set.cards.length} reviewed
-                  </span>
-                </div>
-                
-                <div style={styles.progressBarContainer}>
-                  <div
-                    style={{
-                      ...styles.progressBar,
-                      width: `${progress}%`
-                    }}
-                  />
-                </div>
-
-                {/* Primary Study Buttons */}
-                <div style={styles.studyButtons}>
-                  <button
-                    style={styles.learnButton}
-                    onClick={() => onNavigateToLearn(set.id)}
-                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-                  >
-                    🎯 Learn Mode
-                  </button>
-                  <button
-                    style={styles.reviewButton}
-                    onClick={() => onNavigateToSwipe(set.id)}
-                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-                  >
-                    💭 Review
-                  </button>
-                </div>
-
-                {/* Active Learning Section - Expandable */}
-                <div style={styles.activeLearningSection}>
-                  <button
-                    style={styles.expandButton}
-                    onClick={() => toggleCardExpansion(set.id)}
-                  >
-                    <span style={styles.expandIcon}>🎤</span>
-                    <span style={styles.expandText}>Active Practice</span>
-                    <span style={styles.expandArrow}>{isExpanded ? '▲' : '▼'}</span>
-                  </button>
-
-                  {isExpanded && (
-                    <div style={styles.activeButtons}>
-                      <button
-                        style={styles.activeButton}
-                        onClick={() => onNavigateToSentenceBuilder(set.id)}
-                        onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-2px)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
-                      >
-                        <div style={styles.activeButtonIcon}>🏗️</div>
-                        <div style={styles.activeButtonText}>
-                          <div style={styles.activeButtonTitle}>Sentence Builder</div>
-                          <div style={styles.activeButtonDesc}>Create sentences</div>
-                        </div>
-                      </button>
-
-                      <button
-                        style={styles.activeButton}
-                        onClick={() => onNavigateToSpeechPractice(set.id)}
-                        onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-2px)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
-                      >
-                        <div style={styles.activeButtonIcon}>🎤</div>
-                        <div style={styles.activeButtonText}>
-                          <div style={styles.activeButtonTitle}>Speech Practice</div>
-                          <div style={styles.activeButtonDesc}>Record & compare</div>
-                        </div>
-                      </button>
-
-                      <button
-                        style={styles.activeButton}
-                        onClick={() => onNavigateToDailyWriting(set.id)}
-                        onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-2px)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
-                      >
-                        <div style={styles.activeButtonIcon}>✍️</div>
-                        <div style={styles.activeButtonText}>
-                          <div style={styles.activeButtonTitle}>Daily Writing</div>
-                          <div style={styles.activeButtonDesc}>
-                            {isDailyCompleted ? 'Complete! ✅' : 'Today\'s prompt'}
-                            {writingStreak > 0 && ` 🔥${writingStreak}`}
-                          </div>
-                        </div>
-                      </button>
-                    </div>
-                  )}
-                </div>
+        <div style={styles.categoriesContainer}>
+          {categories.map(category => (
+            <div key={category} style={styles.categorySection}>
+              <h2 style={styles.categoryHeader}>
+                {category === 'Custom' ? 'My Custom Sets' : `${category} Level Sets`}
+                <span style={styles.categoryBadge}>{groupedSets[category].length}</span>
+              </h2>
+              <div style={styles.grid}>
+                {groupedSets[category].map(set => renderSetCard(set))}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       )}
 
@@ -545,15 +503,11 @@ const Home: React.FC<HomeProps> = ({
           onClose={() => {
             setShowImportModal(false);
             loadSets();
-            if (userId) {
-              checkUnsyncedDecks(userId);
-            }
+            if (userId) checkUnsyncedDecks(userId);
           }}
           onImportSuccess={() => {
             loadSets();
-            if (userId) {
-              checkUnsyncedDecks(userId);
-            }
+            if (userId) checkUnsyncedDecks(userId);
           }}
         />
       )}
@@ -566,462 +520,78 @@ const Home: React.FC<HomeProps> = ({
 };
 
 const styles: { [key: string]: CSSProperties } = {
-  container: {
-    minHeight: '100vh',
-    backgroundColor: '#f8fafc',
-    padding: '24px'
-  },
-  header: {
-    maxWidth: '1000px',
-    margin: '0 auto 24px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: '12px'
-  },
-  title: {
-    fontSize: '32px',
-    fontWeight: 700,
-    color: '#0f172a',
-    margin: 0,
-    marginBottom: '4px'
-  },
-  subtitle: {
-    fontSize: '16px',
-    color: '#64748b',
-    margin: 0
-  },
-  headerButtons: {
-    display: 'flex',
-    gap: '12px',
-    flexWrap: 'wrap'
-  },
-  syncButton: {
-    color: 'white',
-    border: 'none',
-    borderRadius: '12px',
-    padding: '12px 20px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'transform 0.2s'
-  },
-  tipsButton: {
-    backgroundColor: '#fff',
-    color: '#f59e0b',
-    border: '2px solid #f59e0b',
-    borderRadius: '12px',
-    padding: '12px 20px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'transform 0.2s'
-  },
-  logoutButton: {
-    backgroundColor: '#f1f5f9',
-    color: '#475569',
-    border: 'none',
-    borderRadius: '12px',
-    padding: '12px 20px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  },
-  statsButton: {
-    backgroundColor: '#fff',
-    color: '#8b5cf6',
-    border: '2px solid #8b5cf6',
-    borderRadius: '12px',
-    padding: '12px 20px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'transform 0.2s'
-  },
-  importButton: {
-    backgroundColor: '#fff',
-    color: '#3b82f6',
-    border: '2px solid #3b82f6',
-    borderRadius: '12px',
-    padding: '12px 20px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'transform 0.2s'
-  },
-  addButton: {
-    backgroundColor: '#3b82f6',
-    color: 'white',
-    border: 'none',
-    borderRadius: '12px',
-    padding: '12px 24px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'transform 0.2s'
-  },
-  streakBanner: {
-    maxWidth: '1000px',
-    margin: '0 auto 16px',
-    backgroundColor: '#fef3c7',
-    borderRadius: '12px',
-    padding: '16px 20px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    cursor: 'pointer',
-    transition: 'transform 0.2s',
-    border: '2px solid #fbbf24'
-  },
-  streakIcon: {
-    fontSize: '24px'
-  },
-  streakText: {
-    fontSize: '16px',
-    fontWeight: 600,
-    color: '#92400e',
-    flex: 1
-  },
-  todayBadge: {
-    backgroundColor: '#fff',
-    padding: '4px 12px',
-    borderRadius: '12px',
-    fontSize: '12px',
-    fontWeight: 600,
-    color: '#16a34a'
-  },
-  warningBanner: {
-    maxWidth: '1000px',
-    margin: '0 auto 16px',
-    backgroundColor: '#fee2e2',
-    borderRadius: '12px',
-    padding: '16px 20px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    border: '2px solid #ef4444'
-  },
-  warningIcon: {
-    fontSize: '24px'
-  },
-  warningText: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: '#7f1d1d',
-    flex: 1
-  },
-  syncNowButton: {
-    backgroundColor: '#ef4444',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    padding: '8px 16px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  },
-  statsBar: {
-    maxWidth: '1000px',
-    margin: '0 auto 32px',
-    backgroundColor: '#fff',
-    borderRadius: '12px',
-    padding: '20px',
-    display: 'flex',
-    gap: '32px',
-    alignItems: 'center',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-    flexWrap: 'wrap'
-  },
-  stat: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px'
-  },
-  statValue: {
-    fontSize: '24px',
-    fontWeight: 700,
-    color: '#3b82f6'
-  },
-  statLabel: {
-    fontSize: '12px',
-    color: '#64748b',
-    fontWeight: 500
-  },
-  exportAllButton: {
-    marginLeft: 'auto',
-    padding: '8px 16px',
-    backgroundColor: '#f1f5f9',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    color: '#475569',
-    transition: 'opacity 0.2s'
-  },
-  emptyState: {
-    maxWidth: '800px',
-    margin: '80px auto',
-    textAlign: 'center'
-  },
-  emptyIcon: {
-    fontSize: '64px',
-    marginBottom: '16px'
-  },
-  emptyTitle: {
-    fontSize: '24px',
-    fontWeight: 600,
-    color: '#0f172a',
-    marginBottom: '8px'
-  },
-  emptyText: {
-    fontSize: '16px',
-    color: '#64748b',
-    marginBottom: '24px'
-  },
-  emptyButtons: {
-    display: 'flex',
-    gap: '12px',
-    justifyContent: 'center',
-    flexWrap: 'wrap'
-  },
-  createButton: {
-    backgroundColor: '#3b82f6',
-    color: 'white',
-    border: 'none',
-    borderRadius: '12px',
-    padding: '12px 32px',
-    fontSize: '16px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  },
-  importButtonLarge: {
-    backgroundColor: '#fff',
-    color: '#3b82f6',
-    border: '2px solid #3b82f6',
-    borderRadius: '12px',
-    padding: '12px 32px',
-    fontSize: '16px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  },
-  grid: {
-    maxWidth: '1000px',
-    margin: '0 auto',
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-    gap: '20px'
-  },
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: '16px',
-    padding: '20px',
-    transition: 'all 0.3s',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-    display: 'flex',
-    flexDirection: 'column'
-  },
-  cardHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: '8px'
-  },
-  cardTitle: {
-    fontSize: '18px',
-    fontWeight: 600,
-    color: '#0f172a',
-    margin: 0,
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px'
-  },
-  unsyncedBadge: {
-    fontSize: '16px',
-    opacity: 0.7
-  },
-  cardActions: {
-    display: 'flex',
-    gap: '8px'
-  },
-  exportButton: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: '16px',
-    padding: '4px',
-    opacity: 0.6,
-    transition: 'opacity 0.2s'
-  },
-  deleteButton: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: '16px',
-    padding: '4px',
-    opacity: 0.6,
-    transition: 'opacity 0.2s'
-  },
-  cardDescription: {
-    fontSize: '14px',
-    color: '#64748b',
-    marginBottom: '16px',
-    lineHeight: '1.5',
-    flex: 1
-  },
-  dueBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#ef4444',
-    color: 'white',
-    padding: '4px 10px',
-    borderRadius: '20px',
-    fontSize: '12px',
-    fontWeight: 600,
-    marginBottom: '8px'
-  },
-  dailyBadge: {
-    alignSelf: 'flex-start',
-    padding: '4px 10px',
-    borderRadius: '20px',
-    fontSize: '12px',
-    fontWeight: 600,
-    marginBottom: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px'
-  },
-  dailyStreakIcon: {
-    fontSize: '11px'
-  },
-  cardFooter: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '12px'
-  },
-  cardCount: {
-    fontSize: '14px',
-    color: '#64748b',
-    fontWeight: 500
-  },
-  progressText: {
-    fontSize: '14px',
-    color: '#22c55e',
-    fontWeight: 600
-  },
-  progressBarContainer: {
-    width: '100%',
-    height: '6px',
-    backgroundColor: '#e2e8f0',
-    borderRadius: '3px',
-    overflow: 'hidden',
-    marginBottom: '16px'
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: '#22c55e',
-    transition: 'width 0.3s'
-  },
-  studyButtons: {
-    display: 'flex',
-    gap: '8px',
-    marginBottom: '12px'
-  },
-  learnButton: {
-    flex: 1,
-    padding: '12px 16px',
-    fontSize: '14px',
-    fontWeight: 600,
-    backgroundColor: '#3b82f6',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  },
-  reviewButton: {
-    flex: 1,
-    padding: '12px 16px',
-    fontSize: '14px',
-    fontWeight: 600,
-    backgroundColor: '#f1f5f9',
-    color: '#475569',
-    border: 'none',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  },
-  activeLearningSection: {
-    borderTop: '1px solid #e2e8f0',
-    paddingTop: '12px'
-  },
-  expandButton: {
-    width: '100%',
-    backgroundColor: '#f8fafc',
-    border: '1px solid #e2e8f0',
-    borderRadius: '8px',
-    padding: '10px 12px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    cursor: 'pointer',
-    transition: 'background-color 0.2s',
-    fontSize: '14px',
-    fontWeight: 600,
-    color: '#475569'
-  },
-  expandIcon: {
-    fontSize: '16px'
-  },
-  expandText: {
-    flex: 1,
-    textAlign: 'left'
-  },
-  expandArrow: {
-    fontSize: '12px',
-    color: '#94a3b8'
-  },
-  activeButtons: {
-    marginTop: '12px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px'
-  },
-  activeButton: {
-    backgroundColor: '#fff',
-    border: '2px solid #e2e8f0',
-    borderRadius: '8px',
-    padding: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    cursor: 'pointer',
-    transition: 'all 0.2s',
-    textAlign: 'left'
-  },
-  activeButtonIcon: {
-    fontSize: '24px',
-    flexShrink: 0
-  },
-  activeButtonText: {
-    flex: 1
-  },
-  activeButtonTitle: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: '#0f172a',
-    marginBottom: '2px'
-  },
-  activeButtonDesc: {
-    fontSize: '12px',
-    color: '#64748b'
-  }
+  container: { minHeight: '100vh', backgroundColor: '#f8fafc', padding: '24px' },
+  header: { maxWidth: '1000px', margin: '0 auto 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' },
+  title: { fontSize: '32px', fontWeight: 700, color: '#0f172a', margin: 0, marginBottom: '4px' },
+  subtitle: { fontSize: '16px', color: '#64748b', margin: 0 },
+  headerButtons: { display: 'flex', gap: '12px', flexWrap: 'wrap' },
+  syncButton: { color: 'white', border: 'none', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'transform 0.2s' },
+  tipsButton: { backgroundColor: '#fff', color: '#f59e0b', border: '2px solid #f59e0b', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
+  logoutButton: { backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
+  statsButton: { backgroundColor: '#fff', color: '#8b5cf6', border: '2px solid #8b5cf6', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
+  importButton: { backgroundColor: '#fff', color: '#3b82f6', border: '2px solid #3b82f6', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
+  addButton: { backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', padding: '12px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
+  streakBanner: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#fef3c7', borderRadius: '12px', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', border: '2px solid #fbbf24' },
+  streakIcon: { fontSize: '24px' },
+  streakText: { fontSize: '16px', fontWeight: 600, color: '#92400e', flex: 1 },
+  todayBadge: { backgroundColor: '#fff', padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600, color: '#16a34a' },
+  dueTodayBanner: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#eff6ff', borderRadius: '12px', padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', border: '2px solid #bfdbfe', flexWrap: 'wrap' },
+  dueTodayInfo: { display: 'flex', alignItems: 'center', gap: '16px' },
+  dueTodayIcon: { fontSize: '32px' },
+  dueTodayTitle: { margin: '0 0 4px 0', color: '#1e3a8a', fontSize: '18px', fontWeight: 700 },
+  dueTodayDesc: { margin: 0, color: '#3b82f6', fontSize: '14px' },
+  dueTodayButton: { backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '15px', fontWeight: 600, cursor: 'pointer', boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)' },
+  warningBanner: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#fee2e2', borderRadius: '12px', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '12px', border: '2px solid #ef4444' },
+  warningIcon: { fontSize: '24px' },
+  warningText: { fontSize: '14px', fontWeight: 600, color: '#7f1d1d', flex: 1 },
+  syncNowButton: { backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 16px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
+  statsBar: { maxWidth: '1000px', margin: '0 auto 32px', backgroundColor: '#fff', borderRadius: '12px', padding: '20px', display: 'flex', gap: '32px', alignItems: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', flexWrap: 'wrap' },
+  stat: { display: 'flex', flexDirection: 'column', gap: '4px' },
+  statValue: { fontSize: '24px', fontWeight: 700, color: '#3b82f6' },
+  statLabel: { fontSize: '12px', color: '#64748b', fontWeight: 500 },
+  exportAllButton: { marginLeft: 'auto', padding: '8px 16px', backgroundColor: '#f1f5f9', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', color: '#475569' },
+  emptyState: { maxWidth: '800px', margin: '80px auto', textAlign: 'center' },
+  emptyIcon: { fontSize: '64px', marginBottom: '16px' },
+  emptyTitle: { fontSize: '24px', fontWeight: 600, color: '#0f172a', marginBottom: '8px' },
+  emptyText: { fontSize: '16px', color: '#64748b', marginBottom: '24px' },
+  emptyButtons: { display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' },
+  createButton: { backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', padding: '12px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
+  importButtonLarge: { backgroundColor: '#fff', color: '#3b82f6', border: '2px solid #3b82f6', borderRadius: '12px', padding: '12px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
+  categoriesContainer: { maxWidth: '1000px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '40px' },
+  categorySection: { display: 'flex', flexDirection: 'column', gap: '16px' },
+  categoryHeader: { margin: 0, fontSize: '22px', fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '12px', paddingBottom: '8px', borderBottom: '2px solid #e2e8f0' },
+  categoryBadge: { backgroundColor: '#e2e8f0', color: '#475569', fontSize: '14px', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' },
+  card: { backgroundColor: '#fff', borderRadius: '16px', padding: '20px', transition: 'all 0.3s', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column' },
+  cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' },
+  cardTitle: { fontSize: '18px', fontWeight: 600, color: '#0f172a', margin: 0, flex: 1, display: 'flex', alignItems: 'center', gap: '8px' },
+  unsyncedBadge: { fontSize: '16px', opacity: 0.7 },
+  cardActions: { display: 'flex', gap: '8px' },
+  exportButton: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '4px', opacity: 0.6 },
+  deleteButton: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '4px', opacity: 0.6 },
+  cardDescription: { fontSize: '14px', color: '#64748b', marginBottom: '16px', lineHeight: '1.5', flex: 1 },
+  dueBadge: { alignSelf: 'flex-start', backgroundColor: '#ef4444', color: 'white', padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600, marginBottom: '8px' },
+  dailyBadge: { alignSelf: 'flex-start', padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '4px' },
+  dailyStreakIcon: { fontSize: '11px' },
+  cardFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
+  cardCount: { fontSize: '14px', color: '#64748b', fontWeight: 500 },
+  progressText: { fontSize: '14px', color: '#22c55e', fontWeight: 600 },
+  progressBarContainer: { width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden', marginBottom: '16px' },
+  progressBar: { height: '100%', backgroundColor: '#22c55e', transition: 'width 0.3s' },
+  studyButtons: { display: 'flex', gap: '8px', marginBottom: '12px' },
+  learnButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  reviewButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  activeLearningSection: { borderTop: '1px solid #e2e8f0', paddingTop: '12px' },
+  expandButton: { width: '100%', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569' },
+  expandIcon: { fontSize: '16px' },
+  expandText: { flex: 1, textAlign: 'left' },
+  expandArrow: { fontSize: '12px', color: '#94a3b8' },
+  activeButtons: { marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' },
+  activeButton: { backgroundColor: '#fff', border: '2px solid #e2e8f0', borderRadius: '8px', padding: '12px', display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', textAlign: 'left' },
+  activeButtonIcon: { fontSize: '24px', flexShrink: 0 },
+  activeButtonText: { flex: 1 },
+  activeButtonTitle: { fontSize: '14px', fontWeight: 600, color: '#0f172a', marginBottom: '2px' },
+  activeButtonDesc: { fontSize: '12px', color: '#64748b' }
 };
 
 export default Home;
