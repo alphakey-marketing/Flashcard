@@ -5,9 +5,12 @@ interface CreateProps {
   onNavigateToHome: () => void;
 }
 
+type JLPTLevel = 'N5' | 'N4' | 'N3' | 'N2' | 'N1' | undefined;
+
 const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [jlptLevel, setJlptLevel] = useState<JLPTLevel>(undefined);
   const [cards, setCards] = useState<CardDraft[]>([
     { id: crypto.randomUUID(), front: '', back: '' },
     { id: crypto.randomUUID(), front: '', back: '' }
@@ -43,7 +46,7 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
     }
 
     // Create and save set
-    const newSet = createNewSet(title.trim(), description.trim(), validCards);
+    const newSet = createNewSet(title.trim(), description.trim(), validCards, [], jlptLevel);
     saveSet(newSet);
     onNavigateToHome();
   };
@@ -87,6 +90,23 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
             style={styles.descriptionInput}
             rows={3}
           />
+          
+          {/* JLPT Level Selector */}
+          <div style={styles.levelSelectorContainer}>
+            <label style={styles.levelLabel}>JLPT Level (Optional)</label>
+            <select 
+              value={jlptLevel || ''} 
+              onChange={(e) => setJlptLevel(e.target.value as JLPTLevel || undefined)}
+              style={styles.levelSelect}
+            >
+              <option value="">Custom / No Level</option>
+              <option value="N5">N5 (Beginner)</option>
+              <option value="N4">N4 (Elementary)</option>
+              <option value="N3">N3 (Intermediate)</option>
+              <option value="N2">N2 (Upper-Intermediate)</option>
+              <option value="N1">N1 (Advanced)</option>
+            </select>
+          </div>
         </section>
 
         <section style={styles.section}>
@@ -216,7 +236,31 @@ const styles: { [key: string]: CSSProperties } = {
     fontFamily: 'inherit',
     transition: 'border-color 0.2s',
     backgroundColor: '#fff',
-    boxSizing: 'border-box'
+    boxSizing: 'border-box',
+    marginBottom: '16px'
+  },
+  levelSelectorContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px'
+  },
+  levelLabel: {
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#475569'
+  },
+  levelSelect: {
+    width: '100%',
+    padding: '12px 16px',
+    fontSize: '16px',
+    border: '2px solid #e2e8f0',
+    borderRadius: '12px',
+    backgroundColor: '#fff',
+    color: '#0f172a',
+    cursor: 'pointer',
+    outline: 'none',
+    transition: 'border-color 0.2s',
+    fontFamily: 'inherit'
   },
   sectionTitle: {
     fontSize: '18px',
