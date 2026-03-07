@@ -371,3 +371,34 @@ export function getRecentSessions(
     return [];
   }
 }
+
+// ============================================
+// COMPATIBILITY EXPORTS FOR LearnSession.tsx
+// ============================================
+
+/**
+ * Compatibility wrapper: getCardReview
+ * Maps to getCardReviewData with reversed parameter order
+ */
+export function getCardReview(cardId: string, setId: string): CardReviewData {
+  return getCardReviewData(setId, cardId);
+}
+
+/**
+ * Compatibility wrapper: recordReview
+ * Maps 4-quality system (again/hard/good/easy) to 3-button system
+ */
+export function recordReview(
+  cardId: string,
+  setId: string,
+  quality: 'again' | 'hard' | 'good' | 'easy'
+): CardReviewData {
+  // Map 4-quality to 3-button rating system
+  const rating: ReviewRating =
+    quality === 'again' ? 'again' :
+    quality === 'hard' ? 'again' :      // Conservative: treat "hard" as "again"
+    quality === 'good' ? 'know_it' :
+    'mastered';  // "easy" maps to "mastered"
+
+  return saveCardReview(setId, cardId, rating);
+}
