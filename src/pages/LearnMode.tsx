@@ -16,6 +16,17 @@ interface Question {
   options?: string[]; // For multiple choice
 }
 
+interface SavedSession {
+  setId: string;
+  questions: Question[];
+  currentIndex: number;
+  correctCount: number;
+  timestamp: number;
+}
+
+const STORAGE_KEY = 'learn-mode-session';
+const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -26,10 +37,91 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const [showCongrats, setShowCongrats] = useState(false);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const [savedSession, setSavedSession] = useState<SavedSession | null>(null);
 
   useEffect(() => {
-    initializeSession();
+    // Check for saved session
+    const saved = loadSavedSession();
+    if (saved && saved.setId === set.id) {
+      setSavedSession(saved);
+      setShowResumePrompt(true);
+    } else {
+      initializeSession();
+    }
+
+    // Save session on unmount (when navigating away)
+    return () => {
+      saveCurrentSession();
+    };
   }, []);
+
+  useEffect(() => {
+    // Auto-save session whenever state changes
+    if (questions.length > 0 && !showCongrats) {
+      saveCurrentSession();
+    }
+  }, [currentIndex, correctCount, questions]);
+
+  const loadSavedSession = (): SavedSession | null => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (!saved) return null;
+      
+      const session: SavedSession = JSON.parse(saved);
+      
+      // Check if session is expired
+      if (Date.now() - session.timestamp > SESSION_EXPIRY_MS) {
+        localStorage.removeItem(STORAGE_KEY);
+        return null;
+      }
+      
+      return session;
+    } catch (error) {
+      console.error('Error loading saved session:', error);
+      return null;
+    }
+  };
+
+  const saveCurrentSession = () => {
+    if (questions.length === 0 || showCongrats) return;
+    
+    try {
+      const session: SavedSession = {
+        setId: set.id,
+        questions,
+        currentIndex,
+        correctCount,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    } catch (error) {
+      console.error('Error saving session:', error);
+    }
+  };
+
+  const clearSavedSession = () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (error) {
+      console.error('Error clearing session:', error);
+    }
+  };
+
+  const handleResumeSession = () => {
+    if (savedSession) {
+      setQuestions(savedSession.questions);
+      setCurrentIndex(savedSession.currentIndex);
+      setCorrectCount(savedSession.correctCount);
+      setShowResumePrompt(false);
+    }
+  };
+
+  const handleStartNewSession = () => {
+    clearSavedSession();
+    setShowResumePrompt(false);
+    initializeSession();
+  };
 
   const initializeSession = () => {
     // Select up to 20 cards, prioritize new and due cards
@@ -174,6 +266,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       setSelectedOption(null);
     } else {
       setShowCongrats(true);
+      clearSavedSession(); // Clear saved session on completion
     }
   };
 
@@ -184,6 +277,51 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     if (currentQuestion.type === 'type-in' && isCorrect) return true;
     return false; // Type-in wrong state has its own override buttons
   };
+
+  // Resume prompt screen
+  if (showResumePrompt && savedSession) {
+    const progress = Math.round((savedSession.currentIndex / savedSession.questions.length) * 100);
+    
+    return (
+      <div style={styles.resumeContainer}>
+        <div style={styles.resumeCard}>
+          <div style={styles.resumeIcon}>📚</div>
+          <h2 style={styles.resumeTitle}>Resume Session?</h2>
+          <p style={styles.resumeText}>
+            You have an in-progress session from earlier.
+          </p>
+          <div style={styles.resumeStats}>
+            <div style={styles.resumeStatItem}>
+              <span style={styles.resumeStatValue}>{savedSession.currentIndex + 1}/{savedSession.questions.length}</span>
+              <span style={styles.resumeStatLabel}>Cards Completed</span>
+            </div>
+            <div style={styles.resumeStatItem}>
+              <span style={styles.resumeStatValue}>{progress}%</span>
+              <span style={styles.resumeStatLabel}>Progress</span>
+            </div>
+          </div>
+          <div style={styles.resumeButtons}>
+            <button
+              style={styles.primaryButton}
+              onClick={handleResumeSession}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            >
+              ▶️ Resume Session
+            </button>
+            <button
+              style={styles.secondaryButton}
+              onClick={handleStartNewSession}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            >
+              🔄 Start New Session
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (questions.length === 0) {
     return (
@@ -761,6 +899,63 @@ const styles: { [key: string]: CSSProperties } = {
     cursor: 'pointer',
     marginTop: '24px',
     transition: 'opacity 0.2s'
+  },
+  resumeContainer: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+    padding: '24px'
+  },
+  resumeCard: {
+    backgroundColor: '#fff',
+    borderRadius: '24px',
+    padding: '48px',
+    maxWidth: '500px',
+    textAlign: 'center',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.1)'
+  },
+  resumeIcon: {
+    fontSize: '64px',
+    marginBottom: '24px'
+  },
+  resumeTitle: {
+    fontSize: '32px',
+    fontWeight: 700,
+    color: '#0f172a',
+    marginBottom: '16px'
+  },
+  resumeText: {
+    fontSize: '16px',
+    color: '#64748b',
+    marginBottom: '32px'
+  },
+  resumeStats: {
+    display: 'flex',
+    gap: '48px',
+    justifyContent: 'center',
+    marginBottom: '32px'
+  },
+  resumeStatItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px'
+  },
+  resumeStatValue: {
+    fontSize: '28px',
+    fontWeight: 700,
+    color: '#3b82f6'
+  },
+  resumeStatLabel: {
+    fontSize: '14px',
+    color: '#64748b',
+    fontWeight: 500
+  },
+  resumeButtons: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px'
   },
   congratsContainer: {
     minHeight: '100vh',
