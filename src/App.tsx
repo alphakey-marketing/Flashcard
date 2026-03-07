@@ -5,13 +5,16 @@ import Swipe from './pages/Swipe';
 import Stats from './pages/Stats';
 import Auth from './pages/Auth';
 import LearnMode from './pages/LearnMode';
+import SentenceBuilder from './pages/SentenceBuilder';
+import SpeechPractice from './pages/SpeechPractice';
+import DailyWriting from './pages/DailyWriting';
 import ErrorBoundary from './components/ErrorBoundary';
 import { supabase } from './lib/supabaseClient';
 import { syncService } from './lib/syncService';
 import { setUserId, getAllSets, overrideStorageWithCloud, getSet } from './lib/storage';
 import { setReviewUserId, overrideReviewsWithCloud } from './lib/spacedRepetition';
 
-type Page = 'home' | 'create' | 'swipe' | 'stats' | 'learn';
+type Page = 'home' | 'create' | 'swipe' | 'stats' | 'learn' | 'sentence-builder' | 'speech-practice' | 'daily-writing';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -100,6 +103,18 @@ const App: React.FC = () => {
     setSelectedSetId(setId);
     setCurrentPage('learn');
   };
+  const navigateToSentenceBuilder = (setId: string) => {
+    setSelectedSetId(setId);
+    setCurrentPage('sentence-builder');
+  };
+  const navigateToSpeechPractice = (setId: string) => {
+    setSelectedSetId(setId);
+    setCurrentPage('speech-practice');
+  };
+  const navigateToDailyWriting = (setId: string) => {
+    setSelectedSetId(setId);
+    setCurrentPage('daily-writing');
+  };
 
   if (isLoadingSession) {
     return (
@@ -131,6 +146,9 @@ const App: React.FC = () => {
             onNavigateToSwipe={navigateToSwipe}
             onNavigateToLearn={navigateToLearn}
             onNavigateToStats={navigateToStats}
+            onNavigateToSentenceBuilder={navigateToSentenceBuilder}
+            onNavigateToSpeechPractice={navigateToSpeechPractice}
+            onNavigateToDailyWriting={navigateToDailyWriting}
             onLogout={handleLogout}
           />
         )}
@@ -144,6 +162,24 @@ const App: React.FC = () => {
           <LearnMode
             set={getSet(selectedSetId)!}
             onComplete={navigateToHome}
+            onExit={navigateToHome}
+          />
+        )}
+        {currentPage === 'sentence-builder' && selectedSetId && (
+          <SentenceBuilder
+            set={getSet(selectedSetId)!}
+            onExit={navigateToHome}
+          />
+        )}
+        {currentPage === 'speech-practice' && selectedSetId && (
+          <SpeechPractice
+            set={getSet(selectedSetId)!}
+            onExit={navigateToHome}
+          />
+        )}
+        {currentPage === 'daily-writing' && selectedSetId && (
+          <DailyWriting
+            set={getSet(selectedSetId)!}
             onExit={navigateToHome}
           />
         )}
