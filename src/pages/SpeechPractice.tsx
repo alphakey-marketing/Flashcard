@@ -22,11 +22,14 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const timerRef = useRef<number | null>(null);
 
-  const masteredCards = set.cards.filter(card => {
-    const reviewData = getSetReviewData(set.id);
-    const cardReview = reviewData.find(r => r.cardId === card.id);
-    return cardReview && cardReview.easinessFactor >= 2.5;
-  });
+  // Get mastered cards using the correct status check
+  const reviewData = getSetReviewData(set.id);
+  const masteredCardIds = new Set(
+    reviewData
+      .filter(r => r.status === 'mastered')
+      .map(r => r.cardId)
+  );
+  const masteredCards = set.cards.filter(card => masteredCardIds.has(card.id));
 
   const currentCard = masteredCards[currentCardIndex];
 
@@ -177,6 +180,7 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
         <div style={styles.emptyState}>
           <div style={styles.emptyIcon}>🎤</div>
           <p style={styles.emptyText}>Master some cards first to practice speaking!</p>
+          <p style={styles.emptyHint}>Use Learn Mode and mark cards as "Mastered" to unlock this feature.</p>
         </div>
       </div>
     );
@@ -506,7 +510,12 @@ const styles: { [key: string]: CSSProperties } = {
   },
   emptyText: {
     fontSize: '16px',
-    color: '#64748b'
+    color: '#64748b',
+    marginBottom: '8px'
+  },
+  emptyHint: {
+    fontSize: '14px',
+    color: '#94a3b8'
   }
 };
 

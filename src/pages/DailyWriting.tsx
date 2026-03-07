@@ -1,5 +1,6 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
 import { FlashcardSet } from '../lib/storage';
+import { getSetReviewData } from '../lib/spacedRepetition';
 import {
   getTodayPrompt,
   completeDailyPrompt,
@@ -21,6 +22,15 @@ const DailyWriting: React.FC<DailyWritingProps> = ({ set, onExit }) => {
   const [showHistory, setShowHistory] = useState(false);
   const [streak, setStreak] = useState(0);
 
+  // Get mastered cards using the correct status check
+  const reviewData = getSetReviewData(set.id);
+  const masteredCardIds = new Set(
+    reviewData
+      .filter(r => r.status === 'mastered')
+      .map(r => r.cardId)
+  );
+  const masteredCards = set.cards.filter(card => masteredCardIds.has(card.id));
+
   useEffect(() => {
     loadTodayPrompt();
     loadHistory();
@@ -28,7 +38,12 @@ const DailyWriting: React.FC<DailyWritingProps> = ({ set, onExit }) => {
   }, [set.id]);
 
   const loadTodayPrompt = () => {
-    const prompt = getTodayPrompt(set.id, set.cards);
+    if (masteredCards.length < 3) {
+      setTodayPrompt(null);
+      return;
+    }
+
+    const prompt = getTodayPrompt(set.id, masteredCards);
     setTodayPrompt(prompt);
     
     if (prompt?.userEntry) {
@@ -60,7 +75,7 @@ const DailyWriting: React.FC<DailyWritingProps> = ({ set, onExit }) => {
     setIsSubmitted(false);
   };
 
-  if (!todayPrompt) {
+  if (masteredCards.length < 3) {
     return (
       <div style={styles.container}>
         <div style={styles.header}>
@@ -73,6 +88,23 @@ const DailyWriting: React.FC<DailyWritingProps> = ({ set, onExit }) => {
           <p style={styles.emptyText}>
             Master at least 3 cards to start daily writing practice!
           </p>
+          <p style={styles.emptyHint}>Use Learn Mode and mark cards as "Mastered" to unlock this feature.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!todayPrompt) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.header}>
+          <button style={styles.backButton} onClick={onExit}>← Exit</button>
+          <h2 style={styles.headerTitle}>Daily Writing</h2>
+          <div style={{ width: '100px' }} />
+        </div>
+        <div style={styles.emptyState}>
+          <div style={styles.emptyIcon}>✍️</div>
+          <p style={styles.emptyText}>Unable to generate prompt. Please try again.</p>
         </div>
       </div>
     );
@@ -493,7 +525,12 @@ const styles: { [key: string]: CSSProperties } = {
   emptyText: {
     fontSize: '16px',
     color: '#64748b',
-    lineHeight: '1.6'
+    lineHeight: '1.6',
+    marginBottom: '8px'
+  },
+  emptyHint: {
+    fontSize: '14px',
+    color: '#94a3b8'
   }
 };
 

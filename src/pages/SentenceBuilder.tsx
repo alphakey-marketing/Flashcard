@@ -1,12 +1,10 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
 import { FlashcardSet } from '../lib/storage';
+import { getSetReviewData } from '../lib/spacedRepetition';
 import {
-  generateSentenceChallenge,
-  saveSentenceChallenge,
-  completeSentenceChallenge,
-  validateSentence,
-  getActiveChallenges,
-  getCompletedChallenges,
+  generateChallenge,
+  submitChallengeAnswer,
+  getChallengeHistory,
   SentenceChallenge
 } from '../lib/sentenceBuilder';
 
@@ -16,74 +14,78 @@ interface SentenceBuilderProps {
 }
 
 const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
-  const [activeChallenge, setActiveChallenge] = useState<SentenceChallenge | null>(null);
-  const [userSentence, setUserSentence] = useState('');
-  const [validation, setValidation] = useState<{
-    isValid: boolean;
-    feedback: string;
+  const [currentChallenge, setCurrentChallenge] = useState<SentenceChallenge | null>(null);
+  const [userAnswer, setUserAnswer] = useState('');
+  const [feedback, setFeedback] = useState<{
     score: number;
+    feedback: string[];
+    isCorrect: boolean;
   } | null>(null);
-  const [isSubmitted, setIsSubmitted] = useState(false);
-  const [completedChallenges, setCompletedChallenges] = useState<SentenceChallenge[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<any[]>([]);
+
+  // Get mastered cards using the correct status check
+  const reviewData = getSetReviewData(set.id);
+  const masteredCardIds = new Set(
+    reviewData
+      .filter(r => r.status === 'mastered')
+      .map(r => r.cardId)
+  );
+  const masteredCards = set.cards.filter(card => masteredCardIds.has(card.id));
 
   useEffect(() => {
-    loadChallenges();
-  }, [set.id]);
+    loadNewChallenge();
+    loadHistory();
+  }, []);
 
-  const loadChallenges = () => {
-    const active = getActiveChallenges(set.id);
-    const completed = getCompletedChallenges(set.id);
-    
-    if (active.length > 0) {
-      setActiveChallenge(active[0]);
-    }
-    
-    setCompletedChallenges(completed);
+  const loadNewChallenge = () => {
+    if (masteredCards.length < 3) return;
+    const challenge = generateChallenge(set.id, masteredCards);
+    setCurrentChallenge(challenge);
+    setUserAnswer('');
+    setFeedback(null);
   };
 
-  const handleNewChallenge = () => {
-    const challenge = generateSentenceChallenge(set.id, set.cards);
-    
-    if (!challenge) {
-      alert('Need at least 3 mastered cards to create a sentence challenge. Keep studying!');
-      return;
-    }
-
-    saveSentenceChallenge(challenge);
-    setActiveChallenge(challenge);
-    setUserSentence('');
-    setValidation(null);
-    setIsSubmitted(false);
+  const loadHistory = () => {
+    const challengeHistory = getChallengeHistory(set.id, 10);
+    setHistory(challengeHistory);
   };
 
   const handleSubmit = () => {
-    if (!activeChallenge || !userSentence.trim()) return;
+    if (!currentChallenge || !userAnswer.trim()) return;
 
-    const result = validateSentence(userSentence, activeChallenge.words);
-    setValidation(result);
-    setIsSubmitted(true);
+    const result = submitChallengeAnswer(
+      currentChallenge.challengeId,
+      set.id,
+      userAnswer
+    );
 
-    if (result.isValid) {
-      completeSentenceChallenge(activeChallenge.id, userSentence, result.feedback);
-      setTimeout(() => {
-        loadChallenges();
-      }, 2000);
-    }
+    setFeedback(result);
+    loadHistory();
   };
 
-  const handleTryAgain = () => {
-    setUserSentence('');
-    setValidation(null);
-    setIsSubmitted(false);
+  const handleNext = () => {
+    loadNewChallenge();
   };
 
-  const handleNextChallenge = () => {
-    setUserSentence('');
-    setValidation(null);
-    setIsSubmitted(false);
-    setActiveChallenge(null);
-  };
+  if (masteredCards.length < 3) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.header}>
+          <button style={styles.backButton} onClick={onExit}>← Exit</button>
+          <h2 style={styles.headerTitle}>Sentence Builder</h2>
+          <div style={{ width: '100px' }} />
+        </div>
+        <div style={styles.emptyState}>
+          <div style={styles.emptyIcon}>🏗️</div>
+          <p style={styles.emptyText}>
+            Master at least 3 cards to start building sentences!
+          </p>
+          <p style={styles.emptyHint}>Use Learn Mode and mark cards as "Mastered" to unlock this feature.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (showHistory) {
     return (
@@ -92,28 +94,36 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
           <button style={styles.backButton} onClick={() => setShowHistory(false)}>
             ← Back
           </button>
-          <h2 style={styles.headerTitle}>Sentence History</h2>
-          <div style={{ width: '80px' }} />
+          <h2 style={styles.headerTitle}>Challenge History</h2>
+          <div style={{ width: '100px' }} />
         </div>
 
         <div style={styles.historyContainer}>
-          {completedChallenges.length === 0 ? (
+          {history.length === 0 ? (
             <div style={styles.emptyState}>
-              <div style={styles.emptyIcon}>📝</div>
-              <p style={styles.emptyText}>No completed sentences yet.</p>
+              <p style={styles.emptyText}>No challenges completed yet!</p>
             </div>
           ) : (
-            completedChallenges.map((challenge) => (
-              <div key={challenge.id} style={styles.historyCard}>
-                <div style={styles.historyDate}>
-                  {new Date(challenge.completedAt!).toLocaleDateString()}
+            history.map((entry, idx) => (
+              <div key={idx} style={styles.historyEntry}>
+                <div style={styles.historyScore}>
+                  <span style={styles.historyScoreValue}>{entry.score}</span>
+                  <span style={styles.historyScoreLabel}>/ 100</span>
                 </div>
-                <div style={styles.historyWords}>
-                  <strong>Words used:</strong>{' '}
-                  {challenge.words.map(w => w.front.split('[')[0].trim()).join(', ')}
+                <div style={styles.historyContent}>
+                  <div style={styles.historyPrompt}>
+                    <strong>Prompt:</strong> {entry.prompt}
+                  </div>
+                  <div style={styles.historyWords}>
+                    <strong>Words:</strong> {entry.words.map((w: any) => w.front).join(', ')}
+                  </div>
+                  <div style={styles.historyAnswer}>
+                    <strong>Your answer:</strong> {entry.userAnswer}
+                  </div>
+                  <div style={styles.historyDate}>
+                    {new Date(entry.timestamp).toLocaleString()}
+                  </div>
                 </div>
-                <div style={styles.historySentence}>{challenge.userSentence}</div>
-                <div style={styles.historyFeedback}>{challenge.feedback}</div>
               </div>
             ))
           )}
@@ -122,139 +132,113 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
     );
   }
 
+  if (!currentChallenge) return null;
+
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <button style={styles.backButton} onClick={onExit}>
-          ← Exit
-        </button>
+        <button style={styles.backButton} onClick={onExit}>← Exit</button>
         <h2 style={styles.headerTitle}>Sentence Builder</h2>
-        <button
-          style={styles.historyButton}
-          onClick={() => setShowHistory(true)}
-        >
-          📚 History
+        <button style={styles.historyButton} onClick={() => setShowHistory(true)}>
+          📜 History
         </button>
       </div>
 
       <div style={styles.content}>
-        {!activeChallenge ? (
-          <div style={styles.welcomeCard}>
-            <div style={styles.welcomeIcon}>🏗️</div>
-            <h1 style={styles.welcomeTitle}>Sentence Builder</h1>
-            <p style={styles.welcomeText}>
-              Create your own Japanese sentences using words you've mastered!
-            </p>
-            <div style={styles.instructions}>
-              <h3 style={styles.instructionsTitle}>How it works:</h3>
-              <ul style={styles.instructionsList}>
-                <li>You'll get 3-5 words from your mastered vocabulary</li>
-                <li>Create a grammatically correct sentence using all words</li>
-                <li>Get instant feedback on your sentence</li>
-                <li>Build real writing skills!</li>
-              </ul>
-            </div>
-            <button
-              style={styles.startButton}
-              onClick={handleNewChallenge}
-            >
-              🚀 Start Challenge
-            </button>
-            {completedChallenges.length > 0 && (
-              <div style={styles.stats}>
-                <div style={styles.statItem}>
-                  <div style={styles.statValue}>{completedChallenges.length}</div>
-                  <div style={styles.statLabel}>Sentences Created</div>
-                </div>
-              </div>
-            )}
+        <div style={styles.challengeCard}>
+          <div style={styles.challengeHeader}>
+            <div style={styles.challengeIcon}>🏗️</div>
+            <div style={styles.challengeTitle}>Build a Sentence</div>
           </div>
-        ) : (
-          <div style={styles.challengeCard}>
-            <div style={styles.challengeHeader}>
-              <h2 style={styles.challengeTitle}>Create a Sentence</h2>
-              <div style={styles.challengeSubtitle}>
-                Use all {activeChallenge.words.length} words below:
-              </div>
-            </div>
 
+          <div style={styles.promptSection}>
+            <div style={styles.promptLabel}>Prompt:</div>
+            <div style={styles.promptText}>{currentChallenge.prompt}</div>
+          </div>
+
+          <div style={styles.wordsSection}>
+            <div style={styles.wordsLabel}>Use these words:</div>
             <div style={styles.wordsGrid}>
-              {activeChallenge.words.map((word, idx) => (
-                <div key={idx} style={styles.wordChip}>
+              {currentChallenge.words.map((word, idx) => (
+                <div key={idx} style={styles.wordBadge}>
                   <div style={styles.wordFront}>{word.front}</div>
                   <div style={styles.wordBack}>{word.back}</div>
                 </div>
               ))}
             </div>
-
-            <div style={styles.inputSection}>
-              <label style={styles.inputLabel}>Your Sentence:</label>
-              <textarea
-                style={{
-                  ...styles.sentenceInput,
-                  ...(validation && !validation.isValid ? styles.sentenceInputError : {})
-                }}
-                value={userSentence}
-                onChange={(e) => setUserSentence(e.target.value)}
-                placeholder="文章をここに書いてください... (Write your sentence here...)"
-                disabled={isSubmitted && validation?.isValid}
-                rows={4}
-              />
-
-              {!isSubmitted ? (
-                <button
-                  style={{
-                    ...styles.submitButton,
-                    opacity: !userSentence.trim() ? 0.5 : 1
-                  }}
-                  onClick={handleSubmit}
-                  disabled={!userSentence.trim()}
-                >
-                  ✓ Check Sentence
-                </button>
-              ) : (
-                <div style={styles.feedbackSection}>
-                  <div
-                    style={{
-                      ...styles.feedbackBox,
-                      ...(validation?.isValid ? styles.feedbackSuccess : styles.feedbackError)
-                    }}
-                  >
-                    <div style={styles.feedbackText}>{validation?.feedback}</div>
-                    {validation?.score !== undefined && (
-                      <div style={styles.scoreText}>Score: {validation.score}/100</div>
-                    )}
-                  </div>
-
-                  {validation?.isValid ? (
-                    <button
-                      style={styles.nextButton}
-                      onClick={handleNextChallenge}
-                    >
-                      Next Challenge →
-                    </button>
-                  ) : (
-                    <button
-                      style={styles.tryAgainButton}
-                      onClick={handleTryAgain}
-                    >
-                      🔄 Try Again
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div style={styles.tips}>
-              <div style={styles.tipsTitle}>💡 Tips:</div>
-              <ul style={styles.tipsList}>
-                <li>Use proper particles (は、が、を、に、で、etc.)</li>
-                <li>End with proper punctuation (。)</li>
-                <li>Make sure the sentence is natural and complete</li>
-              </ul>
-            </div>
           </div>
-        )}
+
+          <div style={styles.answerSection}>
+            <label style={styles.answerLabel}>Your Sentence:</label>
+            <textarea
+              style={{
+                ...styles.answerTextarea,
+                ...(feedback ? styles.answerTextareaDisabled : {})
+              }}
+              value={userAnswer}
+              onChange={(e) => setUserAnswer(e.target.value)}
+              placeholder="Write your sentence here...\n\n例: 私は..."
+              rows={4}
+              disabled={feedback !== null}
+            />
+
+            {!feedback ? (
+              <button
+                style={{
+                  ...styles.submitButton,
+                  opacity: !userAnswer.trim() ? 0.5 : 1
+                }}
+                onClick={handleSubmit}
+                disabled={!userAnswer.trim()}
+              >
+                ✓ Submit Answer
+              </button>
+            ) : (
+              <div style={styles.feedbackSection}>
+                <div
+                  style={{
+                    ...styles.scoreCard,
+                    backgroundColor: feedback.score >= 70 ? '#d1fae5' : feedback.score >= 40 ? '#fef3c7' : '#fee2e2',
+                    borderColor: feedback.score >= 70 ? '#10b981' : feedback.score >= 40 ? '#f59e0b' : '#ef4444'
+                  }}
+                >
+                  <div style={styles.scoreBadge}>
+                    <span style={styles.scoreValue}>{feedback.score}</span>
+                    <span style={styles.scoreMax}> / 100</span>
+                  </div>
+                  <div style={{
+                    ...styles.scoreLabel,
+                    color: feedback.score >= 70 ? '#065f46' : feedback.score >= 40 ? '#92400e' : '#7f1d1d'
+                  }}>
+                    {feedback.score >= 70 ? '🎉 Great job!' : feedback.score >= 40 ? '👍 Good effort!' : '💪 Keep practicing!'}
+                  </div>
+                </div>
+
+                <div style={styles.feedbackList}>
+                  {feedback.feedback.map((item, idx) => (
+                    <div key={idx} style={styles.feedbackItem}>
+                      {item.startsWith('✅') || item.startsWith('✓') ? '✅' : '⚠️'} {item.replace(/^[✅✓❌⚠️]\s*/, '')}
+                    </div>
+                  ))}
+                </div>
+
+                <button style={styles.nextButton} onClick={handleNext}>
+                  Next Challenge →
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div style={styles.tipsBox}>
+            <div style={styles.tipsTitle}>💡 Tips:</div>
+            <ul style={styles.tipsList}>
+              <li>Use all the provided words in your sentence</li>
+              <li>Make sure your sentence is grammatically correct</li>
+              <li>Aim for 5-15 words in length</li>
+              <li>End with proper Japanese punctuation (。)</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -298,141 +282,100 @@ const styles: { [key: string]: CSSProperties } = {
     fontSize: '14px',
     fontWeight: 600,
     cursor: 'pointer',
-    color: '#475569'
+    color: '#475569',
+    minWidth: '100px'
   },
   content: {
     flex: 1,
     padding: '32px 24px',
-    maxWidth: '900px',
+    maxWidth: '800px',
     margin: '0 auto',
     width: '100%'
-  },
-  welcomeCard: {
-    backgroundColor: '#fff',
-    borderRadius: '24px',
-    padding: '48px',
-    textAlign: 'center',
-    boxShadow: '0 4px 16px rgba(0,0,0,0.08)'
-  },
-  welcomeIcon: {
-    fontSize: '72px',
-    marginBottom: '24px'
-  },
-  welcomeTitle: {
-    fontSize: '36px',
-    fontWeight: 700,
-    color: '#0f172a',
-    marginBottom: '16px'
-  },
-  welcomeText: {
-    fontSize: '18px',
-    color: '#64748b',
-    marginBottom: '32px',
-    lineHeight: '1.6'
-  },
-  instructions: {
-    backgroundColor: '#f8fafc',
-    borderRadius: '12px',
-    padding: '24px',
-    marginBottom: '32px',
-    textAlign: 'left'
-  },
-  instructionsTitle: {
-    fontSize: '18px',
-    fontWeight: 600,
-    color: '#0f172a',
-    marginBottom: '12px'
-  },
-  instructionsList: {
-    margin: 0,
-    paddingLeft: '24px',
-    color: '#475569',
-    lineHeight: '1.8'
-  },
-  startButton: {
-    backgroundColor: '#3b82f6',
-    color: 'white',
-    border: 'none',
-    borderRadius: '12px',
-    padding: '16px 48px',
-    fontSize: '18px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'transform 0.2s, box-shadow 0.2s'
-  },
-  stats: {
-    marginTop: '32px',
-    display: 'flex',
-    justifyContent: 'center',
-    gap: '32px'
-  },
-  statItem: {
-    textAlign: 'center'
-  },
-  statValue: {
-    fontSize: '32px',
-    fontWeight: 700,
-    color: '#3b82f6'
-  },
-  statLabel: {
-    fontSize: '14px',
-    color: '#64748b',
-    marginTop: '4px'
   },
   challengeCard: {
     backgroundColor: '#fff',
     borderRadius: '24px',
-    padding: '40px',
+    padding: '32px',
     boxShadow: '0 4px 16px rgba(0,0,0,0.08)'
   },
   challengeHeader: {
-    marginBottom: '32px',
-    textAlign: 'center'
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    marginBottom: '24px',
+    paddingBottom: '16px',
+    borderBottom: '2px solid #f1f5f9'
+  },
+  challengeIcon: {
+    fontSize: '32px'
   },
   challengeTitle: {
-    fontSize: '28px',
+    fontSize: '24px',
     fontWeight: 700,
-    color: '#0f172a',
+    color: '#0f172a'
+  },
+  promptSection: {
+    marginBottom: '24px'
+  },
+  promptLabel: {
+    fontSize: '14px',
+    fontWeight: 700,
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: '1px',
     marginBottom: '8px'
   },
-  challengeSubtitle: {
-    fontSize: '16px',
-    color: '#64748b'
+  promptText: {
+    fontSize: '18px',
+    fontWeight: 600,
+    color: '#0f172a',
+    lineHeight: '1.6'
+  },
+  wordsSection: {
+    marginBottom: '32px'
+  },
+  wordsLabel: {
+    fontSize: '14px',
+    fontWeight: 700,
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: '1px',
+    marginBottom: '12px'
   },
   wordsGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-    gap: '16px',
-    marginBottom: '32px'
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '12px'
   },
-  wordChip: {
-    backgroundColor: '#f8fafc',
-    border: '2px solid #e2e8f0',
-    borderRadius: '12px',
-    padding: '16px',
-    textAlign: 'center'
+  wordBadge: {
+    backgroundColor: '#f0f9ff',
+    border: '2px solid #3b82f6',
+    borderRadius: '8px',
+    padding: '8px 16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px'
   },
   wordFront: {
-    fontSize: '20px',
-    fontWeight: 600,
-    color: '#0f172a',
-    marginBottom: '8px'
-  },
-  wordBack: {
-    fontSize: '14px',
-    color: '#64748b'
-  },
-  inputSection: {
-    marginBottom: '32px'
-  },
-  inputLabel: {
-    display: 'block',
     fontSize: '16px',
     fontWeight: 600,
+    color: '#1e3a8a'
+  },
+  wordBack: {
+    fontSize: '12px',
+    color: '#60a5fa'
+  },
+  answerSection: {
+    marginBottom: '24px'
+  },
+  answerLabel: {
+    display: 'block',
+    fontSize: '14px',
+    fontWeight: 700,
     color: '#0f172a',
     marginBottom: '12px'
   },
-  sentenceInput: {
+  answerTextarea: {
     width: '100%',
     padding: '16px',
     fontSize: '16px',
@@ -440,11 +383,12 @@ const styles: { [key: string]: CSSProperties } = {
     borderRadius: '12px',
     resize: 'vertical',
     fontFamily: 'inherit',
-    lineHeight: '1.6',
+    lineHeight: '1.8',
     marginBottom: '16px'
   },
-  sentenceInputError: {
-    borderColor: '#ef4444'
+  answerTextareaDisabled: {
+    backgroundColor: '#f8fafc',
+    color: '#475569'
   },
   submitButton: {
     width: '100%',
@@ -462,31 +406,45 @@ const styles: { [key: string]: CSSProperties } = {
     flexDirection: 'column',
     gap: '16px'
   },
-  feedbackBox: {
-    padding: '20px',
+  scoreCard: {
+    border: '2px solid',
     borderRadius: '12px',
-    border: '2px solid'
+    padding: '20px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '16px'
   },
-  feedbackSuccess: {
-    backgroundColor: '#d1fae5',
-    borderColor: '#10b981',
-    color: '#065f46'
+  scoreBadge: {
+    display: 'flex',
+    alignItems: 'baseline'
   },
-  feedbackError: {
-    backgroundColor: '#fee2e2',
-    borderColor: '#ef4444',
-    color: '#991b1b'
+  scoreValue: {
+    fontSize: '48px',
+    fontWeight: 700
   },
-  feedbackText: {
-    fontSize: '16px',
+  scoreMax: {
+    fontSize: '24px',
     fontWeight: 600,
-    marginBottom: '8px'
+    opacity: 0.7
   },
-  scoreText: {
+  scoreLabel: {
+    fontSize: '18px',
+    fontWeight: 600
+  },
+  feedbackList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px'
+  },
+  feedbackItem: {
     fontSize: '14px',
-    opacity: 0.8
+    color: '#475569',
+    padding: '8px 12px',
+    backgroundColor: '#f8fafc',
+    borderRadius: '8px'
   },
   nextButton: {
+    width: '100%',
     backgroundColor: '#10b981',
     color: 'white',
     border: 'none',
@@ -496,21 +454,11 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 600,
     cursor: 'pointer'
   },
-  tryAgainButton: {
-    backgroundColor: '#f59e0b',
-    color: 'white',
-    border: 'none',
+  tipsBox: {
+    backgroundColor: '#fef3c7',
+    border: '2px solid #f59e0b',
     borderRadius: '12px',
-    padding: '16px',
-    fontSize: '16px',
-    fontWeight: 600,
-    cursor: 'pointer'
-  },
-  tips: {
-    backgroundColor: '#fffbeb',
-    border: '2px solid #fbbf24',
-    borderRadius: '12px',
-    padding: '20px'
+    padding: '16px'
   },
   tipsTitle: {
     fontSize: '16px',
@@ -527,40 +475,57 @@ const styles: { [key: string]: CSSProperties } = {
   },
   historyContainer: {
     padding: '24px',
-    maxWidth: '900px',
+    maxWidth: '800px',
     margin: '0 auto',
     width: '100%'
   },
-  historyCard: {
+  historyEntry: {
     backgroundColor: '#fff',
-    borderRadius: '12px',
-    padding: '24px',
+    borderRadius: '16px',
+    padding: '20px',
     marginBottom: '16px',
+    display: 'flex',
+    gap: '20px',
     boxShadow: '0 2px 8px rgba(0,0,0,0.06)'
   },
-  historyDate: {
-    fontSize: '12px',
-    color: '#64748b',
+  historyScore: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: '80px'
+  },
+  historyScoreValue: {
+    fontSize: '32px',
+    fontWeight: 700,
+    color: '#3b82f6'
+  },
+  historyScoreLabel: {
+    fontSize: '14px',
+    color: '#64748b'
+  },
+  historyContent: {
+    flex: 1
+  },
+  historyPrompt: {
+    fontSize: '14px',
+    color: '#0f172a',
     marginBottom: '8px'
   },
   historyWords: {
     fontSize: '14px',
-    color: '#475569',
-    marginBottom: '12px'
+    color: '#64748b',
+    marginBottom: '8px'
   },
-  historySentence: {
-    fontSize: '18px',
-    fontWeight: 600,
+  historyAnswer: {
+    fontSize: '16px',
     color: '#0f172a',
     marginBottom: '8px',
-    padding: '12px',
-    backgroundColor: '#f8fafc',
-    borderRadius: '8px'
-  },
-  historyFeedback: {
-    fontSize: '14px',
-    color: '#059669',
     fontWeight: 500
+  },
+  historyDate: {
+    fontSize: '12px',
+    color: '#94a3b8'
   },
   emptyState: {
     textAlign: 'center',
@@ -572,7 +537,12 @@ const styles: { [key: string]: CSSProperties } = {
   },
   emptyText: {
     fontSize: '16px',
-    color: '#64748b'
+    color: '#64748b',
+    marginBottom: '8px'
+  },
+  emptyHint: {
+    fontSize: '14px',
+    color: '#94a3b8'
   }
 };
 
