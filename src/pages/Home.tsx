@@ -1,5 +1,5 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
-import { getAllSets, deleteSet, FlashcardSet } from '../lib/storage';
+import { getAllSets, deleteSet, FlashcardSet, saveSet } from '../lib/storage';
 import { exportToCSV } from '../lib/csvParser';
 import { getStreak, getTodayStats } from '../lib/studyStats';
 import { getSetStudyStats, getSetReviewData } from '../lib/spacedRepetition';
@@ -20,6 +20,8 @@ interface HomeProps {
   onLogout: () => void;
 }
 
+type JLPTLevel = 'N5' | 'N4' | 'N3' | 'N2' | 'N1' | undefined;
+
 const Home: React.FC<HomeProps> = ({ 
   onNavigateToCreate, 
   onNavigateToSwipe, 
@@ -34,6 +36,7 @@ const Home: React.FC<HomeProps> = ({
   const [showImportModal, setShowImportModal] = useState(false);
   const [showLearningTips, setShowLearningTips] = useState(false);
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
+  const [editingLevelSetId, setEditingLevelSetId] = useState<string | null>(null);
   const [streak, setStreak] = useState({ current: 0, longest: 0, lastStudyDate: '' });
   const [todayStats, setTodayStats] = useState({ totalCards: 0, totalDuration: 0 });
   const [isSyncing, setIsSyncing] = useState(false);
@@ -195,11 +198,39 @@ const Home: React.FC<HomeProps> = ({
     setExpandedCardId(expandedCardId === cardId ? null : cardId);
   };
 
+  const handleEditLevel = (e: React.MouseEvent, setId: string) => {
+    e.stopPropagation();
+    setEditingLevelSetId(setId);
+  };
+
+  const handleSaveLevel = (setId: string, newLevel: JLPTLevel) => {
+    const set = sets.find(s => s.id === setId);
+    if (set) {
+      const updatedSet = { ...set, jlptLevel: newLevel };
+      saveSet(updatedSet);
+      loadSets();
+      setEditingLevelSetId(null);
+      if (userId) {
+        checkUnsyncedDecks(userId);
+      }
+    }
+  };
+
   const hasUnsyncedDecks = unsyncedDeckIds.size > 0;
   
   const totalDueCards = sets.reduce((sum, set) => {
     return sum + getSetStudyStats(set.id, set.cards.length).dueCards;
   }, 0);
+
+  // Debug logging
+  console.log('🔍 Due Today Debug:');
+  sets.forEach(set => {
+    const stats = getSetStudyStats(set.id, set.cards.length);
+    if (stats.dueCards > 0) {
+      console.log(`  - ${set.title}: ${stats.dueCards} due cards`);
+    }
+  });
+  console.log(`  Total due cards across all sets: ${totalDueCards}`);
 
   // Group sets by category
   const groupedSets = sets.reduce((acc, set) => {
@@ -215,6 +246,7 @@ const Home: React.FC<HomeProps> = ({
     const stats = getSetStudyStats(set.id, set.cards.length);
     const isUnsynced = unsyncedDeckIds.has(set.id);
     const isExpanded = expandedCardId === set.id;
+    const isEditingLevel = editingLevelSetId === set.id;
     const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
     const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
     const hasDue = stats.dueCards > 0;
@@ -258,6 +290,13 @@ const Home: React.FC<HomeProps> = ({
           </h3>
           <div style={styles.cardActions}>
             <button
+              style={styles.editLevelButton}
+              onClick={(e) => handleEditLevel(e, set.id)}
+              title="Change JLPT Level"
+            >
+              📝
+            </button>
+            <button
               style={styles.exportButton}
               onClick={(e) => handleExport(e, set)}
               title="Export to CSV"
@@ -273,6 +312,31 @@ const Home: React.FC<HomeProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Level Editor */}
+        {isEditingLevel && (
+          <div style={styles.levelEditor}>
+            <select
+              value={set.jlptLevel || ''}
+              onChange={(e) => handleSaveLevel(set.id, (e.target.value as JLPTLevel) || undefined)}
+              style={styles.levelSelect}
+              autoFocus
+            >
+              <option value="">Custom / No Level</option>
+              <option value="N5">N5 (Beginner)</option>
+              <option value="N4">N4 (Elementary)</option>
+              <option value="N3">N3 (Intermediate)</option>
+              <option value="N2">N2 (Upper-Intermediate)</option>
+              <option value="N1">N1 (Advanced)</option>
+            </select>
+            <button
+              style={styles.cancelLevelButton}
+              onClick={() => setEditingLevelSetId(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
         
         {set.description && (
           <p style={styles.cardDescription}>{set.description}</p>
@@ -382,7 +446,7 @@ const Home: React.FC<HomeProps> = ({
       <header style={styles.header}>
         <div>
           <h1 style={styles.title}>FlashMind</h1>
-          <p style={styles.subtitle}>日本語を勉強しよう！</p>
+          <p style={styles.subtitle}>日本語を勉強しよう!</p>
         </div>
         <div style={styles.headerButtons}>
           {userId && (
@@ -567,8 +631,12 @@ const styles: { [key: string]: CSSProperties } = {
   cardTitle: { fontSize: '18px', fontWeight: 600, color: '#0f172a', margin: 0, flex: 1, display: 'flex', alignItems: 'center', gap: '8px' },
   unsyncedBadge: { fontSize: '16px', opacity: 0.7 },
   cardActions: { display: 'flex', gap: '8px' },
+  editLevelButton: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '4px', opacity: 0.6 },
   exportButton: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '4px', opacity: 0.6 },
   deleteButton: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '4px', opacity: 0.6 },
+  levelEditor: { display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center' },
+  levelSelect: { flex: 1, padding: '8px 12px', fontSize: '14px', border: '2px solid #3b82f6', borderRadius: '8px', backgroundColor: '#fff', cursor: 'pointer', outline: 'none', fontFamily: 'inherit' },
+  cancelLevelButton: { padding: '8px 12px', fontSize: '14px', backgroundColor: '#f1f5f9', border: 'none', borderRadius: '8px', cursor: 'pointer', color: '#475569', fontWeight: 600 },
   cardDescription: { fontSize: '14px', color: '#64748b', marginBottom: '16px', lineHeight: '1.5', flex: 1 },
   dueBadge: { alignSelf: 'flex-start', backgroundColor: '#ef4444', color: 'white', padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600, marginBottom: '8px' },
   dailyBadge: { alignSelf: 'flex-start', padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 600, marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '4px' },
