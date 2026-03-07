@@ -1,6 +1,6 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
 import { FlashcardSet, Flashcard } from '../lib/storage';
-import { CardReviewData, reviewCard } from '../lib/spacedRepetition';
+import { CardReviewData, saveCardReview, ReviewRating } from '../lib/spacedRepetition';
 
 interface LearnModeProps {
   set: FlashcardSet;
@@ -33,6 +33,8 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const initializeSession = () => {
     // Select up to 20 cards, prioritize new and due cards
     const sessionSize = Math.min(20, set.cards.length);
+    if (sessionSize === 0) return;
+    
     const selectedCards = [...set.cards]
       .sort(() => Math.random() - 0.5)
       .slice(0, sessionSize);
@@ -93,10 +95,10 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     if (correct) {
       setCorrectCount(correctCount + 1);
       // Record as "Know It" in spaced repetition
-      reviewCard(currentQuestion.card.id, set.id, 5);
+      saveCardReview(set.id, currentQuestion.card.id, 'know_it');
     } else {
       // Record as "Again" in spaced repetition
-      reviewCard(currentQuestion.card.id, set.id, 1);
+      saveCardReview(set.id, currentQuestion.card.id, 'again');
     }
   };
 
@@ -109,16 +111,16 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     
     if (correct) {
       setCorrectCount(correctCount + 1);
-      reviewCard(currentQuestion.card.id, set.id, 5);
+      saveCardReview(set.id, currentQuestion.card.id, 'know_it');
     } else {
-      reviewCard(currentQuestion.card.id, set.id, 1);
+      saveCardReview(set.id, currentQuestion.card.id, 'again');
     }
   };
 
-  const handleFlashcardRate = (quality: number) => {
-    reviewCard(currentQuestion.card.id, set.id, quality);
+  const handleFlashcardRate = (rating: ReviewRating) => {
+    saveCardReview(set.id, currentQuestion.card.id, rating);
     
-    if (quality >= 4) {
+    if (rating === 'know_it' || rating === 'mastered') {
       setCorrectCount(correctCount + 1);
     }
     
@@ -141,11 +143,16 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     }
   };
 
-  const progress = ((currentIndex + 1) / questions.length) * 100;
-
   if (questions.length === 0) {
-    return <div style={styles.loading}>Loading session...</div>;
+    return (
+      <div style={styles.loading}>
+        <p>No cards available in this deck.</p>
+        <button style={styles.exitButton} onClick={onExit}>← Go Back</button>
+      </div>
+    );
   }
+
+  const progress = ((currentIndex + 1) / questions.length) * 100;
 
   if (showCongrats) {
     const accuracy = Math.round((correctCount / questions.length) * 100);
@@ -168,7 +175,12 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
           <div style={styles.congratsButtons}>
             <button
               style={styles.primaryButton}
-              onClick={initializeSession}
+              onClick={() => {
+                setShowCongrats(false);
+                setCurrentIndex(0);
+                setCorrectCount(0);
+                initializeSession();
+              }}
               onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
               onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
             >
@@ -308,35 +320,27 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
                 <div style={styles.ratingButtons}>
                   <button
                     style={{ ...styles.ratingButton, ...styles.ratingAgain }}
-                    onClick={() => handleFlashcardRate(1)}
+                    onClick={() => handleFlashcardRate('again')}
                     onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
                     onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
                   >
                     Again
                   </button>
                   <button
-                    style={{ ...styles.ratingButton, ...styles.ratingHard }}
-                    onClick={() => handleFlashcardRate(3)}
-                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-                  >
-                    Hard
-                  </button>
-                  <button
                     style={{ ...styles.ratingButton, ...styles.ratingGood }}
-                    onClick={() => handleFlashcardRate(4)}
+                    onClick={() => handleFlashcardRate('know_it')}
                     onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
                     onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
                   >
-                    Good
+                    Know It
                   </button>
                   <button
                     style={{ ...styles.ratingButton, ...styles.ratingEasy }}
-                    onClick={() => handleFlashcardRate(5)}
+                    onClick={() => handleFlashcardRate('mastered')}
                     onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
                     onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
                   >
-                    Easy
+                    Mastered
                   </button>
                 </div>
               </>
@@ -370,7 +374,11 @@ const styles: { [key: string]: CSSProperties } = {
     textAlign: 'center',
     padding: '100px 20px',
     fontSize: '18px',
-    color: '#64748b'
+    color: '#64748b',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '16px'
   },
   header: {
     maxWidth: '800px',
@@ -544,9 +552,6 @@ const styles: { [key: string]: CSSProperties } = {
   },
   ratingAgain: {
     backgroundColor: '#ef4444'
-  },
-  ratingHard: {
-    backgroundColor: '#f59e0b'
   },
   ratingGood: {
     backgroundColor: '#10b981'
