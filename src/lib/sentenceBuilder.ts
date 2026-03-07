@@ -240,7 +240,7 @@ export function getTodayPrompt(setId: string, cards: Card[]): DailyPrompt | null
   const prompts = getDailyPrompts();
   
   // Check if today's prompt already exists
-  let todayPrompt = prompts.find(p => p.date === today && p.setId === setId);
+  let todayPrompt: DailyPrompt | null | undefined = prompts.find(p => p.date === today && p.setId === setId);
   
   if (!todayPrompt) {
     // Generate new prompt for today
