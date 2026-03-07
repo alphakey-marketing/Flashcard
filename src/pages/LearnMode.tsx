@@ -178,18 +178,30 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const currentQuestion = questions[currentIndex];
 
   const playAudio = async (text: string, lang: string = 'ja-JP') => {
-    if (isPlayingAudio) return;
+    if (isPlayingAudio || !text) return;
     
     try {
       setIsPlayingAudio(true);
+      
+      // Cancel any ongoing speech first
+      window.speechSynthesis.cancel();
+      
+      // Small delay to ensure cancellation is complete
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = lang;
       utterance.rate = 0.85; // Slightly slower for learning
       
-      utterance.onend = () => setIsPlayingAudio(false);
-      utterance.onerror = () => setIsPlayingAudio(false);
+      utterance.onend = () => {
+        setIsPlayingAudio(false);
+      };
       
-      window.speechSynthesis.cancel(); // Cancel any ongoing speech
+      utterance.onerror = (error) => {
+        console.error('Speech synthesis error:', error);
+        setIsPlayingAudio(false);
+      };
+      
       window.speechSynthesis.speak(utterance);
     } catch (error) {
       console.error('Audio playback error:', error);
