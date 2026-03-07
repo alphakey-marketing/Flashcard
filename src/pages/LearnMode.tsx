@@ -177,6 +177,14 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     }
   };
 
+  // Determine if the Next button should be shown
+  const shouldShowNextButton = () => {
+    if (!showAnswer || currentQuestion.type === 'flashcard') return false;
+    if (currentQuestion.type === 'multiple-choice') return true;
+    if (currentQuestion.type === 'type-in' && isCorrect) return true;
+    return false; // Type-in wrong state has its own override buttons
+  };
+
   if (questions.length === 0) {
     return (
       <div style={styles.loading}>
@@ -440,8 +448,8 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
           </div>
         )}
 
-        {/* Next button (for non-flashcard types and correct type-in) */}
-        {showAnswer && currentQuestion.type !== 'flashcard' && isCorrect && (
+        {/* Next button */}
+        {shouldShowNextButton() && (
           <button
             style={styles.nextButton}
             onClick={handleNext}
