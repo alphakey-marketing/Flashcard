@@ -10,6 +10,9 @@ export interface Card {
   example?: string; // Optional example sentence in Japanese
 }
 
+// Compatibility alias for older code that imports 'Flashcard'
+export type Flashcard = Card;
+
 export interface FlashcardSet {
   id: string;
   title: string;
