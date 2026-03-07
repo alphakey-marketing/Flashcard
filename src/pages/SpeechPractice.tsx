@@ -20,7 +20,7 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
   
   const recorderRef = useRef(new AudioRecorder());
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const timerRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Get mastered cards using the correct status check
   const reviewData = getSetReviewData(set.id);
@@ -38,7 +38,7 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
     loadExistingRecording();
     
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current !== null) clearInterval(timerRef.current);
       if (audioRef.current) audioRef.current.pause();
       if (savedRecordingUrl) URL.revokeObjectURL(savedRecordingUrl);
     };
@@ -71,7 +71,7 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
       setIsRecording(true);
       setRecordingTime(0);
       
-      timerRef.current = window.setInterval(() => {
+      timerRef.current = setInterval(() => {
         setRecordingTime(prev => prev + 1);
       }, 1000);
     } catch (error) {
@@ -83,7 +83,7 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
 
   const stopRecording = async () => {
     try {
-      if (timerRef.current) {
+      if (timerRef.current !== null) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
