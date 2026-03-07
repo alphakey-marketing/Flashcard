@@ -235,6 +235,8 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     setIsCorrect(true);
     setCorrectCount(correctCount + 1);
     saveCardReview(set.id, currentQuestion.card.id, 'know_it');
+    // Now advance to next card
+    handleNext();
   };
 
   const handleTypeInConfirmWrong = () => {
