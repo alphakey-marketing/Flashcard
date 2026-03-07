@@ -293,7 +293,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     audioService.stop();
   }, [currentCard]);
 
-  // Auto-play audio logic
+  // Auto-play audio logic - ONLY for Japanese side
   useEffect(() => {
     if (!audioEnabled || !currentCard || !audioService.isSupported()) return;
 
@@ -304,9 +304,10 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
     // Recognition mode (JP -> EN): Front is Japanese -> play when NOT flipped
     // Production mode (EN -> JP): Back is Japanese -> play when FLIPPED
-    const shouldPlay = (!reverseMode && !isFlipped) || (reverseMode && isFlipped);
+    // IMPORTANT: Only auto-play when Japanese is visible
+    const isJapaneseSideVisible = (!reverseMode && !isFlipped) || (reverseMode && isFlipped);
 
-    if (shouldPlay) {
+    if (isJapaneseSideVisible) {
       const timeoutId = setTimeout(() => {
         playCardAudio();
       }, 300);
