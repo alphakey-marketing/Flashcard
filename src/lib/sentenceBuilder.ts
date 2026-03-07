@@ -4,17 +4,18 @@
 import { getSetReviewData } from './spacedRepetition';
 import { Card } from './storage';
 
-interface SentenceChallenge {
-  id: string;
+export interface SentenceChallenge {
+  challengeId: string;
   setId: string;
   words: Card[];
+  prompt: string;
   createdAt: number;
-  completedAt?: number;
-  userSentence?: string;
-  feedback?: string;
+  userAnswer?: string;
+  score?: number;
+  feedback?: string[];
 }
 
-interface DailyPrompt {
+export interface DailyPrompt {
   date: string; // YYYY-MM-DD format
   setId: string;
   words: Card[];
@@ -26,11 +27,12 @@ interface DailyPrompt {
 const SENTENCE_CHALLENGES_KEY = 'sentence-challenges';
 const DAILY_PROMPTS_KEY = 'daily-prompts';
 
-export function generateSentenceChallenge(setId: string, cards: Card[]): SentenceChallenge | null {
-  // Get mastered cards from review data
+// Generate a new sentence building challenge
+export function generateChallenge(setId: string, cards: Card[]): SentenceChallenge | null {
+  // Get mastered cards from review data using correct status check
   const reviewData = getSetReviewData(setId);
   const masteredCardIds = reviewData
-    .filter(r => r.easinessFactor >= 2.5 && r.interval >= 7) // Well-learned cards
+    .filter(r => r.status === 'mastered') // ✅ CORRECT CHECK
     .map(r => r.cardId);
 
   const masteredCards = cards.filter(c => masteredCardIds.includes(c.id));
@@ -45,75 +47,118 @@ export function generateSentenceChallenge(setId: string, cards: Card[]): Sentenc
     .sort(() => Math.random() - 0.5)
     .slice(0, wordCount);
 
+  // Generate creative prompts
+  const prompts = [
+    'これらの単語を使って文章を作ってください。',
+    '次の単語で文を書いてください。',
+    'これらの言葉を使って何か書いてください。',
+    '全ての単語を使った文章を作りましょう。'
+  ];
+
   const challenge: SentenceChallenge = {
-    id: `${setId}_${Date.now()}`,
+    challengeId: `${setId}_${Date.now()}`,
     setId,
     words: selectedWords,
+    prompt: prompts[Math.floor(Math.random() * prompts.length)],
     createdAt: Date.now()
   };
 
   return challenge;
 }
 
-export function saveSentenceChallenge(challenge: SentenceChallenge): void {
+// Submit answer for a challenge and get feedback
+export function submitChallengeAnswer(
+  challengeId: string,
+  setId: string,
+  userAnswer: string
+): { score: number; feedback: string[]; isCorrect: boolean } {
   try {
-    const challenges = getSentenceChallenges();
-    const existingIndex = challenges.findIndex(c => c.id === challenge.id);
-    
-    if (existingIndex >= 0) {
-      challenges[existingIndex] = challenge;
-    } else {
-      challenges.push(challenge);
+    // Get the challenge from history or use the current one
+    const history = getChallengeHistory(setId);
+    const existingChallenge = history.find(c => c.challengeId === challengeId);
+
+    if (!existingChallenge) {
+      return {
+        score: 0,
+        feedback: ['Challenge not found'],
+        isCorrect: false
+      };
     }
 
-    // Keep only last 50 challenges
-    const recentChallenges = challenges
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 50);
+    // Validate the sentence
+    const validation = validateSentence(userAnswer, existingChallenge.words);
 
-    localStorage.setItem(SENTENCE_CHALLENGES_KEY, JSON.stringify(recentChallenges));
+    // Save to history
+    const completedChallenge: SentenceChallenge = {
+      ...existingChallenge,
+      userAnswer,
+      score: validation.score,
+      feedback: [validation.feedback]
+    };
+
+    saveChallengeToHistory(completedChallenge);
+
+    return {
+      score: validation.score,
+      feedback: [validation.feedback],
+      isCorrect: validation.isValid
+    };
   } catch (error) {
-    console.error('Error saving sentence challenge:', error);
+    console.error('Error submitting challenge answer:', error);
+    return {
+      score: 0,
+      feedback: ['Error processing answer'],
+      isCorrect: false
+    };
   }
 }
 
-export function getSentenceChallenges(): SentenceChallenge[] {
+// Save challenge to history
+function saveChallengeToHistory(challenge: SentenceChallenge): void {
+  try {
+    const history = getChallengeHistory(challenge.setId, 100);
+    const existingIndex = history.findIndex(c => c.challengeId === challenge.challengeId);
+
+    if (existingIndex >= 0) {
+      history[existingIndex] = challenge;
+    } else {
+      history.unshift(challenge);
+    }
+
+    // Keep only last 50
+    const recentHistory = history.slice(0, 50);
+
+    const allHistory = getAllChallengeHistory();
+    allHistory[challenge.setId] = recentHistory;
+
+    localStorage.setItem(SENTENCE_CHALLENGES_KEY, JSON.stringify(allHistory));
+  } catch (error) {
+    console.error('Error saving challenge history:', error);
+  }
+}
+
+// Get all challenge history (all sets)
+function getAllChallengeHistory(): { [setId: string]: SentenceChallenge[] } {
   try {
     const data = localStorage.getItem(SENTENCE_CHALLENGES_KEY);
-    return data ? JSON.parse(data) : [];
+    return data ? JSON.parse(data) : {};
   } catch (error) {
-    console.error('Error loading sentence challenges:', error);
-    return [];
+    console.error('Error loading challenge history:', error);
+    return {};
   }
 }
 
-export function getActiveChallenges(setId: string): SentenceChallenge[] {
-  const challenges = getSentenceChallenges();
-  return challenges.filter(c => c.setId === setId && !c.completedAt);
-}
-
-export function getCompletedChallenges(setId: string): SentenceChallenge[] {
-  const challenges = getSentenceChallenges();
-  return challenges.filter(c => c.setId === setId && c.completedAt);
-}
-
-export function completeSentenceChallenge(
-  challengeId: string,
-  userSentence: string,
-  feedback: string
-): void {
+// Get challenge history for a specific set
+export function getChallengeHistory(setId: string, limit: number = 10): SentenceChallenge[] {
   try {
-    const challenges = getSentenceChallenges();
-    const challenge = challenges.find(c => c.id === challengeId);
-    
-    if (challenge) {
-      challenge.userSentence = userSentence;
-      challenge.feedback = feedback;
-      challenge.completedAt = Date.now();
-      saveSentenceChallenge(challenge);
-    }
+    const allHistory = getAllChallengeHistory();
+    const setHistory = allHistory[setId] || [];
+    return setHistory
+      .filter(c => c.userAnswer) // Only completed challenges
+      .slice(0, limit);
   } catch (error) {
-    console.error('Error completing sentence challenge:', error);
+    console.error('Error loading challenge history:', error);
+    return [];
   }
 }
 
@@ -160,6 +205,11 @@ export function validateSentence(sentence: string, requiredWords: Card[]): {
     score -= 20;
   }
 
+  if (trimmedSentence.length > 100) {
+    issues.push('文章が長すぎます。');
+    score -= 10;
+  }
+
   // Check for ending punctuation
   const lastChar = trimmedSentence[trimmedSentence.length - 1];
   if (lastChar !== '。' && lastChar !== '？' && lastChar !== '！' && lastChar !== '.' && lastChar !== '?' && lastChar !== '!') {
@@ -174,7 +224,7 @@ export function validateSentence(sentence: string, requiredWords: Card[]): {
   if (isValid) {
     feedback = '✅ Great sentence! All words used correctly.';
   } else {
-    feedback = '⚠️ ' + issues.join(' ');
+    feedback = issues.join(' ');
   }
 
   return {
@@ -204,10 +254,10 @@ export function getTodayPrompt(setId: string, cards: Card[]): DailyPrompt | null
 }
 
 function generateDailyPrompt(setId: string, cards: Card[], date: string): DailyPrompt | null {
-  // Get mastered cards
+  // Get mastered cards using correct status check
   const reviewData = getSetReviewData(setId);
   const masteredCardIds = reviewData
-    .filter(r => r.easinessFactor >= 2.5)
+    .filter(r => r.status === 'mastered') // ✅ CORRECT CHECK
     .map(r => r.cardId);
 
   const masteredCards = cards.filter(c => masteredCardIds.includes(c.id));
