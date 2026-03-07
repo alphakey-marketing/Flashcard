@@ -40,6 +40,8 @@ const Home: React.FC<HomeProps> = ({
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [editingLevelSetId, setEditingLevelSetId] = useState<string | null>(null);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedSetIds, setSelectedSetIds] = useState<Set<string>>(new Set());
   const [streak, setStreak] = useState({ current: 0, longest: 0, lastStudyDate: '' });
   const [todayStats, setTodayStats] = useState({ totalCards: 0, totalDuration: 0 });
   const [isSyncing, setIsSyncing] = useState(false);
@@ -252,6 +254,51 @@ const Home: React.FC<HomeProps> = ({
     }
   };
 
+  const toggleSelectionMode = () => {
+    setSelectionMode(!selectionMode);
+    if (selectionMode) {
+      setSelectedSetIds(new Set());
+    }
+  };
+
+  const toggleSetSelection = (setId: string) => {
+    setSelectedSetIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(setId)) {
+        newSet.delete(setId);
+      } else {
+        newSet.add(setId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleBulkMove = (targetLevel: JLPTLevel) => {
+    if (selectedSetIds.size === 0) {
+      alert('Please select at least one set to move');
+      return;
+    }
+
+    selectedSetIds.forEach(setId => {
+      const set = sets.find(s => s.id === setId);
+      if (set) {
+        const updatedSet = { ...set, jlptLevel: targetLevel };
+        saveSet(updatedSet);
+      }
+    });
+
+    loadSets();
+    setSelectedSetIds(new Set());
+    setSelectionMode(false);
+    
+    if (userId) {
+      checkUnsyncedDecks(userId);
+    }
+
+    const levelName = targetLevel || 'Custom';
+    alert(`✅ Successfully moved ${selectedSetIds.size} set(s) to ${levelName}!`);
+  };
+
   const hasUnsyncedDecks = unsyncedDeckIds.size > 0;
   
   const totalDueCards = sets.reduce((sum, set) => {
@@ -283,6 +330,7 @@ const Home: React.FC<HomeProps> = ({
     const isUnsynced = unsyncedDeckIds.has(set.id);
     const isExpanded = expandedCardId === set.id;
     const isEditingLevel = editingLevelSetId === set.id;
+    const isSelected = selectedSetIds.has(set.id);
     const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
     const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
     const hasDue = stats.dueCards > 0;
@@ -316,41 +364,56 @@ const Home: React.FC<HomeProps> = ({
         key={set.id}
         style={{
           ...styles.card,
-          border: isUnsynced ? '2px solid #ef4444' : '1px solid #e2e8f0'
+          border: isSelected ? '3px solid #3b82f6' : isUnsynced ? '2px solid #ef4444' : '1px solid #e2e8f0',
+          backgroundColor: isSelected ? '#eff6ff' : '#fff'
         }}
+        onClick={() => selectionMode && toggleSetSelection(set.id)}
       >
+        {selectionMode && (
+          <div style={styles.selectionCheckbox}>
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => toggleSetSelection(set.id)}
+              style={styles.checkbox}
+            />
+          </div>
+        )}
+        
         <div style={styles.cardHeader}>
           <h3 style={styles.cardTitle}>
             {isUnsynced && <span style={styles.unsyncedBadge}>☁️</span>}
             {set.title}
           </h3>
-          <div style={styles.cardActions}>
-            <button
-              style={styles.editLevelButton}
-              onClick={(e) => handleEditLevel(e, set.id)}
-              title="Change JLPT Level"
-            >
-              📝
-            </button>
-            <button
-              style={styles.exportButton}
-              onClick={(e) => handleExport(e, set)}
-              title="Export to CSV"
-            >
-              📤
-            </button>
-            <button
-              style={styles.deleteButton}
-              onClick={(e) => handleDelete(e, set.id)}
-              title="Delete set"
-            >
-              🗑️
-            </button>
-          </div>
+          {!selectionMode && (
+            <div style={styles.cardActions}>
+              <button
+                style={styles.editLevelButton}
+                onClick={(e) => handleEditLevel(e, set.id)}
+                title="Change JLPT Level"
+              >
+                📝
+              </button>
+              <button
+                style={styles.exportButton}
+                onClick={(e) => handleExport(e, set)}
+                title="Export to CSV"
+              >
+                📤
+              </button>
+              <button
+                style={styles.deleteButton}
+                onClick={(e) => handleDelete(e, set.id)}
+                title="Delete set"
+              >
+                🗑️
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Level Editor */}
-        {isEditingLevel && (
+        {isEditingLevel && !selectionMode && (
           <div style={styles.levelEditor}>
             <select
               value={set.jlptLevel || ''}
@@ -374,105 +437,109 @@ const Home: React.FC<HomeProps> = ({
           </div>
         )}
         
-        {set.description && (
-          <p style={styles.cardDescription}>{set.description}</p>
-        )}
+        {!selectionMode && (
+          <>
+            {set.description && (
+              <p style={styles.cardDescription}>{set.description}</p>
+            )}
 
-        {hasDue && (
-          <div style={styles.dueBadge}>
-            🎯 {stats.dueCards} {stats.dueCards === 1 ? 'card' : 'cards'} due
-          </div>
-        )}
+            {hasDue && (
+              <div style={styles.dueBadge}>
+                🎯 {stats.dueCards} {stats.dueCards === 1 ? 'card' : 'cards'} due
+              </div>
+            )}
 
-        {hasDailyPrompt && (
-          <div style={{
-            ...styles.dailyBadge,
-            backgroundColor: isDailyCompleted ? '#d1fae5' : '#fef3c7',
-            color: isDailyCompleted ? '#065f46' : '#92400e'
-          }}>
-            {isDailyCompleted ? '✅ Daily writing complete!' : '✍️ Daily writing available'}
-            {writingStreak > 0 && <span style={styles.dailyStreakIcon}> 🔥{writingStreak}</span>}
-          </div>
-        )}
-        
-        <div style={styles.cardFooter}>
-          <span style={styles.cardCount}>{set.cards.length} cards</span>
-          <span style={styles.progressText}>
-            {reviewedCards}/{set.cards.length} reviewed
-          </span>
-        </div>
-        
-        <div style={styles.progressBarContainer}>
-          <div style={{ ...styles.progressBar, width: `${progress}%` }} />
-        </div>
+            {hasDailyPrompt && (
+              <div style={{
+                ...styles.dailyBadge,
+                backgroundColor: isDailyCompleted ? '#d1fae5' : '#fef3c7',
+                color: isDailyCompleted ? '#065f46' : '#92400e'
+              }}>
+                {isDailyCompleted ? '✅ Daily writing complete!' : '✍️ Daily writing available'}
+                {writingStreak > 0 && <span style={styles.dailyStreakIcon}> 🔥{writingStreak}</span>}
+              </div>
+            )}
+            
+            <div style={styles.cardFooter}>
+              <span style={styles.cardCount}>{set.cards.length} cards</span>
+              <span style={styles.progressText}>
+                {reviewedCards}/{set.cards.length} reviewed
+              </span>
+            </div>
+            
+            <div style={styles.progressBarContainer}>
+              <div style={{ ...styles.progressBar, width: `${progress}%` }} />
+            </div>
 
-        {/* Primary Study Buttons */}
-        <div style={styles.studyButtons}>
-          <button
-            style={styles.learnButton}
-            onClick={() => onNavigateToLearn(set.id)}
-          >
-            🎯 Learn Mode
-          </button>
-          <button
-            style={styles.reviewButton}
-            onClick={() => onNavigateToSwipe(set.id)}
-          >
-            💭 Review
-          </button>
-        </div>
-
-        {/* Active Learning Section - Expandable */}
-        <div style={styles.activeLearningSection}>
-          <button
-            style={styles.expandButton}
-            onClick={() => toggleCardExpansion(set.id)}
-          >
-            <span style={styles.expandIcon}>🎤</span>
-            <span style={styles.expandText}>Active Practice</span>
-            <span style={styles.expandArrow}>{isExpanded ? '▲' : '▼'}</span>
-          </button>
-
-          {isExpanded && (
-            <div style={styles.activeButtons}>
+            {/* Primary Study Buttons */}
+            <div style={styles.studyButtons}>
               <button
-                style={styles.activeButton}
-                onClick={() => onNavigateToSentenceBuilder(set.id)}
+                style={styles.learnButton}
+                onClick={() => onNavigateToLearn(set.id)}
               >
-                <div style={styles.activeButtonIcon}>🏗️</div>
-                <div style={styles.activeButtonText}>
-                  <div style={styles.activeButtonTitle}>Sentence Builder</div>
-                  <div style={styles.activeButtonDesc}>Create sentences</div>
-                </div>
+                🎯 Learn Mode
               </button>
-
               <button
-                style={styles.activeButton}
-                onClick={() => onNavigateToSpeechPractice(set.id)}
+                style={styles.reviewButton}
+                onClick={() => onNavigateToSwipe(set.id)}
               >
-                <div style={styles.activeButtonIcon}>🎤</div>
-                <div style={styles.activeButtonText}>
-                  <div style={styles.activeButtonTitle}>Speech Practice</div>
-                  <div style={styles.activeButtonDesc}>Record & compare</div>
-                </div>
-              </button>
-
-              <button
-                style={styles.activeButton}
-                onClick={() => onNavigateToDailyWriting(set.id)}
-              >
-                <div style={styles.activeButtonIcon}>✍️</div>
-                <div style={styles.activeButtonText}>
-                  <div style={styles.activeButtonTitle}>Daily Writing</div>
-                  <div style={styles.activeButtonDesc}>
-                    {isDailyCompleted ? 'Complete! ✅' : 'Today\'s prompt'}
-                    {writingStreak > 0 && ` 🔥${writingStreak}`}
-                  </div>
-                </div>
+                💭 Review
               </button>
             </div>
-          )}
-        </div>
+
+            {/* Active Learning Section - Expandable */}
+            <div style={styles.activeLearningSection}>
+              <button
+                style={styles.expandButton}
+                onClick={() => toggleCardExpansion(set.id)}
+              >
+                <span style={styles.expandIcon}>🎤</span>
+                <span style={styles.expandText}>Active Practice</span>
+                <span style={styles.expandArrow}>{isExpanded ? '▲' : '▼'}</span>
+              </button>
+
+              {isExpanded && (
+                <div style={styles.activeButtons}>
+                  <button
+                    style={styles.activeButton}
+                    onClick={() => onNavigateToSentenceBuilder(set.id)}
+                  >
+                    <div style={styles.activeButtonIcon}>🏗️</div>
+                    <div style={styles.activeButtonText}>
+                      <div style={styles.activeButtonTitle}>Sentence Builder</div>
+                      <div style={styles.activeButtonDesc}>Create sentences</div>
+                    </div>
+                  </button>
+
+                  <button
+                    style={styles.activeButton}
+                    onClick={() => onNavigateToSpeechPractice(set.id)}
+                  >
+                    <div style={styles.activeButtonIcon}>🎤</div>
+                    <div style={styles.activeButtonText}>
+                      <div style={styles.activeButtonTitle}>Speech Practice</div>
+                      <div style={styles.activeButtonDesc}>Record & compare</div>
+                    </div>
+                  </button>
+
+                  <button
+                    style={styles.activeButton}
+                    onClick={() => onNavigateToDailyWriting(set.id)}
+                  >
+                    <div style={styles.activeButtonIcon}>✍️</div>
+                    <div style={styles.activeButtonText}>
+                      <div style={styles.activeButtonTitle}>Daily Writing</div>
+                      <div style={styles.activeButtonDesc}>
+                        {isDailyCompleted ? 'Complete! ✅' : 'Today\'s prompt'}
+                        {writingStreak > 0 && ` 🔥${writingStreak}`}
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     );
   };
@@ -535,6 +602,26 @@ const Home: React.FC<HomeProps> = ({
         </div>
       )}
 
+      {/* Selection Mode Toolbar */}
+      {selectionMode && (
+        <div style={styles.selectionToolbar}>
+          <div style={styles.selectionInfo}>
+            <span style={styles.selectionIcon}>✓</span>
+            <span style={styles.selectionText}>{selectedSetIds.size} set(s) selected</span>
+          </div>
+          <div style={styles.selectionActions}>
+            <span style={styles.moveLabel}>Move to:</span>
+            <button style={styles.moveButton} onClick={() => handleBulkMove('N5')}>N5</button>
+            <button style={styles.moveButton} onClick={() => handleBulkMove('N4')}>N4</button>
+            <button style={styles.moveButton} onClick={() => handleBulkMove('N3')}>N3</button>
+            <button style={styles.moveButton} onClick={() => handleBulkMove('N2')}>N2</button>
+            <button style={styles.moveButton} onClick={() => handleBulkMove('N1')}>N1</button>
+            <button style={styles.moveButton} onClick={() => handleBulkMove(undefined)}>Custom</button>
+            <button style={styles.cancelSelectionButton} onClick={toggleSelectionMode}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       {/* Unsynced Warning Banner */}
       {hasUnsyncedDecks && userId && (
         <div style={styles.warningBanner}>
@@ -566,6 +653,9 @@ const Home: React.FC<HomeProps> = ({
             </span>
             <span style={styles.statLabel}>Mastered</span>
           </div>
+          <button style={styles.bulkSelectButton} onClick={toggleSelectionMode}>
+            {selectionMode ? '❌ Cancel' : '☑️ Select Multiple'}
+          </button>
           <button style={styles.exportAllButton} onClick={handleExportAll}>
             💾 Backup All
           </button>
@@ -602,16 +692,18 @@ const Home: React.FC<HomeProps> = ({
               <div key={category} style={styles.categorySection}>
                 <div 
                   style={styles.categoryHeaderContainer}
-                  onClick={() => toggleCategoryCollapse(category)}
+                  onClick={() => !selectionMode && toggleCategoryCollapse(category)}
                 >
                   <h2 style={styles.categoryHeader}>
-                    <span style={styles.categoryToggle}>{isCollapsed ? '▶' : '▼'}</span>
+                    {!selectionMode && (
+                      <span style={styles.categoryToggle}>{isCollapsed ? '▶' : '▼'}</span>
+                    )}
                     <span>
                       {category === 'Custom' ? 'My Custom Sets' : `${category} Level Sets`}
                     </span>
                     <span style={styles.categoryBadge}>{groupedSets[category].length}</span>
                   </h2>
-                  {isCollapsed && (
+                  {isCollapsed && !selectionMode && (
                     <div style={styles.categoryPreview}>
                       <span style={styles.previewStat}>{categoryStats.totalCards} cards</span>
                       {categoryStats.dueCards > 0 && (
@@ -622,7 +714,7 @@ const Home: React.FC<HomeProps> = ({
                   )}
                 </div>
                 
-                {!isCollapsed && (
+                {(!isCollapsed || selectionMode) && (
                   <div style={styles.grid}>
                     {groupedSets[category].map(set => renderSetCard(set))}
                   </div>
@@ -676,6 +768,14 @@ const styles: { [key: string]: CSSProperties } = {
   dueTodayTitle: { margin: '0 0 4px 0', color: '#1e3a8a', fontSize: '18px', fontWeight: 700 },
   dueTodayDesc: { margin: 0, color: '#3b82f6', fontSize: '14px' },
   dueTodayButton: { backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '15px', fontWeight: 600, cursor: 'pointer', boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)' },
+  selectionToolbar: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#3b82f6', borderRadius: '12px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' },
+  selectionInfo: { display: 'flex', alignItems: 'center', gap: '12px' },
+  selectionIcon: { fontSize: '24px', color: 'white' },
+  selectionText: { fontSize: '16px', fontWeight: 600, color: 'white' },
+  selectionActions: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' },
+  moveLabel: { fontSize: '14px', fontWeight: 600, color: 'white', marginRight: '4px' },
+  moveButton: { backgroundColor: 'white', color: '#3b82f6', border: 'none', borderRadius: '8px', padding: '8px 16px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
+  cancelSelectionButton: { backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 16px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', marginLeft: '8px' },
   warningBanner: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#fee2e2', borderRadius: '12px', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '12px', border: '2px solid #ef4444' },
   warningIcon: { fontSize: '24px' },
   warningText: { fontSize: '14px', fontWeight: 600, color: '#7f1d1d', flex: 1 },
@@ -684,7 +784,8 @@ const styles: { [key: string]: CSSProperties } = {
   stat: { display: 'flex', flexDirection: 'column', gap: '4px' },
   statValue: { fontSize: '24px', fontWeight: 700, color: '#3b82f6' },
   statLabel: { fontSize: '12px', color: '#64748b', fontWeight: 500 },
-  exportAllButton: { marginLeft: 'auto', padding: '8px 16px', backgroundColor: '#f1f5f9', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', color: '#475569' },
+  bulkSelectButton: { marginLeft: 'auto', padding: '8px 16px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
+  exportAllButton: { padding: '8px 16px', backgroundColor: '#f1f5f9', border: 'none', borderRadius: '8px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', color: '#475569' },
   emptyState: { maxWidth: '800px', margin: '80px auto', textAlign: 'center' },
   emptyIcon: { fontSize: '64px', marginBottom: '16px' },
   emptyTitle: { fontSize: '24px', fontWeight: 600, color: '#0f172a', marginBottom: '8px' },
@@ -702,7 +803,9 @@ const styles: { [key: string]: CSSProperties } = {
   previewStat: { fontWeight: 500 },
   previewDue: { backgroundColor: '#fef2f2', color: '#dc2626', padding: '4px 8px', borderRadius: '8px', fontSize: '12px', fontWeight: 600 },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' },
-  card: { backgroundColor: '#fff', borderRadius: '16px', padding: '20px', transition: 'all 0.3s', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column' },
+  card: { backgroundColor: '#fff', borderRadius: '16px', padding: '20px', transition: 'all 0.3s', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', position: 'relative', cursor: 'default' },
+  selectionCheckbox: { position: 'absolute', top: '12px', left: '12px', zIndex: 5 },
+  checkbox: { width: '20px', height: '20px', cursor: 'pointer' },
   cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' },
   cardTitle: { fontSize: '18px', fontWeight: 600, color: '#0f172a', margin: 0, flex: 1, display: 'flex', alignItems: 'center', gap: '8px' },
   unsyncedBadge: { fontSize: '16px', opacity: 0.7 },
