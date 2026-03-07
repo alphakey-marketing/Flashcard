@@ -4,16 +4,14 @@ import Create from './pages/Create';
 import Swipe from './pages/Swipe';
 import Stats from './pages/Stats';
 import Auth from './pages/Auth';
-import LearnSession from './components/LearnSession';
-import LearnComplete from './components/LearnComplete';
+import LearnMode from './pages/LearnMode';
 import ErrorBoundary from './components/ErrorBoundary';
 import { supabase } from './lib/supabaseClient';
 import { syncService } from './lib/syncService';
 import { setUserId, getAllSets, overrideStorageWithCloud, getSet } from './lib/storage';
 import { setReviewUserId, overrideReviewsWithCloud } from './lib/spacedRepetition';
-import { LearnSessionResult } from './types/learnSession';
 
-type Page = 'home' | 'create' | 'swipe' | 'stats' | 'learn' | 'learn-complete';
+type Page = 'home' | 'create' | 'swipe' | 'stats' | 'learn';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -21,7 +19,6 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
-  const [learnResult, setLearnResult] = useState<LearnSessionResult | null>(null);
 
   useEffect(() => {
     // Check active session
@@ -104,15 +101,6 @@ const App: React.FC = () => {
     setCurrentPage('learn');
   };
 
-  const handleLearnComplete = (result: LearnSessionResult) => {
-    setLearnResult(result);
-    setCurrentPage('learn-complete');
-  };
-
-  const handleLearnContinue = () => {
-    setCurrentPage('learn');
-  };
-
   if (isLoadingSession) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#f8fafc' }}>
@@ -153,17 +141,9 @@ const App: React.FC = () => {
           <Swipe setId={selectedSetId} onNavigateToHome={navigateToHome} />
         )}
         {currentPage === 'learn' && selectedSetId && (
-          <LearnSession
+          <LearnMode
             set={getSet(selectedSetId)!}
-            onComplete={handleLearnComplete}
-            onExit={navigateToHome}
-          />
-        )}
-        {currentPage === 'learn-complete' && selectedSetId && learnResult && (
-          <LearnComplete
-            result={learnResult}
-            deckTitle={getSet(selectedSetId)!.title}
-            onContinue={handleLearnContinue}
+            onComplete={navigateToHome}
             onExit={navigateToHome}
           />
         )}
