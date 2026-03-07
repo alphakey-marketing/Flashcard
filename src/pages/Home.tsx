@@ -6,17 +6,20 @@ import { getSetStudyStats } from '../lib/spacedRepetition';
 import { syncService } from '../lib/syncService';
 import { supabase } from '../lib/supabaseClient';
 import ImportModal from '../components/ImportModal';
+import LearningTips from '../components/LearningTips';
 
 interface HomeProps {
   onNavigateToCreate: () => void;
   onNavigateToSwipe: (setId: string) => void;
+  onNavigateToLearn: (setId: string) => void;
   onNavigateToStats: () => void;
   onLogout: () => void;
 }
 
-const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNavigateToStats, onLogout }) => {
+const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNavigateToLearn, onNavigateToStats, onLogout }) => {
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showLearningTips, setShowLearningTips] = useState(false);
   const [streak, setStreak] = useState({ current: 0, longest: 0, lastStudyDate: '' });
   const [todayStats, setTodayStats] = useState({ totalCards: 0, totalDuration: 0 });
   const [isSyncing, setIsSyncing] = useState(false);
@@ -88,7 +91,6 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
       console.log(`🔍 Found ${missingLocalDecks.length} decks to sync:`, missingLocalDecks.map(d => d.title));
       
       if (missingLocalDecks.length > 0) {
-        // Push all missing decks
         const results = await Promise.allSettled(
           missingLocalDecks.map(deck => syncService.pushDeck(deck, userId))
         );
@@ -105,7 +107,6 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
           alert(`✅ Successfully synced ${missingLocalDecks.length} deck(s) to cloud!`);
         }
         
-        // Immediately clear the synced deck IDs
         const syncedDeckIds = new Set(
           missingLocalDecks
             .filter((_, index) => results[index].status === 'fulfilled')
@@ -119,7 +120,6 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
           return newUnsynced;
         });
         
-        // Wait then verify with cloud
         setTimeout(async () => {
           console.log('🔍 Running verification check...');
           await checkUnsyncedDecks(userId);
@@ -130,7 +130,6 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
     } catch (err: any) {
       console.error('Sync failed:', err);
       alert(`❌ Sync failed: ${err.message || 'Unknown error'}\n\nCheck browser console (F12) for details.`);
-      // Recheck in case of failure
       await checkUnsyncedDecks(userId);
     } finally {
       setIsSyncing(false);
@@ -205,6 +204,15 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
               {isSyncing ? '🔄 Syncing...' : hasUnsyncedDecks ? `⚠️ Sync (${unsyncedDeckIds.size})` : '✅ Synced'}
             </button>
           )}
+          <button
+            style={styles.tipsButton}
+            onClick={() => setShowLearningTips(true)}
+            onMouseEnter={(e) => (e.currentTarget.style.transform = 'scale(1.05)')}
+            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+            title="View Learning Tips"
+          >
+            🎯 Tips
+          </button>
           <button
             style={styles.logoutButton}
             onClick={onLogout}
@@ -337,15 +345,6 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
                   ...styles.card,
                   border: isUnsynced ? '2px solid #ef4444' : '1px solid #e2e8f0'
                 }}
-                onClick={() => onNavigateToSwipe(set.id)}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-4px)';
-                  e.currentTarget.style.boxShadow = '0 8px 16px rgba(0,0,0,0.1)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.05)';
-                }}
               >
                 <div style={styles.cardHeader}>
                   <h3 style={styles.cardTitle}>
@@ -399,6 +398,26 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
                     }}
                   />
                 </div>
+
+                {/* Study buttons */}
+                <div style={styles.studyButtons}>
+                  <button
+                    style={styles.learnButton}
+                    onClick={() => onNavigateToLearn(set.id)}
+                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                  >
+                    🎯 Learn Mode
+                  </button>
+                  <button
+                    style={styles.reviewButton}
+                    onClick={() => onNavigateToSwipe(set.id)}
+                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                  >
+                    💭 Review
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -421,6 +440,10 @@ const Home: React.FC<HomeProps> = ({ onNavigateToCreate, onNavigateToSwipe, onNa
             }
           }}
         />
+      )}
+
+      {showLearningTips && (
+        <LearningTips onClose={() => setShowLearningTips(false)} />
       )}
     </div>
   );
@@ -461,6 +484,17 @@ const styles: { [key: string]: CSSProperties } = {
   syncButton: {
     color: 'white',
     border: 'none',
+    borderRadius: '12px',
+    padding: '12px 20px',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'transform 0.2s'
+  },
+  tipsButton: {
+    backgroundColor: '#fff',
+    color: '#f59e0b',
+    border: '2px solid #f59e0b',
     borderRadius: '12px',
     padding: '12px 20px',
     fontSize: '14px',
@@ -671,7 +705,6 @@ const styles: { [key: string]: CSSProperties } = {
     backgroundColor: '#fff',
     borderRadius: '16px',
     padding: '20px',
-    cursor: 'pointer',
     transition: 'all 0.3s',
     boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
     display: 'flex',
@@ -757,12 +790,41 @@ const styles: { [key: string]: CSSProperties } = {
     height: '6px',
     backgroundColor: '#e2e8f0',
     borderRadius: '3px',
-    overflow: 'hidden'
+    overflow: 'hidden',
+    marginBottom: '16px'
   },
   progressBar: {
     height: '100%',
     backgroundColor: '#22c55e',
     transition: 'width 0.3s'
+  },
+  studyButtons: {
+    display: 'flex',
+    gap: '8px'
+  },
+  learnButton: {
+    flex: 1,
+    padding: '12px 16px',
+    fontSize: '14px',
+    fontWeight: 600,
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'opacity 0.2s'
+  },
+  reviewButton: {
+    flex: 1,
+    padding: '12px 16px',
+    fontSize: '14px',
+    fontWeight: 600,
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'opacity 0.2s'
   }
 };
 
