@@ -113,6 +113,16 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     };
   }, [saveCurrentSession]);
 
+  // Fisher-Yates shuffle algorithm
+  const shuffleArray = <T,>(array: T[]): T[] => {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  };
+
   // Memoized queue loading logic to prevent recreating function
   const loadQueue = useCallback((flashcardSet: FlashcardSet, mode: 'due' | 'all') => {
     const reviewedData = getSetReviewData(setId);
@@ -129,20 +139,25 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     
     if (mode === 'due') {
       // Show learning/reviewing cards (not mastered yet) + due mastered cards
-      queueCards = flashcardSet.cards.filter(card => priorityCardIds.has(card.id));
+      const dueCards = flashcardSet.cards.filter(card => priorityCardIds.has(card.id));
       
       // If no learning/due cards, check if we have any new cards (never studied)
-      if (queueCards.length === 0) {
+      if (dueCards.length === 0) {
         const reviewedIds = new Set(reviewedData.map(d => d.cardId));
         const newCards = flashcardSet.cards.filter(card => !reviewedIds.has(card.id));
         
         if (newCards.length > 0) {
-          // Start with first 10 new cards
-          queueCards = newCards.slice(0, 10);
+          // Start with first 10 new cards, randomized
+          queueCards = shuffleArray(newCards.slice(0, 10));
+        } else {
+          queueCards = [];
         }
+      } else {
+        // Randomize due cards
+        queueCards = shuffleArray(dueCards);
       }
     } else {
-      // All cards, but learning/due cards first - optimized single pass
+      // All cards: priority cards first (randomized), then other cards (randomized)
       const priorityCards: Card[] = [];
       const otherCards: Card[] = [];
       
@@ -154,7 +169,11 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         }
       }
       
-      queueCards = [...priorityCards, ...otherCards];
+      // Randomize each group separately, then combine
+      queueCards = [
+        ...shuffleArray(priorityCards),
+        ...shuffleArray(otherCards)
+      ];
     }
 
     setActiveQueue(queueCards);
