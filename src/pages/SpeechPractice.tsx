@@ -20,7 +20,7 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
   
   const recorderRef = useRef(new AudioRecorder());
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<number | null>(null);
 
   // Get mastered cards using the correct status check
   const reviewData = getSetReviewData(set.id);
@@ -38,7 +38,7 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
     loadExistingRecording();
     
     return () => {
-      if (timerRef.current !== null) clearInterval(timerRef.current);
+      if (timerRef.current !== null) window.clearInterval(timerRef.current);
       if (audioRef.current) audioRef.current.pause();
       if (savedRecordingUrl) URL.revokeObjectURL(savedRecordingUrl);
     };
@@ -71,7 +71,7 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
       setIsRecording(true);
       setRecordingTime(0);
       
-      timerRef.current = setInterval(() => {
+      timerRef.current = window.setInterval(() => {
         setRecordingTime(prev => prev + 1);
       }, 1000);
     } catch (error) {
@@ -84,7 +84,7 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
   const stopRecording = async () => {
     try {
       if (timerRef.current !== null) {
-        clearInterval(timerRef.current);
+        window.clearInterval(timerRef.current);
         timerRef.current = null;
       }
 
@@ -122,7 +122,9 @@ const SpeechPractice: React.FC<SpeechPracticeProps> = ({ set, onExit }) => {
     setPlaybackType('tts');
     
     const text = currentCard.front.split('\n')[0];
-    audioService.speak(text, 'ja-JP');
+    // Removed 'ja-JP' which was causing the string-to-number type error 
+    // since audioService.speak expects (text: string, rate: number)
+    audioService.speak(text); 
     
     setTimeout(() => {
       setIsPlaying(false);
