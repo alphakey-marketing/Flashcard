@@ -2,7 +2,7 @@ import React, { useState, useEffect, CSSProperties } from 'react';
 import { getAllSets, deleteSet, FlashcardSet } from '../lib/storage';
 import { exportToCSV } from '../lib/csvParser';
 import { getStreak, getTodayStats } from '../lib/studyStats';
-import { getSetStudyStats } from '../lib/spacedRepetition';
+import { getSetStudyStats, getSetReviewData } from '../lib/spacedRepetition';
 import { syncService } from '../lib/syncService';
 import { supabase } from '../lib/supabaseClient';
 import { getTodayPrompt, getPromptStreak } from '../lib/sentenceBuilder';
@@ -357,11 +357,33 @@ const Home: React.FC<HomeProps> = ({
             const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
             const hasDue = stats.dueCards > 0;
             
-            // Check if daily writing is available
-            const todayPrompt = getTodayPrompt(set.id, set.cards);
-            const writingStreak = getPromptStreak(set.id);
-            const hasDailyPrompt = todayPrompt !== null;
-            const isDailyCompleted = todayPrompt?.completedAt !== undefined;
+            // Check if daily writing is available - with error handling
+            let todayPrompt = null;
+            let writingStreak = 0;
+            let hasDailyPrompt = false;
+            let isDailyCompleted = false;
+
+            try {
+              // Get mastered cards for this set
+              const reviewData = getSetReviewData(set.id);
+              const masteredCardIds = new Set(
+                reviewData
+                  .filter(r => r.status === 'mastered')
+                  .map(r => r.cardId)
+              );
+              const masteredCards = set.cards.filter(card => masteredCardIds.has(card.id));
+              
+              // Only check prompt if there are enough mastered cards
+              if (masteredCards.length >= 3) {
+                todayPrompt = getTodayPrompt(set.id, masteredCards);
+                writingStreak = getPromptStreak(set.id);
+                hasDailyPrompt = todayPrompt !== null;
+                isDailyCompleted = todayPrompt?.completedAt !== undefined;
+              }
+            } catch (error) {
+              console.error('Error checking daily prompt:', error);
+              // Silently fail - don't crash the UI
+            }
             
             return (
               <div
