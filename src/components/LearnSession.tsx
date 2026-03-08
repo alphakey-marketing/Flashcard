@@ -143,17 +143,52 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
     recordAnswer(isCorrect);
   };
 
+  const normalizeAnswer = (text: string): string => {
+    return text.toLowerCase().trim().replace(/[.,!?;:]/g, '');
+  };
+
+  const isTypeInCorrect = (userAnswer: string, correctAnswer: string): boolean => {
+    const normalizedUser = normalizeAnswer(userAnswer);
+    const normalizedCorrect = normalizeAnswer(correctAnswer);
+
+    if (!normalizedUser) return false;
+
+    // 1) Exact match
+    if (normalizedUser === normalizedCorrect) return true;
+
+    // 2) Split correct answer into parts by common separators: "rich, abundant" => ["rich", "abundant"]
+    const parts = correctAnswer
+      .split(/[,/、／;]/)
+      .map(p => normalizeAnswer(p))
+      .filter(Boolean);
+
+    // Check if user answer matches one full part
+    if (parts.includes(normalizedUser)) return true;
+
+    // 3) Word-level match: check if user's answer contains at least one meaningful word from correct answer
+    const stopWords = new Set(['to', 'a', 'an', 'the', 'of', 'and', 'or', 'in', 'on', 'at', 'for', 'with']);
+    
+    // Get all meaningful words from all parts
+    const correctWords = parts
+      .flatMap(p => p.split(/\s+/))
+      .map(w => w.trim())
+      .filter(w => w.length >= 2 && !stopWords.has(w));
+
+    // Check if user input contains any of these words as whole words
+    return correctWords.some(word => {
+      const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const wordBoundaryRegex = new RegExp(`\\b${escapedWord}\\b`, 'i');
+      return wordBoundaryRegex.test(normalizedUser);
+    });
+  };
+
   const handleTypeInSubmit = () => {
     if (!userInput.trim()) return;
 
     const currentQuestion = questions[currentIndex];
-    const isCorrect = normalizeAnswer(userInput) === normalizeAnswer(currentQuestion.correctAnswer);
+    const isCorrect = isTypeInCorrect(userInput, currentQuestion.correctAnswer);
     
     recordAnswer(isCorrect);
-  };
-
-  const normalizeAnswer = (text: string): string => {
-    return text.toLowerCase().trim().replace(/[.,!?;:]/g, '');
   };
 
   const handleFlashcardAnswer = (quality: 'again' | 'hard' | 'good' | 'easy') => {
