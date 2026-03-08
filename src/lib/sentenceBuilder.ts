@@ -26,6 +26,7 @@ export interface DailyPrompt {
 
 const SENTENCE_CHALLENGES_KEY = 'sentence-challenges';
 const DAILY_PROMPTS_KEY = 'daily-prompts';
+const CURRENT_CHALLENGE_KEY = 'current-challenge';
 
 // Generate a new sentence building challenge
 export function generateChallenge(setId: string, cards: Card[]): SentenceChallenge | null {
@@ -63,31 +64,76 @@ export function generateChallenge(setId: string, cards: Card[]): SentenceChallen
     createdAt: Date.now()
   };
 
-  // Save the challenge immediately so it can be found when submitted
-  saveCurrentChallenge(challenge);
+  // Save as current challenge and to history
+  saveCurrentChallenge(setId, challenge);
+  saveToHistory(challenge);
 
   return challenge;
 }
 
-// Save the current active challenge (not yet completed)
-function saveCurrentChallenge(challenge: SentenceChallenge): void {
+// Save the current active challenge for a set
+function saveCurrentChallenge(setId: string, challenge: SentenceChallenge): void {
+  try {
+    const currentChallenges = getAllCurrentChallenges();
+    currentChallenges[setId] = challenge;
+    localStorage.setItem(CURRENT_CHALLENGE_KEY, JSON.stringify(currentChallenges));
+  } catch (error) {
+    console.error('Error saving current challenge:', error);
+  }
+}
+
+// Get all current challenges
+function getAllCurrentChallenges(): { [setId: string]: SentenceChallenge } {
+  try {
+    const data = localStorage.getItem(CURRENT_CHALLENGE_KEY);
+    return data ? JSON.parse(data) : {};
+  } catch (error) {
+    console.error('Error loading current challenges:', error);
+    return {};
+  }
+}
+
+// Get current active challenge for a set
+export function getCurrentChallenge(setId: string): SentenceChallenge | null {
+  try {
+    const currentChallenges = getAllCurrentChallenges();
+    return currentChallenges[setId] || null;
+  } catch (error) {
+    console.error('Error getting current challenge:', error);
+    return null;
+  }
+}
+
+// Clear current challenge for a set
+export function clearCurrentChallenge(setId: string): void {
+  try {
+    const currentChallenges = getAllCurrentChallenges();
+    delete currentChallenges[setId];
+    localStorage.setItem(CURRENT_CHALLENGE_KEY, JSON.stringify(currentChallenges));
+  } catch (error) {
+    console.error('Error clearing current challenge:', error);
+  }
+}
+
+// Save challenge to history (without limit)
+function saveToHistory(challenge: SentenceChallenge): void {
   try {
     const allHistory = getAllChallengeHistory();
     const setHistory = allHistory[challenge.setId] || [];
     
-    // Remove any previous incomplete challenges for this set
-    const filteredHistory = setHistory.filter(c => c.userAnswer !== undefined);
+    // Check if challenge already exists
+    const existingIndex = setHistory.findIndex(c => c.challengeId === challenge.challengeId);
     
-    // Add the new challenge at the beginning
-    filteredHistory.unshift(challenge);
+    if (existingIndex >= 0) {
+      setHistory[existingIndex] = challenge;
+    } else {
+      setHistory.unshift(challenge);
+    }
     
-    // Keep only last 50
-    const recentHistory = filteredHistory.slice(0, 50);
-    
-    allHistory[challenge.setId] = recentHistory;
+    allHistory[challenge.setId] = setHistory;
     localStorage.setItem(SENTENCE_CHALLENGES_KEY, JSON.stringify(allHistory));
   } catch (error) {
-    console.error('Error saving current challenge:', error);
+    console.error('Error saving to history:', error);
   }
 }
 
@@ -124,7 +170,10 @@ export function submitChallengeAnswer(
       feedback: [validation.feedback]
     };
 
-    saveChallengeToHistory(completedChallenge);
+    saveToHistory(completedChallenge);
+    
+    // Clear current challenge since it's now completed
+    clearCurrentChallenge(setId);
 
     return {
       score: validation.score,
@@ -141,29 +190,6 @@ export function submitChallengeAnswer(
   }
 }
 
-// Save challenge to history (update with answer)
-function saveChallengeToHistory(challenge: SentenceChallenge): void {
-  try {
-    const allHistory = getAllChallengeHistory();
-    const setHistory = allHistory[challenge.setId] || [];
-    const existingIndex = setHistory.findIndex(c => c.challengeId === challenge.challengeId);
-
-    if (existingIndex >= 0) {
-      setHistory[existingIndex] = challenge;
-    } else {
-      setHistory.unshift(challenge);
-    }
-
-    // Keep only last 50
-    const recentHistory = setHistory.slice(0, 50);
-
-    allHistory[challenge.setId] = recentHistory;
-    localStorage.setItem(SENTENCE_CHALLENGES_KEY, JSON.stringify(allHistory));
-  } catch (error) {
-    console.error('Error saving challenge history:', error);
-  }
-}
-
 // Get all challenge history (all sets)
 function getAllChallengeHistory(): { [setId: string]: SentenceChallenge[] } {
   try {
@@ -175,17 +201,41 @@ function getAllChallengeHistory(): { [setId: string]: SentenceChallenge[] } {
   }
 }
 
-// Get challenge history for a specific set (only completed ones)
-export function getChallengeHistory(setId: string, limit: number = 10): SentenceChallenge[] {
+// Get challenge history for a specific set (all completed ones, no limit)
+export function getChallengeHistory(setId: string, limit?: number): SentenceChallenge[] {
   try {
     const allHistory = getAllChallengeHistory();
     const setHistory = allHistory[setId] || [];
-    return setHistory
-      .filter(c => c.userAnswer) // Only completed challenges
-      .slice(0, limit);
+    const completed = setHistory.filter(c => c.userAnswer); // Only completed challenges
+    
+    if (limit) {
+      return completed.slice(0, limit);
+    }
+    return completed;
   } catch (error) {
     console.error('Error loading challenge history:', error);
     return [];
+  }
+}
+
+// Delete a specific challenge from history
+export function deleteChallenge(setId: string, challengeId: string): boolean {
+  try {
+    const allHistory = getAllChallengeHistory();
+    const setHistory = allHistory[setId] || [];
+    
+    const filteredHistory = setHistory.filter(c => c.challengeId !== challengeId);
+    
+    if (filteredHistory.length === setHistory.length) {
+      return false; // Challenge not found
+    }
+    
+    allHistory[setId] = filteredHistory;
+    localStorage.setItem(SENTENCE_CHALLENGES_KEY, JSON.stringify(allHistory));
+    return true;
+  } catch (error) {
+    console.error('Error deleting challenge:', error);
+    return false;
   }
 }
 
@@ -329,14 +379,8 @@ export function saveDailyPrompt(prompt: DailyPrompt): void {
       prompts.push(prompt);
     }
 
-    // Keep only last 90 days
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - 90);
-    const cutoffString = cutoffDate.toISOString().split('T')[0];
-    
-    const recentPrompts = prompts.filter(p => p.date >= cutoffString);
-
-    localStorage.setItem(DAILY_PROMPTS_KEY, JSON.stringify(recentPrompts));
+    // Keep all prompts (no limit)
+    localStorage.setItem(DAILY_PROMPTS_KEY, JSON.stringify(prompts));
   } catch (error) {
     console.error('Error saving daily prompt:', error);
   }
@@ -367,12 +411,34 @@ export function completeDailyPrompt(date: string, setId: string, userEntry: stri
   }
 }
 
-export function getPromptHistory(setId: string, limit: number = 30): DailyPrompt[] {
+export function getPromptHistory(setId: string, limit?: number): DailyPrompt[] {
   const prompts = getDailyPrompts();
-  return prompts
+  const filtered = prompts
     .filter(p => p.setId === setId && p.completedAt)
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, limit);
+    .sort((a, b) => b.date.localeCompare(a.date));
+  
+  if (limit) {
+    return filtered.slice(0, limit);
+  }
+  return filtered;
+}
+
+// Delete a specific daily prompt
+export function deleteDailyPrompt(setId: string, date: string): boolean {
+  try {
+    const prompts = getDailyPrompts();
+    const filteredPrompts = prompts.filter(p => !(p.setId === setId && p.date === date));
+    
+    if (filteredPrompts.length === prompts.length) {
+      return false; // Prompt not found
+    }
+    
+    localStorage.setItem(DAILY_PROMPTS_KEY, JSON.stringify(filteredPrompts));
+    return true;
+  } catch (error) {
+    console.error('Error deleting daily prompt:', error);
+    return false;
+  }
 }
 
 export function getPromptStreak(setId: string): number {
