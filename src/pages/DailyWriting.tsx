@@ -14,6 +14,31 @@ interface DailyWritingProps {
   onExit: () => void;
 }
 
+// Helper to compute differences between original and corrected text
+function computeDiff(original: string, corrected: string): Array<{text: string; isError: boolean}> {
+  if (original === corrected) return [{text: original, isError: false}];
+  
+  // Simple word-level diff
+  const originalWords = original.split(/\s+/);
+  const correctedWords = corrected.split(/\s+/);
+  const result: Array<{text: string; isError: boolean}> = [];
+  
+  const maxLen = Math.max(originalWords.length, correctedWords.length);
+  for (let i = 0; i < maxLen; i++) {
+    const orig = originalWords[i] || '';
+    const corr = correctedWords[i] || '';
+    
+    if (orig === corr) {
+      result.push({text: orig + ' ', isError: false});
+    } else {
+      if (orig) result.push({text: orig + ' ', isError: true});
+      if (corr && corr !== orig) result.push({text: '[' + corr + '] ', isError: false});
+    }
+  }
+  
+  return result;
+}
+
 const DailyWriting: React.FC<DailyWritingProps> = ({ set, onExit }) => {
   const [todayPrompt, setTodayPrompt] = useState<DailyPrompt | null>(null);
   const [userEntry, setUserEntry] = useState('');
@@ -21,6 +46,11 @@ const DailyWriting: React.FC<DailyWritingProps> = ({ set, onExit }) => {
   const [history, setHistory] = useState<DailyPrompt[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [streak, setStreak] = useState(0);
+  
+  // Correction workflow states
+  const [showCorrectionMode, setShowCorrectionMode] = useState(false);
+  const [correctedEntry, setCorrectedEntry] = useState('');
+  const [diff, setDiff] = useState<Array<{text: string; isError: boolean}>>([]);
 
   // Get mastered cards using the correct status check
   const reviewData = getSetReviewData(set.id);
@@ -73,6 +103,23 @@ const DailyWriting: React.FC<DailyWritingProps> = ({ set, onExit }) => {
 
   const handleEdit = () => {
     setIsSubmitted(false);
+    setShowCorrectionMode(false);
+    setDiff([]);
+  };
+  
+  const handleEnterCorrectionMode = () => {
+    setCorrectedEntry(userEntry);
+    setShowCorrectionMode(true);
+  };
+  
+  const handleSubmitCorrection = () => {
+    const diffResult = computeDiff(userEntry, correctedEntry);
+    setDiff(diffResult);
+  };
+  
+  const handleResetCorrection = () => {
+    setCorrectedEntry(userEntry);
+    setDiff([]);
   };
 
   if (masteredCards.length < 3) {
@@ -239,6 +286,59 @@ const DailyWriting: React.FC<DailyWritingProps> = ({ set, onExit }) => {
               </div>
             )}
           </div>
+
+          {/* Self-correction workflow - only show after submission */}
+          {isSubmitted && (
+            <div style={styles.correctionContainer}>
+              {!showCorrectionMode ? (
+                <button style={styles.correctionButton} onClick={handleEnterCorrectionMode}>
+                  ✏️ Self-Correct My Entry
+                </button>
+              ) : (
+                <div style={styles.correctionSection}>
+                  <label style={styles.correctionLabel}>Corrected Version:</label>
+                  <textarea
+                    style={styles.correctionTextarea}
+                    value={correctedEntry}
+                    onChange={(e) => setCorrectedEntry(e.target.value)}
+                    placeholder="Edit your entry to fix grammar/vocabulary..."
+                    rows={8}
+                  />
+                  <div style={styles.correctionButtons}>
+                    <button style={styles.submitCorrectionButton} onClick={handleSubmitCorrection}>
+                      Show Differences
+                    </button>
+                    <button style={styles.resetCorrectionButton} onClick={handleResetCorrection}>
+                      Reset
+                    </button>
+                  </div>
+                  
+                  {diff.length > 0 && (
+                    <div style={styles.diffSection}>
+                      <div style={styles.diffLabel}>Changes highlighted:</div>
+                      <div style={styles.diffText}>
+                        {diff.map((part, idx) => (
+                          <span
+                            key={idx}
+                            style={{
+                              ...styles.diffPart,
+                              ...(part.isError ? styles.diffError : {})
+                            }}
+                          >
+                            {part.text}
+                          </span>
+                        ))}
+                      </div>
+                      <div style={styles.diffLegend}>
+                        <span style={styles.diffLegendError}>Red = Original error</span>
+                        <span style={styles.diffLegendCorrect}>[Bracket] = Correction</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={styles.encouragement}>
             <div style={styles.encouragementIcon}>💡</div>
@@ -459,6 +559,111 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 600,
     cursor: 'pointer',
     color: '#475569'
+  },
+  correctionContainer: {
+    marginBottom: '24px'
+  },
+  correctionButton: {
+    width: '100%',
+    backgroundColor: '#8b5cf6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '12px',
+    padding: '16px',
+    fontSize: '16px',
+    fontWeight: 600,
+    cursor: 'pointer'
+  },
+  correctionSection: {
+    backgroundColor: '#f8fafc',
+    border: '2px solid #e2e8f0',
+    borderRadius: '12px',
+    padding: '16px'
+  },
+  correctionLabel: {
+    display: 'block',
+    fontSize: '14px',
+    fontWeight: 700,
+    color: '#0f172a',
+    marginBottom: '8px'
+  },
+  correctionTextarea: {
+    width: '100%',
+    padding: '12px',
+    fontSize: '16px',
+    border: '2px solid #8b5cf6',
+    borderRadius: '8px',
+    resize: 'vertical',
+    fontFamily: 'inherit',
+    lineHeight: '1.8',
+    marginBottom: '12px'
+  },
+  correctionButtons: {
+    display: 'flex',
+    gap: '8px'
+  },
+  submitCorrectionButton: {
+    flex: 1,
+    backgroundColor: '#8b5cf6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px',
+    padding: '12px',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer'
+  },
+  resetCorrectionButton: {
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
+    padding: '12px 24px',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer'
+  },
+  diffSection: {
+    marginTop: '16px',
+    padding: '16px',
+    backgroundColor: '#fff',
+    borderRadius: '8px',
+    border: '2px solid #8b5cf6'
+  },
+  diffLabel: {
+    fontSize: '14px',
+    fontWeight: 700,
+    color: '#0f172a',
+    marginBottom: '12px'
+  },
+  diffText: {
+    fontSize: '16px',
+    lineHeight: '1.8',
+    padding: '12px',
+    backgroundColor: '#f8fafc',
+    borderRadius: '8px',
+    marginBottom: '12px'
+  },
+  diffPart: {
+    fontFamily: 'inherit'
+  },
+  diffError: {
+    color: '#ef4444',
+    fontWeight: 600,
+    textDecoration: 'line-through'
+  },
+  diffLegend: {
+    display: 'flex',
+    gap: '16px',
+    fontSize: '12px',
+    color: '#64748b'
+  },
+  diffLegendError: {
+    color: '#ef4444',
+    fontWeight: 600
+  },
+  diffLegendCorrect: {
+    fontWeight: 600
   },
   encouragement: {
     display: 'flex',
