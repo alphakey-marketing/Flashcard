@@ -2,6 +2,7 @@ import React, { useState, useEffect, CSSProperties } from 'react';
 import { FlashcardSet, Flashcard } from '../lib/storage';
 import { CardReviewData, saveCardReview, ReviewRating } from '../lib/spacedRepetition';
 import { audioService } from '../lib/audioService';
+import { checkAnswerWithDetails, MatchResult } from '../lib/answerMatcher';
 
 interface LearnModeProps {
   set: FlashcardSet;
@@ -34,6 +35,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const [userAnswer, setUserAnswer] = useState('');
   const [showAnswer, setShowAnswer] = useState(false);
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
+  const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [correctCount, setCorrectCount] = useState(0);
   const [showCongrats, setShowCongrats] = useState(false);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
@@ -251,11 +253,14 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     if (showAnswer) return;
     
     const { main: expectedAnswer } = getCardTextParts(currentQuestion.card.back);
-    const correct = normalizeAnswer(userAnswer) === normalizeAnswer(expectedAnswer);
-    setIsCorrect(correct);
+    
+    // Use the 3-tier flexible matching system
+    const result = checkAnswerWithDetails(userAnswer, expectedAnswer);
+    setMatchResult(result);
+    setIsCorrect(result.isCorrect);
     setShowAnswer(true);
     
-    if (correct) {
+    if (result.isCorrect) {
       setCorrectCount(correctCount + 1);
       saveCardReview(set.id, currentQuestion.card.id, 'know_it');
     } else {
@@ -288,16 +293,13 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     handleNext();
   };
 
-  const normalizeAnswer = (str: string): string => {
-    return str.toLowerCase().trim().replace(/[.,!?;:]/g, '');
-  };
-
   const handleNext = () => {
     audioService.stop(); // Stop any playing audio before proceeding
     if (currentIndex < questions.length - 1) {
       setCurrentIndex(currentIndex + 1);
       setShowAnswer(false);
       setIsCorrect(null);
+      setMatchResult(null);
       setUserAnswer('');
       setSelectedOption(null);
     } else {
@@ -312,6 +314,22 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     if (currentQuestion.type === 'multiple-choice') return true;
     if (currentQuestion.type === 'type-in' && isCorrect) return true;
     return false; // Type-in wrong state has its own override buttons
+  };
+
+  // Get match confidence indicator for UI
+  const getMatchConfidenceIndicator = () => {
+    if (!matchResult || !showAnswer) return null;
+    
+    switch (matchResult.matchType) {
+      case 'exact':
+        return '✓ Perfect match!';
+      case 'part':
+        return '✓ Partial match (accepted)';
+      case 'word':
+        return '✓ Key word match (accepted)';
+      default:
+        return null;
+    }
   };
 
   // Resume prompt screen
@@ -536,7 +554,18 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
             {showAnswer && (
               <div style={styles.feedbackContainer}>
                 <div style={isCorrect ? styles.feedbackCorrect : styles.feedbackWrong}>
-                  {isCorrect ? '✓ Correct!' : `✗ Expected: ${backParts.main}`}
+                  {isCorrect ? (
+                    <>
+                      {getMatchConfidenceIndicator()}
+                      {matchResult && matchResult.matchType !== 'exact' && (
+                        <div style={{ fontSize: '14px', marginTop: '4px', opacity: 0.8 }}>
+                          Expected: {backParts.main}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    `✗ Expected: ${backParts.main}`
+                  )}
                 </div>
                 {!isCorrect && (
                   <div style={styles.overrideButtons}>
