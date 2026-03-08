@@ -34,7 +34,7 @@ export interface CardDraft {
 const STORAGE_KEY = 'flashcard-sets';
 const INIT_FLAG_KEY = 'flashcard-initialized';
 const TEMPLATE_VERSION_KEY = 'flashcard-template-version';
-const CURRENT_TEMPLATE_VERSION = '3.0'; // Version 3.0 includes example sentences
+const CURRENT_TEMPLATE_VERSION = '4.0'; // Version 4.0 includes complete 800 N5 words
 
 // Internal variables
 let currentUserId: string | null = null;
@@ -75,25 +75,25 @@ export function overrideStorageWithCloud(sets: FlashcardSet[]) {
 function initializeTemplates(): void {
   const isInitialized = localStorage.getItem(INIT_FLAG_KEY);
   const templateVersion = localStorage.getItem(TEMPLATE_VERSION_KEY);
-  
+
   // Check if this is first time OR if template version has changed
   if (!isInitialized || templateVersion !== CURRENT_TEMPLATE_VERSION) {
     const existingSets = getSetsFromStorage();
-    
-    // Get IDs of template sets (they start with 'jlpt-')
+
+    // Get IDs of template sets (they start with 'jlpt-' or 'n5-complete-')
     const templateIds = new Set(jlptTemplates.map(t => t.id));
-    
+
     // Keep user-created sets (non-template sets)
-    const userSets = existingSets.filter(set => !templateIds.has(set.id) && !set.id.startsWith('jlpt-'));
-    
+    const userSets = existingSets.filter(set => !templateIds.has(set.id) && !set.id.startsWith('jlpt-') && !set.id.startsWith('n5-complete-'));
+
     // Merge: new templates + user sets
     const allSets = [...jlptTemplates, ...userSets];
-    
+
     saveSetsToStorage(allSets);
     localStorage.setItem(INIT_FLAG_KEY, 'true');
     localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
-    
-    console.log(`Initialized with template version ${CURRENT_TEMPLATE_VERSION} - Added example sentences`);
+
+    console.log(`Initialized with template version ${CURRENT_TEMPLATE_VERSION} - Added complete N5 vocabulary`);
 
     // Sync templates up to cloud if user is logged in
     if (currentUserId) {
@@ -119,11 +119,11 @@ export function getSet(id: string): FlashcardSet | undefined {
 export function getAllTags(): string[] {
   const sets = getSetsFromStorage();
   const tagSet = new Set<string>();
-  
+
   sets.forEach(set => {
     set.tags?.forEach(tag => tagSet.add(tag));
   });
-  
+
   return Array.from(tagSet).sort();
 }
 
@@ -168,13 +168,13 @@ export function createNewSet(
 export function saveSet(set: FlashcardSet): void {
   const sets = getSetsFromStorage();
   const existingIndex = sets.findIndex(s => s.id === set.id);
-  
+
   if (existingIndex >= 0) {
     sets[existingIndex] = { ...set, updatedAt: Date.now() };
   } else {
     sets.push(set);
   }
-  
+
   saveSetsToStorage(sets);
 
   // Background sync to cloud
