@@ -27,6 +27,7 @@ export interface DailyPrompt {
 const SENTENCE_CHALLENGES_KEY = 'sentence-challenges';
 const DAILY_PROMPTS_KEY = 'daily-prompts';
 const CURRENT_CHALLENGE_KEY = 'current-challenge';
+const CURRENT_PROMPT_KEY = 'current-daily-prompt';
 
 // Generate a new sentence building challenge
 export function generateChallenge(setId: string, cards: Card[]): SentenceChallenge | null {
@@ -112,6 +113,50 @@ export function clearCurrentChallenge(setId: string): void {
     localStorage.setItem(CURRENT_CHALLENGE_KEY, JSON.stringify(currentChallenges));
   } catch (error) {
     console.error('Error clearing current challenge:', error);
+  }
+}
+
+// Save the current active daily prompt for a set
+function saveCurrentDailyPrompt(setId: string, prompt: DailyPrompt): void {
+  try {
+    const currentPrompts = getAllCurrentDailyPrompts();
+    currentPrompts[setId] = prompt;
+    localStorage.setItem(CURRENT_PROMPT_KEY, JSON.stringify(currentPrompts));
+  } catch (error) {
+    console.error('Error saving current daily prompt:', error);
+  }
+}
+
+// Get all current daily prompts
+function getAllCurrentDailyPrompts(): { [setId: string]: DailyPrompt } {
+  try {
+    const data = localStorage.getItem(CURRENT_PROMPT_KEY);
+    return data ? JSON.parse(data) : {};
+  } catch (error) {
+    console.error('Error loading current daily prompts:', error);
+    return {};
+  }
+}
+
+// Get current active daily prompt for a set
+export function getCurrentDailyPrompt(setId: string): DailyPrompt | null {
+  try {
+    const currentPrompts = getAllCurrentDailyPrompts();
+    return currentPrompts[setId] || null;
+  } catch (error) {
+    console.error('Error getting current daily prompt:', error);
+    return null;
+  }
+}
+
+// Clear current daily prompt for a set
+export function clearCurrentDailyPrompt(setId: string): void {
+  try {
+    const currentPrompts = getAllCurrentDailyPrompts();
+    delete currentPrompts[setId];
+    localStorage.setItem(CURRENT_PROMPT_KEY, JSON.stringify(currentPrompts));
+  } catch (error) {
+    console.error('Error clearing current daily prompt:', error);
   }
 }
 
@@ -324,7 +369,11 @@ export function getTodayPrompt(setId: string, cards: Card[]): DailyPrompt | null
     todayPrompt = generateDailyPrompt(setId, cards, today);
     if (todayPrompt) {
       saveDailyPrompt(todayPrompt);
+      saveCurrentDailyPrompt(setId, todayPrompt);
     }
+  } else if (!todayPrompt.completedAt) {
+    // Save as current if not completed
+    saveCurrentDailyPrompt(setId, todayPrompt);
   }
   
   return todayPrompt || null;
@@ -405,9 +454,26 @@ export function completeDailyPrompt(date: string, setId: string, userEntry: stri
       prompt.userEntry = userEntry;
       prompt.completedAt = Date.now();
       saveDailyPrompt(prompt);
+      clearCurrentDailyPrompt(setId);
     }
   } catch (error) {
     console.error('Error completing daily prompt:', error);
+  }
+}
+
+// Update an existing daily prompt entry
+export function updateDailyPrompt(date: string, setId: string, userEntry: string): void {
+  try {
+    const prompts = getDailyPrompts();
+    const prompt = prompts.find(p => p.date === date && p.setId === setId);
+    
+    if (prompt) {
+      prompt.userEntry = userEntry;
+      prompt.completedAt = Date.now();
+      saveDailyPrompt(prompt);
+    }
+  } catch (error) {
+    console.error('Error updating daily prompt:', error);
   }
 }
 
