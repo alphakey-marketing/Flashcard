@@ -95,12 +95,8 @@ function initializeTemplates(): void {
 
     console.log(`Initialized with template version ${CURRENT_TEMPLATE_VERSION} - Added complete N5 vocabulary`);
 
-    // Sync templates up to cloud if user is logged in
-    if (currentUserId) {
-      jlptTemplates.forEach(template => {
-        syncService.pushDeck(template, currentUserId!);
-      });
-    }
+    // DO NOT auto-sync templates here - let App.tsx handle it after login
+    // This prevents RLS policy errors when templates are initialized before user session is ready
   }
 }
 
