@@ -1,12 +1,37 @@
-import { supabase } from './supabaseClient';
+import { supabase, debugSession } from './supabaseClient';
 import { FlashcardSet } from './storage';
 import { CardReviewData } from './spacedRepetition';
+
+/**
+ * Verify user is authenticated and return session
+ */
+async function ensureAuthenticated() {
+  const { data: { session }, error } = await supabase.auth.getSession();
+  
+  if (error) {
+    console.error('❌ Auth error:', error);
+    throw new Error(`Authentication error: ${error.message}`);
+  }
+  
+  if (!session || !session.user) {
+    console.error('❌ No active session');
+    throw new Error('No active session. Please sign in again.');
+  }
+  
+  console.log('✅ Auth verified - User:', session.user.id);
+  return session;
+}
 
 export const syncService = {
   /**
    * Pull all data from Supabase and save to LocalStorage
    */
   async pullAll(userId: string): Promise<{ decks: FlashcardSet[], reviews: CardReviewData[] }> {
+    console.log('📊 Pulling data from cloud for user:', userId);
+    
+    // Verify session first
+    await ensureAuthenticated();
+    
     // 1. Fetch decks and cards
     const { data: dbDecks, error: decksError } = await supabase
       .from('decks')
@@ -17,7 +42,7 @@ export const syncService = {
       .eq('user_id', userId);
 
     if (decksError) {
-      console.error('Error pulling decks:', decksError);
+      console.error('❌ Error pulling decks:', decksError);
       throw decksError;
     }
 
@@ -28,7 +53,7 @@ export const syncService = {
       .eq('user_id', userId);
 
     if (reviewsError) {
-      console.error('Error pulling reviews:', reviewsError);
+      console.error('❌ Error pulling reviews:', reviewsError);
       throw reviewsError;
     }
 
@@ -58,11 +83,11 @@ export const syncService = {
       nextReview: new Date(r.next_review_date).getTime(),
       status: r.repetition >= 5 ? 'mastered' : r.repetition > 0 ? 'reviewing' : 'learning',
       totalReviews: r.total_reviews,
-      knowItCount: 0, // Simplified for now since schema doesn't perfectly match
+      knowItCount: 0,
       againCount: r.lapses,
       masteredCount: 0,
       lastReviewed: new Date(r.last_review_date).getTime(),
-      createdAt: new Date(r.last_review_date).getTime(), // Fallback
+      createdAt: new Date(r.last_review_date).getTime(),
       updatedAt: new Date(r.last_review_date).getTime()
     }));
 
@@ -74,38 +99,27 @@ export const syncService = {
    * Push a single deck (and its cards) to Supabase
    */
   async pushDeck(deck: FlashcardSet, userId: string) {
-    console.log(`📤 Pushing deck "${deck.title}" (ID: ${deck.id}) to cloud...`);
+    console.log(`\n📤 [SYNC START] Deck: "${deck.title}"`);
+    console.log(`   Deck ID: ${deck.id}`);
     console.log(`   User ID: ${userId}`);
+    console.log(`   Cards: ${deck.cards.length}`);
     
-    // Verify user is authenticated
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      console.error('❌ User not authenticated!', authError);
-      throw new Error('User not authenticated. Please sign in again.');
+    // CRITICAL: Verify authentication and get fresh session
+    const session = await ensureAuthenticated();
+    
+    // Double check user ID matches
+    if (session.user.id !== userId) {
+      const error = `User ID mismatch! Session: ${session.user.id}, Expected: ${userId}`;
+      console.error(`❌ ${error}`);
+      throw new Error(error);
     }
     
-    if (user.id !== userId) {
-      console.error('❌ User ID mismatch!', { expected: userId, actual: user.id });
-      throw new Error('User ID mismatch. Please sign in again.');
-    }
+    console.log(`✅ Session verified, access token present: ${!!session.access_token}`);
     
-    console.log(`✅ User authenticated: ${user.id}`);
-    
-    // Check if deck already exists in cloud
-    const { data: existingDeck, error: checkError } = await supabase
-      .from('decks')
-      .select('id')
-      .eq('id', deck.id)
-      .maybeSingle();
-    
-    if (checkError) {
-      console.error('❌ Error checking existing deck:', checkError);
-      throw new Error(`Failed to check existing deck: ${checkError.message}`);
-    }
-    
+    // Prepare deck data
     const deckData = {
       id: deck.id,
-      user_id: userId, // Use the verified userId
+      user_id: userId,
       title: deck.title,
       description: deck.description || '',
       tags: deck.tags || [],
@@ -114,81 +128,114 @@ export const syncService = {
       updated_at: new Date(deck.updatedAt).toISOString()
     };
     
-    console.log('📦 Deck data to sync:', deckData);
+    console.log('📦 Deck data prepared:', {
+      id: deckData.id,
+      user_id: deckData.user_id,
+      title: deckData.title,
+      has_tags: deckData.tags.length > 0
+    });
     
-    // Use INSERT or UPDATE based on whether deck exists
+    // Check if deck exists
+    console.log('   Checking if deck exists in cloud...');
+    const { data: existingDeck, error: checkError } = await supabase
+      .from('decks')
+      .select('id, user_id')
+      .eq('id', deck.id)
+      .maybeSingle();
+    
+    if (checkError) {
+      console.error('❌ Error checking existing deck:', checkError);
+      throw new Error(`Failed to check existing deck: ${checkError.message}`);
+    }
+    
+    if (existingDeck) {
+      console.log(`   ➡️ Deck exists, updating... (owner: ${existingDeck.user_id})`);
+    } else {
+      console.log('   ➕ Deck is new, inserting...');
+    }
+    
+    // Perform insert or update
     let deckError;
     if (existingDeck) {
-      console.log('   Deck exists, updating...');
-      const result = await supabase
+      const { error } = await supabase
         .from('decks')
         .update(deckData)
         .eq('id', deck.id);
-      deckError = result.error;
+      deckError = error;
     } else {
-      console.log('   Deck is new, inserting...');
-      const result = await supabase
+      // For INSERT, use the session's access token explicitly
+      const { error } = await supabase
         .from('decks')
-        .insert(deckData);
-      deckError = result.error;
+        .insert([deckData]); // Note: wrap in array for single insert
+      deckError = error;
     }
 
     if (deckError) {
-      console.error(`❌ Error syncing deck "${deck.title}":`, deckError);
-      console.error('   Full error details:', JSON.stringify(deckError, null, 2));
+      console.error(`\n❌ [SYNC FAILED] Deck: "${deck.title}"`);
+      console.error('   Error code:', deckError.code);
+      console.error('   Error message:', deckError.message);
+      console.error('   Error details:', deckError.details);
+      console.error('   Error hint:', deckError.hint);
+      console.error('   User ID in data:', userId);
+      console.error('   Session user ID:', session.user.id);
+      
+      // Show helpful message
+      if (deckError.code === '42501') {
+        console.error('\n🚫 RLS Policy Violation Detected!');
+        console.error('   This means the database is blocking the insert.');
+        console.error('   Action required:');
+        console.error('   1. Go to Supabase Dashboard');
+        console.error('   2. SQL Editor');
+        console.error('   3. Run: SELECT auth.uid();');
+        console.error(`   4. Verify it returns: ${userId}`);
+        console.error('   5. Check RLS policies on decks table');
+      }
+      
       throw new Error(`Failed to sync deck: ${deckError.message}`);
     }
 
-    console.log(`✅ Deck "${deck.title}" synced, now syncing ${deck.cards.length} cards...`);
+    console.log(`✅ Deck "${deck.title}" synced successfully`);
+    console.log(`   Now syncing ${deck.cards.length} cards...`);
 
-    // Delete old cards that are not in the current deck
-    if (existingDeck) {
-      const currentCardIds = deck.cards.map(c => c.id);
-      const { error: deleteError } = await supabase
-        .from('cards')
-        .delete()
-        .eq('deck_id', deck.id)
-        .not('id', 'in', `(${currentCardIds.join(',')})`);
-      
-      if (deleteError) {
-        console.error('Warning: Failed to delete old cards:', deleteError);
+    // Sync cards
+    if (deck.cards.length > 0) {
+      const cardsToUpsert = deck.cards.map((card, index) => ({
+        id: card.id,
+        deck_id: deck.id,
+        front: card.front,
+        back: card.back,
+        example: card.example || null,
+        position: index,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }));
+
+      const CHUNK_SIZE = 50; // Reduced chunk size for stability
+      for (let i = 0; i < cardsToUpsert.length; i += CHUNK_SIZE) {
+        const chunk = cardsToUpsert.slice(i, i + CHUNK_SIZE);
+        const { error: cardsError } = await supabase
+          .from('cards')
+          .upsert(chunk, { onConflict: 'id' });
+
+        if (cardsError) {
+          console.error(`❌ Error syncing cards chunk ${i}-${i + chunk.length}:`, cardsError);
+          throw new Error(`Failed to sync cards: ${cardsError.message}`);
+        }
+        
+        const progress = Math.min(i + chunk.length, deck.cards.length);
+        console.log(`   ✅ Cards ${progress}/${deck.cards.length}`);
       }
-    }
-
-    // Upsert cards in chunks to avoid payload limits
-    const cardsToUpsert = deck.cards.map((card, index) => ({
-      id: card.id,
-      deck_id: deck.id,
-      front: card.front,
-      back: card.back,
-      example: card.example || null,
-      position: index,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }));
-
-    const CHUNK_SIZE = 100;
-    for (let i = 0; i < cardsToUpsert.length; i += CHUNK_SIZE) {
-      const chunk = cardsToUpsert.slice(i, i + CHUNK_SIZE);
-      const { error: cardsError } = await supabase
-        .from('cards')
-        .upsert(chunk, { onConflict: 'id' });
-
-      if (cardsError) {
-        console.error(`❌ Error syncing cards chunk ${i}-${i + chunk.length}:`, cardsError);
-        throw new Error(`Failed to sync cards: ${cardsError.message}`);
-      }
-      
-      console.log(`✅ Synced cards ${i + 1}-${Math.min(i + chunk.length, deck.cards.length)} of ${deck.cards.length}`);
     }
     
-    console.log(`✅ Successfully synced deck "${deck.title}" with all ${deck.cards.length} cards`);
+    console.log(`✅ [SYNC COMPLETE] Deck: "${deck.title}" with all ${deck.cards.length} cards\n`);
   },
 
   /**
    * Delete a deck from Supabase
    */
   async deleteDeck(deckId: string) {
+    await ensureAuthenticated();
+    
     const { error } = await supabase
       .from('decks')
       .delete()
@@ -204,10 +251,12 @@ export const syncService = {
    * Push a review to Supabase
    */
   async pushReview(review: CardReviewData, userId: string) {
+    await ensureAuthenticated();
+    
     const { error } = await supabase
       .from('reviews')
       .upsert({
-        id: `${userId}-${review.cardId}`, // Composite predictable ID
+        id: `${userId}-${review.cardId}`,
         user_id: userId,
         card_id: review.cardId,
         deck_id: review.setId,
@@ -218,7 +267,7 @@ export const syncService = {
         last_review_date: new Date(review.lastReviewed).toISOString(),
         total_reviews: review.totalReviews,
         lapses: review.againCount
-      }, { onConflict: 'user_id, card_id' }); // Requires unique constraint in DB on user_id, card_id
+      }, { onConflict: 'user_id, card_id' });
 
     if (error) {
       console.error('Error syncing review:', error);
