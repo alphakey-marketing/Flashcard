@@ -20,6 +20,7 @@ const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
 
@@ -42,43 +43,77 @@ const App: React.FC = () => {
 
   const handleSessionChange = async (newSession: any) => {
     setSession(newSession);
+    setSyncError(null);
+    
     if (newSession?.user) {
       const userId = newSession.user.id;
+      
+      // IMPORTANT: Set user ID FIRST before any operations
       setUserId(userId);
       setReviewUserId(userId);
       
       setIsSyncing(true);
+      
       try {
+        console.log('🔄 Starting sync for user:', userId);
+        
         // Pull latest from cloud
         const { decks: cloudDecks, reviews: cloudReviews } = await syncService.pullAll(userId);
+        console.log(`✅ Pulled ${cloudDecks.length} decks from cloud`);
         
         // Get local decks to prevent data loss
         const localDecks = getAllSets();
+        console.log(`📱 Found ${localDecks.length} local decks`);
+        
         const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
         
         // Find local decks that are NOT in the cloud yet
         const missingLocalDecks = localDecks.filter(d => !cloudDeckIds.has(d.id));
         
         let finalDecks = [...cloudDecks];
+        let syncErrors: string[] = [];
         
         if (missingLocalDecks.length > 0) {
-          console.log(`Found ${missingLocalDecks.length} local decks not in cloud. Merging...`);
+          console.log(`📤 Found ${missingLocalDecks.length} local decks not in cloud. Syncing...`);
+          
           // Add them locally immediately so they show up
           finalDecks = [...finalDecks, ...missingLocalDecks];
           
-          // Push them to the cloud IN THE BACKGROUND to not block the UI
-          Promise.all(missingLocalDecks.map(deck => syncService.pushDeck(deck, userId)))
-            .then(() => console.log('Background sync of missing decks complete'))
-            .catch(err => console.error('Background sync failed', err));
+          // Push them to the cloud with proper error handling
+          const syncPromises = missingLocalDecks.map(async (deck) => {
+            try {
+              await syncService.pushDeck(deck, userId);
+              console.log(`✅ Synced deck: ${deck.title}`);
+            } catch (err: any) {
+              console.error(`❌ Failed to sync deck "${deck.title}":`, err);
+              syncErrors.push(deck.title);
+              throw err; // Re-throw to be caught by Promise.allSettled
+            }
+          });
+          
+          // Use allSettled to continue even if some fail
+          const results = await Promise.allSettled(syncPromises);
+          
+          const failedCount = results.filter(r => r.status === 'rejected').length;
+          const succeededCount = results.filter(r => r.status === 'fulfilled').length;
+          
+          console.log(`Sync complete: ${succeededCount} succeeded, ${failedCount} failed`);
+          
+          if (failedCount > 0) {
+            setSyncError(`Partially synced: ${failedCount}/${missingLocalDecks.length} decks failed.\n\nErrors:\n${syncErrors.map(title => `Failed to sync deck: ${title}`).join('\n')}`);
+          }
         }
         
         // Update local storage with the merged decks
         if (finalDecks.length > 0) {
           overrideStorageWithCloud(finalDecks);
           overrideReviewsWithCloud(cloudReviews);
+          console.log('✅ Local storage updated with merged data');
         }
-      } catch (err) {
-        console.error("Sync failed", err);
+        
+      } catch (err: any) {
+        console.error('❌ Sync failed:', err);
+        setSyncError(`Sync failed: ${err.message || 'Unknown error'}`);
       } finally {
         setIsSyncing(false);
       }
@@ -130,16 +165,74 @@ const App: React.FC = () => {
 
   if (isSyncing) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#f8fafc' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: '#f8fafc', padding: '20px' }}>
         <p style={{ fontSize: '24px', marginBottom: '16px' }}>🔄</p>
         <p style={{ fontSize: '18px', color: '#64748b', fontWeight: 500 }}>Syncing your progress...</p>
+        <p style={{ fontSize: '14px', color: '#94a3b8', marginTop: '8px' }}>This may take a moment</p>
       </div>
     );
   }
 
+  // Show sync error modal if there was an error
+  const syncErrorModal = syncError ? (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999,
+      padding: '20px'
+    }}>
+      <div style={{
+        backgroundColor: '#fff',
+        borderRadius: '16px',
+        padding: '24px',
+        maxWidth: '500px',
+        maxHeight: '80vh',
+        overflow: 'auto',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
+      }}>
+        <div style={{ fontSize: '40px', textAlign: 'center', marginBottom: '16px' }}>⚠️</div>
+        <h2 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '12px', textAlign: 'center' }}>Sync Error</h2>
+        <pre style={{ 
+          fontSize: '14px', 
+          color: '#475569',
+          backgroundColor: '#f1f5f9',
+          padding: '12px',
+          borderRadius: '8px',
+          whiteSpace: 'pre-wrap',
+          wordWrap: 'break-word',
+          marginBottom: '16px'
+        }}>{syncError}</pre>
+        <button
+          onClick={() => setSyncError(null)}
+          style={{
+            width: '100%',
+            padding: '12px',
+            backgroundColor: '#3b82f6',
+            color: 'white',
+            border: 'none',
+            borderRadius: '8px',
+            fontSize: '16px',
+            fontWeight: 600,
+            cursor: 'pointer'
+          }}
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <ErrorBoundary>
       <div>
+        {syncErrorModal}
         {currentPage === 'home' && (
           <Home
             onNavigateToCreate={navigateToCreate}
