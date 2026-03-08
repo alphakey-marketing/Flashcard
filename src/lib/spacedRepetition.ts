@@ -62,9 +62,44 @@ export function setReviewUserId(id: string | null) {
 
 /**
  * Direct override for syncing cloud down to local storage
+ * Implements a smart merge to prevent losing local status
  */
-export function overrideReviewsWithCloud(reviews: CardReviewData[]) {
-  saveReviewDataToStorage(reviews);
+export function overrideReviewsWithCloud(cloudReviews: CardReviewData[]) {
+  const localReviews = getReviewDataFromStorage();
+  const mergedReviews = [...cloudReviews];
+
+  // Restore local status/counts for reviews that haven't changed in the cloud
+  // This prevents the "Active Practice" challenges from disappearing when
+  // the status field (which isn't stored in the cloud) gets wiped out by a sync.
+  for (let i = 0; i < mergedReviews.length; i++) {
+    const cloudReview = mergedReviews[i];
+    const localReview = localReviews.find(
+      r => r.cardId === cloudReview.cardId && r.setId === cloudReview.setId
+    );
+
+    if (localReview) {
+      // If the cloud review is the same age or older than our local review,
+      // it means the cloud didn't have any newer data. We should preserve
+      // our local status and counts.
+      if (cloudReview.lastReviewed <= localReview.lastReviewed) {
+        mergedReviews[i] = {
+          ...cloudReview,
+          status: localReview.status, // Preserve 'mastered' status!
+          knowItCount: localReview.knowItCount || cloudReview.knowItCount,
+          masteredCount: localReview.masteredCount || cloudReview.masteredCount
+        };
+      }
+    }
+  }
+
+  // Also add any local reviews that haven't been synced to the cloud yet
+  for (const localReview of localReviews) {
+    if (!mergedReviews.some(r => r.cardId === localReview.cardId && r.setId === localReview.setId)) {
+      mergedReviews.push(localReview);
+    }
+  }
+
+  saveReviewDataToStorage(mergedReviews);
 }
 
 export function initializeCardReview(setId: string, cardId: string): CardReviewData {
