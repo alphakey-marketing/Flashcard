@@ -63,7 +63,32 @@ export function generateChallenge(setId: string, cards: Card[]): SentenceChallen
     createdAt: Date.now()
   };
 
+  // Save the challenge immediately so it can be found when submitted
+  saveCurrentChallenge(challenge);
+
   return challenge;
+}
+
+// Save the current active challenge (not yet completed)
+function saveCurrentChallenge(challenge: SentenceChallenge): void {
+  try {
+    const allHistory = getAllChallengeHistory();
+    const setHistory = allHistory[challenge.setId] || [];
+    
+    // Remove any previous incomplete challenges for this set
+    const filteredHistory = setHistory.filter(c => c.userAnswer !== undefined);
+    
+    // Add the new challenge at the beginning
+    filteredHistory.unshift(challenge);
+    
+    // Keep only last 50
+    const recentHistory = filteredHistory.slice(0, 50);
+    
+    allHistory[challenge.setId] = recentHistory;
+    localStorage.setItem(SENTENCE_CHALLENGES_KEY, JSON.stringify(allHistory));
+  } catch (error) {
+    console.error('Error saving current challenge:', error);
+  }
 }
 
 // Submit answer for a challenge and get feedback
@@ -73,14 +98,17 @@ export function submitChallengeAnswer(
   userAnswer: string
 ): { score: number; feedback: string[]; isCorrect: boolean } {
   try {
-    // Get the challenge from history or use the current one
-    const history = getChallengeHistory(setId);
-    const existingChallenge = history.find(c => c.challengeId === challengeId);
+    // Get the challenge from history
+    const allHistory = getAllChallengeHistory();
+    const setHistory = allHistory[setId] || [];
+    const existingChallenge = setHistory.find(c => c.challengeId === challengeId);
 
     if (!existingChallenge) {
+      console.error('Challenge not found:', challengeId);
+      console.log('Available challenges:', setHistory.map(c => c.challengeId));
       return {
         score: 0,
-        feedback: ['Challenge not found'],
+        feedback: ['Challenge not found. Please try generating a new challenge.'],
         isCorrect: false
       };
     }
@@ -88,7 +116,7 @@ export function submitChallengeAnswer(
     // Validate the sentence
     const validation = validateSentence(userAnswer, existingChallenge.words);
 
-    // Save to history
+    // Save to history with answer and score
     const completedChallenge: SentenceChallenge = {
       ...existingChallenge,
       userAnswer,
@@ -113,24 +141,23 @@ export function submitChallengeAnswer(
   }
 }
 
-// Save challenge to history
+// Save challenge to history (update with answer)
 function saveChallengeToHistory(challenge: SentenceChallenge): void {
   try {
-    const history = getChallengeHistory(challenge.setId, 100);
-    const existingIndex = history.findIndex(c => c.challengeId === challenge.challengeId);
+    const allHistory = getAllChallengeHistory();
+    const setHistory = allHistory[challenge.setId] || [];
+    const existingIndex = setHistory.findIndex(c => c.challengeId === challenge.challengeId);
 
     if (existingIndex >= 0) {
-      history[existingIndex] = challenge;
+      setHistory[existingIndex] = challenge;
     } else {
-      history.unshift(challenge);
+      setHistory.unshift(challenge);
     }
 
     // Keep only last 50
-    const recentHistory = history.slice(0, 50);
+    const recentHistory = setHistory.slice(0, 50);
 
-    const allHistory = getAllChallengeHistory();
     allHistory[challenge.setId] = recentHistory;
-
     localStorage.setItem(SENTENCE_CHALLENGES_KEY, JSON.stringify(allHistory));
   } catch (error) {
     console.error('Error saving challenge history:', error);
@@ -148,7 +175,7 @@ function getAllChallengeHistory(): { [setId: string]: SentenceChallenge[] } {
   }
 }
 
-// Get challenge history for a specific set
+// Get challenge history for a specific set (only completed ones)
 export function getChallengeHistory(setId: string, limit: number = 10): SentenceChallenge[] {
   try {
     const allHistory = getAllChallengeHistory();
