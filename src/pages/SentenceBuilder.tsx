@@ -48,6 +48,7 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
   } | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
+  const [selectedHistoryChallenge, setSelectedHistoryChallenge] = useState<SentenceChallenge | null>(null);
   
   // Correction workflow states
   const [showCorrectionMode, setShowCorrectionMode] = useState(false);
@@ -77,10 +78,11 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
     setShowCorrectionMode(false);
     setCorrectedAnswer('');
     setDiff([]);
+    setSelectedHistoryChallenge(null);
   };
 
   const loadHistory = () => {
-    const challengeHistory = getChallengeHistory(set.id, 10);
+    const challengeHistory = getChallengeHistory(set.id, 50);
     setHistory(challengeHistory);
   };
 
@@ -114,6 +116,17 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
   const handleResetCorrection = () => {
     setCorrectedAnswer(userAnswer);
     setDiff([]);
+  };
+  
+  const handleRetryChallenge = (challenge: SentenceChallenge) => {
+    setCurrentChallenge(challenge);
+    setUserAnswer('');
+    setFeedback(null);
+    setShowCorrectionMode(false);
+    setCorrectedAnswer('');
+    setDiff([]);
+    setSelectedHistoryChallenge(challenge);
+    setShowHistory(false);
   };
 
   if (masteredCards.length < 3) {
@@ -168,8 +181,27 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
                   <div style={styles.historyAnswer}>
                     <strong>Your answer:</strong> {entry.userAnswer}
                   </div>
-                  <div style={styles.historyDate}>
-                    {new Date(entry.timestamp).toLocaleString()}
+                  {entry.feedback && entry.feedback.length > 0 && (
+                    <div style={styles.historyFeedback}>
+                      <strong>Feedback:</strong> {entry.feedback.join(' ')}
+                    </div>
+                  )}
+                  <div style={styles.historyFooter}>
+                    <div style={styles.historyDate}>
+                      {new Date(entry.createdAt).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </div>
+                    <button 
+                      style={styles.retryButton}
+                      onClick={() => handleRetryChallenge(entry)}
+                    >
+                      🔄 Try Again
+                    </button>
                   </div>
                 </div>
               </div>
@@ -196,8 +228,16 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
         <div style={styles.challengeCard}>
           <div style={styles.challengeHeader}>
             <div style={styles.challengeIcon}>🏗️</div>
-            <div style={styles.challengeTitle}>Build a Sentence</div>
+            <div style={styles.challengeTitle}>
+              {selectedHistoryChallenge ? 'Retry Challenge' : 'Build a Sentence'}
+            </div>
           </div>
+          
+          {selectedHistoryChallenge && (
+            <div style={styles.retryBanner}>
+              📝 Retrying previous challenge - Practice makes perfect!
+            </div>
+          )}
 
           <div style={styles.promptSection}>
             <div style={styles.promptLabel}>Prompt:</div>
@@ -410,6 +450,17 @@ const styles: { [key: string]: CSSProperties } = {
     fontSize: '24px',
     fontWeight: 700,
     color: '#0f172a'
+  },
+  retryBanner: {
+    backgroundColor: '#dbeafe',
+    border: '2px solid #3b82f6',
+    borderRadius: '12px',
+    padding: '12px 16px',
+    marginBottom: '24px',
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#1e40af',
+    textAlign: 'center'
   },
   promptSection: {
     marginBottom: '24px'
@@ -722,9 +773,33 @@ const styles: { [key: string]: CSSProperties } = {
     marginBottom: '8px',
     fontWeight: 500
   },
+  historyFeedback: {
+    fontSize: '13px',
+    color: '#64748b',
+    marginBottom: '12px',
+    fontStyle: 'italic'
+  },
+  historyFooter: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: '12px',
+    paddingTop: '12px',
+    borderTop: '1px solid #f1f5f9'
+  },
   historyDate: {
     fontSize: '12px',
     color: '#94a3b8'
+  },
+  retryButton: {
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px',
+    padding: '8px 16px',
+    fontSize: '13px',
+    fontWeight: 600,
+    cursor: 'pointer'
   },
   emptyState: {
     textAlign: 'center',
