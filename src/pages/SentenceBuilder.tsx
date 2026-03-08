@@ -5,6 +5,9 @@ import {
   generateChallenge,
   submitChallengeAnswer,
   getChallengeHistory,
+  getCurrentChallenge,
+  clearCurrentChallenge,
+  deleteChallenge,
   SentenceChallenge
 } from '../lib/sentenceBuilder';
 
@@ -49,6 +52,8 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [selectedHistoryChallenge, setSelectedHistoryChallenge] = useState<SentenceChallenge | null>(null);
+  const [showResumePrompt, setShowResumePrompt] = useState(false);
+  const [existingChallenge, setExistingChallenge] = useState<SentenceChallenge | null>(null);
   
   // Correction workflow states
   const [showCorrectionMode, setShowCorrectionMode] = useState(false);
@@ -65,9 +70,34 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
   const masteredCards = set.cards.filter(card => masteredCardIds.has(card.id));
 
   useEffect(() => {
-    loadNewChallenge();
+    checkForExistingChallenge();
     loadHistory();
   }, []);
+  
+  const checkForExistingChallenge = () => {
+    const existing = getCurrentChallenge(set.id);
+    if (existing && !existing.userAnswer) {
+      setExistingChallenge(existing);
+      setShowResumePrompt(true);
+    } else {
+      loadNewChallenge();
+    }
+  };
+  
+  const handleResumeChallenge = () => {
+    if (existingChallenge) {
+      setCurrentChallenge(existingChallenge);
+      setShowResumePrompt(false);
+    }
+  };
+  
+  const handleStartNewChallenge = () => {
+    if (existingChallenge) {
+      clearCurrentChallenge(set.id);
+    }
+    setShowResumePrompt(false);
+    loadNewChallenge();
+  };
 
   const loadNewChallenge = () => {
     if (masteredCards.length < 3) return;
@@ -82,7 +112,7 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
   };
 
   const loadHistory = () => {
-    const challengeHistory = getChallengeHistory(set.id, 50);
+    const challengeHistory = getChallengeHistory(set.id);
     setHistory(challengeHistory);
   };
 
@@ -128,6 +158,15 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
     setSelectedHistoryChallenge(challenge);
     setShowHistory(false);
   };
+  
+  const handleDeleteChallenge = (challengeId: string) => {
+    if (confirm('Are you sure you want to delete this challenge?')) {
+      const success = deleteChallenge(set.id, challengeId);
+      if (success) {
+        loadHistory();
+      }
+    }
+  };
 
   if (masteredCards.length < 3) {
     return (
@@ -147,6 +186,39 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
       </div>
     );
   }
+  
+  // Show resume prompt
+  if (showResumePrompt && existingChallenge) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.header}>
+          <button style={styles.backButton} onClick={onExit}>← Exit</button>
+          <h2 style={styles.headerTitle}>Sentence Builder</h2>
+          <div style={{ width: '100px' }} />
+        </div>
+        <div style={styles.resumePromptContainer}>
+          <div style={styles.resumePromptCard}>
+            <div style={styles.resumePromptIcon}>📝</div>
+            <h3 style={styles.resumePromptTitle}>Resume Session?</h3>
+            <p style={styles.resumePromptText}>
+              You have an in-progress challenge from earlier.
+            </p>
+            <div style={styles.resumePromptWords}>
+              <strong>Words:</strong> {existingChallenge.words.map(w => w.front.split('[')[0].trim()).join(', ')}
+            </div>
+            <div style={styles.resumePromptButtons}>
+              <button style={styles.resumeButton} onClick={handleResumeChallenge}>
+                ↻ Resume Challenge
+              </button>
+              <button style={styles.newChallengeButton} onClick={handleStartNewChallenge}>
+                ✨ Start New Challenge
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (showHistory) {
     return (
@@ -155,7 +227,7 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
           <button style={styles.backButton} onClick={() => setShowHistory(false)}>
             ← Back
           </button>
-          <h2 style={styles.headerTitle}>Challenge History</h2>
+          <h2 style={styles.headerTitle}>Challenge History ({history.length})</h2>
           <div style={{ width: '100px' }} />
         </div>
 
@@ -196,12 +268,20 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
                         minute: '2-digit'
                       })}
                     </div>
-                    <button 
-                      style={styles.retryButton}
-                      onClick={() => handleRetryChallenge(entry)}
-                    >
-                      🔄 Try Again
-                    </button>
+                    <div style={styles.historyActions}>
+                      <button 
+                        style={styles.retryButton}
+                        onClick={() => handleRetryChallenge(entry)}
+                      >
+                        🔄 Try Again
+                      </button>
+                      <button 
+                        style={styles.deleteButton}
+                        onClick={() => handleDeleteChallenge(entry.challengeId)}
+                      >
+                        🗑️ Delete
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -220,7 +300,7 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
         <button style={styles.backButton} onClick={onExit}>← Exit</button>
         <h2 style={styles.headerTitle}>Sentence Builder</h2>
         <button style={styles.historyButton} onClick={() => setShowHistory(true)}>
-          📜 History
+          📜 History ({history.length})
         </button>
       </div>
 
@@ -420,7 +500,70 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 600,
     cursor: 'pointer',
     color: '#475569',
-    minWidth: '100px'
+    minWidth: '120px'
+  },
+  resumePromptContainer: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '32px'
+  },
+  resumePromptCard: {
+    backgroundColor: '#fff',
+    borderRadius: '24px',
+    padding: '48px',
+    maxWidth: '500px',
+    textAlign: 'center',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.08)'
+  },
+  resumePromptIcon: {
+    fontSize: '64px',
+    marginBottom: '16px'
+  },
+  resumePromptTitle: {
+    fontSize: '24px',
+    fontWeight: 700,
+    color: '#0f172a',
+    marginBottom: '12px'
+  },
+  resumePromptText: {
+    fontSize: '16px',
+    color: '#64748b',
+    marginBottom: '24px'
+  },
+  resumePromptWords: {
+    fontSize: '14px',
+    color: '#475569',
+    padding: '16px',
+    backgroundColor: '#f8fafc',
+    borderRadius: '12px',
+    marginBottom: '32px'
+  },
+  resumePromptButtons: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px'
+  },
+  resumeButton: {
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '12px',
+    padding: '16px',
+    fontSize: '16px',
+    fontWeight: 600,
+    cursor: 'pointer'
+  },
+  newChallengeButton: {
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
+    padding: '16px',
+    fontSize: '16px',
+    fontWeight: 600,
+    cursor: 'pointer'
   },
   content: {
     flex: 1,
@@ -791,10 +934,24 @@ const styles: { [key: string]: CSSProperties } = {
     fontSize: '12px',
     color: '#94a3b8'
   },
+  historyActions: {
+    display: 'flex',
+    gap: '8px'
+  },
   retryButton: {
     backgroundColor: '#3b82f6',
     color: 'white',
     border: 'none',
+    borderRadius: '8px',
+    padding: '8px 16px',
+    fontSize: '13px',
+    fontWeight: 600,
+    cursor: 'pointer'
+  },
+  deleteButton: {
+    backgroundColor: '#fee2e2',
+    color: '#991b1b',
+    border: '1px solid #fecaca',
     borderRadius: '8px',
     padding: '8px 16px',
     fontSize: '13px',
