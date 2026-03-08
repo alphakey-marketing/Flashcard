@@ -148,9 +148,9 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
     setDiff([]);
   };
   
-  const handleRetryChallenge = (challenge: SentenceChallenge) => {
+  const handleEditChallenge = (challenge: SentenceChallenge) => {
     setCurrentChallenge(challenge);
-    setUserAnswer('');
+    setUserAnswer(challenge.userAnswer || '');
     setFeedback(null);
     setShowCorrectionMode(false);
     setCorrectedAnswer('');
@@ -270,10 +270,10 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
                     </div>
                     <div style={styles.historyActions}>
                       <button 
-                        style={styles.retryButton}
-                        onClick={() => handleRetryChallenge(entry)}
+                        style={styles.editButton}
+                        onClick={() => handleEditChallenge(entry)}
                       >
-                        🔄 Try Again
+                        ✏️ Edit
                       </button>
                       <button 
                         style={styles.deleteButton}
@@ -309,13 +309,13 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
           <div style={styles.challengeHeader}>
             <div style={styles.challengeIcon}>🏗️</div>
             <div style={styles.challengeTitle}>
-              {selectedHistoryChallenge ? 'Retry Challenge' : 'Build a Sentence'}
+              {selectedHistoryChallenge ? 'Edit Challenge' : 'Build a Sentence'}
             </div>
           </div>
           
           {selectedHistoryChallenge && (
             <div style={styles.retryBanner}>
-              📝 Retrying previous challenge - Practice makes perfect!
+              ✏️ Editing previous challenge - Make your improvements!
             </div>
           )}
 
@@ -938,7 +938,7 @@ const styles: { [key: string]: CSSProperties } = {
     display: 'flex',
     gap: '8px'
   },
-  retryButton: {
+  editButton: {
     backgroundColor: '#3b82f6',
     color: 'white',
     border: 'none',
