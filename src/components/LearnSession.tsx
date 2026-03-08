@@ -24,7 +24,6 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
   const [showTips, setShowTips] = useState(false);
 
   useEffect(() => {
-    console.log('[LearnSession] Version: 2026-03-08-v2 with flexible matching');
     initializeSession();
   }, []);
 
@@ -152,30 +151,19 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
     const normalizedUser = normalizeAnswer(userAnswer);
     const normalizedCorrect = normalizeAnswer(correctAnswer);
 
-    console.log('[Answer Check] User:', userAnswer, '-> normalized:', normalizedUser);
-    console.log('[Answer Check] Correct:', correctAnswer, '-> normalized:', normalizedCorrect);
-
     if (!normalizedUser) return false;
 
     // 1) Exact match
-    if (normalizedUser === normalizedCorrect) {
-      console.log('[Answer Check] ✓ Exact match');
-      return true;
-    }
+    if (normalizedUser === normalizedCorrect) return true;
 
-    // 2) Split correct answer into parts by common separators
+    // 2) Split correct answer into parts by common separators: "rich, abundant" => ["rich", "abundant"]
     const parts = correctAnswer
       .split(/[,/、／;]/)
       .map(p => normalizeAnswer(p))
       .filter(Boolean);
 
-    console.log('[Answer Check] Parts:', parts);
-
     // Check if user answer matches one full part
-    if (parts.includes(normalizedUser)) {
-      console.log('[Answer Check] ✓ Part match');
-      return true;
-    }
+    if (parts.includes(normalizedUser)) return true;
 
     // 3) Word-level match: check if user's answer contains at least one meaningful word from correct answer
     const stopWords = new Set(['to', 'a', 'an', 'the', 'of', 'and', 'or', 'in', 'on', 'at', 'for', 'with']);
@@ -186,22 +174,12 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
       .map(w => w.trim())
       .filter(w => w.length >= 2 && !stopWords.has(w));
 
-    console.log('[Answer Check] Correct words:', correctWords);
-
     // Check if user input contains any of these words as whole words
-    const hasWordMatch = correctWords.some(word => {
+    return correctWords.some(word => {
       const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const wordBoundaryRegex = new RegExp(`\\b${escapedWord}\\b`, 'i');
       return wordBoundaryRegex.test(normalizedUser);
     });
-
-    if (hasWordMatch) {
-      console.log('[Answer Check] ✓ Word match');
-    } else {
-      console.log('[Answer Check] ✗ No match');
-    }
-
-    return hasWordMatch;
   };
 
   const handleTypeInSubmit = () => {
@@ -209,8 +187,6 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
 
     const currentQuestion = questions[currentIndex];
     const isCorrect = isTypeInCorrect(userInput, currentQuestion.correctAnswer);
-    
-    console.log('[Submit] Final result:', isCorrect ? 'CORRECT' : 'INCORRECT');
     
     recordAnswer(isCorrect);
   };
