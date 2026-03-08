@@ -75,27 +75,85 @@ export const syncService = {
    */
   async pushDeck(deck: FlashcardSet, userId: string) {
     console.log(`📤 Pushing deck "${deck.title}" (ID: ${deck.id}) to cloud...`);
+    console.log(`   User ID: ${userId}`);
     
-    // Upsert deck
-    const { error: deckError } = await supabase
+    // Verify user is authenticated
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      console.error('❌ User not authenticated!', authError);
+      throw new Error('User not authenticated. Please sign in again.');
+    }
+    
+    if (user.id !== userId) {
+      console.error('❌ User ID mismatch!', { expected: userId, actual: user.id });
+      throw new Error('User ID mismatch. Please sign in again.');
+    }
+    
+    console.log(`✅ User authenticated: ${user.id}`);
+    
+    // Check if deck already exists in cloud
+    const { data: existingDeck, error: checkError } = await supabase
       .from('decks')
-      .upsert({
-        id: deck.id,
-        user_id: userId,
-        title: deck.title,
-        description: deck.description,
-        tags: deck.tags,
-        jlpt_level: deck.jlptLevel,
-        created_at: new Date(deck.createdAt).toISOString(),
-        updated_at: new Date(deck.updatedAt).toISOString()
-      }, { onConflict: 'id' });
+      .select('id')
+      .eq('id', deck.id)
+      .maybeSingle();
+    
+    if (checkError) {
+      console.error('❌ Error checking existing deck:', checkError);
+      throw new Error(`Failed to check existing deck: ${checkError.message}`);
+    }
+    
+    const deckData = {
+      id: deck.id,
+      user_id: userId, // Use the verified userId
+      title: deck.title,
+      description: deck.description || '',
+      tags: deck.tags || [],
+      jlpt_level: deck.jlptLevel || null,
+      created_at: new Date(deck.createdAt).toISOString(),
+      updated_at: new Date(deck.updatedAt).toISOString()
+    };
+    
+    console.log('📦 Deck data to sync:', deckData);
+    
+    // Use INSERT or UPDATE based on whether deck exists
+    let deckError;
+    if (existingDeck) {
+      console.log('   Deck exists, updating...');
+      const result = await supabase
+        .from('decks')
+        .update(deckData)
+        .eq('id', deck.id);
+      deckError = result.error;
+    } else {
+      console.log('   Deck is new, inserting...');
+      const result = await supabase
+        .from('decks')
+        .insert(deckData);
+      deckError = result.error;
+    }
 
     if (deckError) {
       console.error(`❌ Error syncing deck "${deck.title}":`, deckError);
+      console.error('   Full error details:', JSON.stringify(deckError, null, 2));
       throw new Error(`Failed to sync deck: ${deckError.message}`);
     }
 
     console.log(`✅ Deck "${deck.title}" synced, now syncing ${deck.cards.length} cards...`);
+
+    // Delete old cards that are not in the current deck
+    if (existingDeck) {
+      const currentCardIds = deck.cards.map(c => c.id);
+      const { error: deleteError } = await supabase
+        .from('cards')
+        .delete()
+        .eq('deck_id', deck.id)
+        .not('id', 'in', `(${currentCardIds.join(',')})`);
+      
+      if (deleteError) {
+        console.error('Warning: Failed to delete old cards:', deleteError);
+      }
+    }
 
     // Upsert cards in chunks to avoid payload limits
     const cardsToUpsert = deck.cards.map((card, index) => ({
@@ -104,7 +162,9 @@ export const syncService = {
       front: card.front,
       back: card.back,
       example: card.example || null,
-      position: index
+      position: index,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     }));
 
     const CHUNK_SIZE = 100;
@@ -119,7 +179,7 @@ export const syncService = {
         throw new Error(`Failed to sync cards: ${cardsError.message}`);
       }
       
-      console.log(`✅ Synced cards ${i + 1}-${i + chunk.length} of ${deck.cards.length}`);
+      console.log(`✅ Synced cards ${i + 1}-${Math.min(i + chunk.length, deck.cards.length)} of ${deck.cards.length}`);
     }
     
     console.log(`✅ Successfully synced deck "${deck.title}" with all ${deck.cards.length} cards`);
