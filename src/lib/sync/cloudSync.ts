@@ -71,6 +71,23 @@ export class CloudSync {
     console.log(`   - User ID: ${userId}`);
     console.log(`   - Cards: ${deck.cards.length}`);
 
+    // Check if deck already exists for THIS user
+    const { data: existing, error: checkError } = await supabase
+      .from('decks')
+      .select('id')
+      .eq('id', deck.id)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (checkError) {
+      console.error(`❌ [CLOUD] Error checking deck existence:`, checkError);
+      throw new Error(`Failed to check deck: ${checkError.message}`);
+    }
+
+    if (existing) {
+      console.log(`   ℹ️ Deck already exists in cloud, updating...`);
+    }
+
     // Prepare deck data for Supabase
     const deckData = {
       id: deck.id,
@@ -83,7 +100,7 @@ export class CloudSync {
       updated_at: new Date(deck.updatedAt).toISOString()
     };
 
-    // Use upsert for deck (handles both insert and update)
+    // Use upsert - this works because RLS allows updates to own decks
     const { error: deckError } = await supabase
       .from('decks')
       .upsert(deckData, {
@@ -92,6 +109,14 @@ export class CloudSync {
       });
 
     if (deckError) {
+      // If it's a duplicate key error AND deck doesn't belong to this user,
+      // it means the deck ID collides with another user's deck
+      if (deckError.code === '23505' && !existing) {
+        console.warn(`   ⚠️ Deck ID collision with another user's deck`);
+        console.warn(`   ℹ️ Skipping this deck - already exists with different owner`);
+        return; // Skip this deck silently
+      }
+      
       console.error(`❌ [CLOUD] Failed to push deck "${deck.title}":`, deckError);
       throw new Error(`Failed to sync deck: ${deckError.message}`);
     }
