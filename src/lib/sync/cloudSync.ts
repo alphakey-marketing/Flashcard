@@ -8,8 +8,14 @@
  * avoids any local-vs-cloud ID mismatch.
  *
  * NOTE: The `cards` table has NO user_id column. It is owned by its
- * parent deck row (which does have user_id). RLS on cards is enforced
- * via the deck relationship, not a direct user_id column.
+ * parent deck row (which does have user_id). Because of this, we
+ * cannot rely on Supabase's implicit foreign-key join (select '*, cards (*)')
+ * to return cards on a second device — RLS on cards has no user_id to
+ * filter on and may return empty results.
+ *
+ * Instead we pull decks first, then pull cards explicitly filtered by
+ * deck_id IN (...) using the user's own deck IDs, and stitch them
+ * together in memory.
  */
 
 import { supabase } from '../supabaseClient';
@@ -26,26 +32,59 @@ export interface SyncResult {
 
 export class CloudSync {
   /**
-   * Pull all user's decks from cloud.
-   * Returns decks with the same IDs as stored locally.
+   * Pull all user's decks from cloud, with their cards.
+   *
+   * Two-step approach:
+   *  1. Fetch decks filtered by user_id (RLS-safe)
+   *  2. Fetch cards filtered by deck_id IN (user's deck IDs) (RLS-safe)
+   *  3. Stitch cards onto their parent decks in memory
    */
   static async pullDecks(): Promise<FlashcardSet[]> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
-
     console.log(`📊 [CLOUD] Pulling decks for user: ${userId}`);
 
-    const { data, error } = await supabase
+    // Step 1: fetch decks
+    const { data: deckRows, error: deckError } = await supabase
       .from('decks')
-      .select(`*, cards (*)`)
+      .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('❌ [CLOUD] Error pulling decks:', error);
-      throw new Error(`Failed to pull decks: ${error.message}`);
+    if (deckError) {
+      console.error('❌ [CLOUD] Error pulling decks:', deckError);
+      throw new Error(`Failed to pull decks: ${deckError.message}`);
     }
 
-    const decks: FlashcardSet[] = (data || []).map((deck: any) => ({
+    if (!deckRows || deckRows.length === 0) {
+      console.log('✅ [CLOUD] No decks in cloud');
+      return [];
+    }
+
+    const deckIds = deckRows.map((d: any) => d.id);
+    console.log(`📊 [CLOUD] Found ${deckIds.length} decks, fetching their cards...`);
+
+    // Step 2: fetch all cards for these decks in one query
+    const { data: cardRows, error: cardError } = await supabase
+      .from('cards')
+      .select('*')
+      .in('deck_id', deckIds)
+      .order('position', { ascending: true });
+
+    if (cardError) {
+      console.error('❌ [CLOUD] Error pulling cards:', cardError);
+      throw new Error(`Failed to pull cards: ${cardError.message}`);
+    }
+
+    // Step 3: group cards by deck_id
+    const cardsByDeckId = new Map<string, any[]>();
+    for (const card of (cardRows || [])) {
+      const list = cardsByDeckId.get(card.deck_id) || [];
+      list.push(card);
+      cardsByDeckId.set(card.deck_id, list);
+    }
+
+    // Step 4: build FlashcardSet objects
+    const decks: FlashcardSet[] = deckRows.map((deck: any) => ({
       id: deck.id,
       title: deck.title,
       description: deck.description || '',
@@ -53,17 +92,16 @@ export class CloudSync {
       jlptLevel: deck.jlpt_level,
       createdAt: new Date(deck.created_at).getTime(),
       updatedAt: new Date(deck.updated_at).getTime(),
-      cards: (deck.cards || [])
-        .sort((a: any, b: any) => a.position - b.position)
-        .map((card: any) => ({
-          id: card.id,
-          front: card.front,
-          back: card.back,
-          example: card.example || undefined
-        }))
+      cards: (cardsByDeckId.get(deck.id) || []).map((card: any) => ({
+        id: card.id,
+        front: card.front,
+        back: card.back,
+        example: card.example || undefined
+      }))
     }));
 
-    console.log(`✅ [CLOUD] Pulled ${decks.length} decks`);
+    const totalCards = decks.reduce((sum, d) => sum + d.cards.length, 0);
+    console.log(`✅ [CLOUD] Pulled ${decks.length} decks with ${totalCards} cards total`);
     return decks;
   }
 
@@ -74,7 +112,6 @@ export class CloudSync {
    */
   static async pushDeck(deck: FlashcardSet): Promise<void> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
-
     console.log(`\n📤 [CLOUD] Pushing deck: "${deck.title}" (id: ${deck.id})`);
 
     const deckData = {
@@ -234,7 +271,6 @@ export class CloudSync {
       });
 
     if (error) {
-      // Reviews are non-critical — log but don't throw
       console.warn('⚠️ [CLOUD] Failed to push review (non-fatal):', error.message);
     }
   }
