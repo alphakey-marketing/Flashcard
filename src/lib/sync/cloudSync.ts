@@ -6,6 +6,10 @@
  * RLS isolation is achieved via the user_id column on every row —
  * NOT by namespacing primary keys. This keeps the code simple and
  * avoids any local-vs-cloud ID mismatch.
+ *
+ * NOTE: The `cards` table has NO user_id column. It is owned by its
+ * parent deck row (which does have user_id). RLS on cards is enforced
+ * via the deck relationship, not a direct user_id column.
  */
 
 import { supabase } from '../supabaseClient';
@@ -96,7 +100,7 @@ export class CloudSync {
     console.log(`   ✅ Deck metadata synced`);
 
     if (deck.cards.length > 0) {
-      await this.pushCards(deck.id, userId, deck.cards);
+      await this.pushCards(deck.id, deck.cards);
     }
 
     console.log(`✅ [CLOUD] Complete: "${deck.title}"\n`);
@@ -104,11 +108,11 @@ export class CloudSync {
 
   /**
    * Push cards for a deck.
-   * Card IDs match local IDs exactly.
+   * Cards are linked to their parent deck via deck_id only.
+   * No user_id column exists on the cards table.
    */
   private static async pushCards(
     deckId: string,
-    userId: string,
     cards: Array<{ id: string; front: string; back: string; example?: string }>
   ): Promise<void> {
     console.log(`   🃏 Syncing ${cards.length} cards...`);
@@ -116,7 +120,6 @@ export class CloudSync {
     const cardsData = cards.map((card, index) => ({
       id: card.id,
       deck_id: deckId,
-      user_id: userId,
       front: card.front,
       back: card.back,
       example: card.example || null,
@@ -143,6 +146,7 @@ export class CloudSync {
 
   /**
    * Delete a deck from cloud using the raw local ID.
+   * The .eq('user_id') guard ensures only the owner can delete.
    */
   static async deleteDeck(deckId: string): Promise<void> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
@@ -152,7 +156,7 @@ export class CloudSync {
       .from('decks')
       .delete()
       .eq('id', deckId)
-      .eq('user_id', userId); // safety: only delete own rows
+      .eq('user_id', userId);
 
     if (error) {
       console.error('❌ [CLOUD] Failed to delete deck:', error);
@@ -164,7 +168,7 @@ export class CloudSync {
 
   /**
    * Pull review data from cloud.
-   * card_id and deck_id in the DB match local IDs.
+   * card_id and deck_id in the DB match local IDs exactly.
    */
   static async pullReviews(): Promise<CardReviewData[]> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
