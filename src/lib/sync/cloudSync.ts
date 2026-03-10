@@ -1,6 +1,11 @@
 /**
  * Cloud Sync Module
- * Handles all Supabase database operations with RLS support
+ * Handles all Supabase database operations with RLS support.
+ *
+ * ID SCHEME: We store the exact same IDs locally and in the cloud.
+ * RLS isolation is achieved via the user_id column on every row —
+ * NOT by namespacing primary keys. This keeps the code simple and
+ * avoids any local-vs-cloud ID mismatch.
  */
 
 import { supabase } from '../supabaseClient';
@@ -15,31 +20,19 @@ export interface SyncResult {
   error?: string;
 }
 
-/**
- * Namespace a local ID to be unique per-user in the cloud.
- * e.g. "n4-complete-1" + userId -> "n4-complete-1__abc12345"
- * If the ID already contains the user suffix, return it unchanged.
- */
-function toCloudId(localId: string, userId: string): string {
-  const suffix = `__${userId.slice(0, 8)}`;
-  return localId.endsWith(suffix) ? localId : `${localId}${suffix}`;
-}
-
 export class CloudSync {
   /**
-   * Pull all user's decks from cloud
+   * Pull all user's decks from cloud.
+   * Returns decks with the same IDs as stored locally.
    */
   static async pullDecks(): Promise<FlashcardSet[]> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
-    
+
     console.log(`📊 [CLOUD] Pulling decks for user: ${userId}`);
 
     const { data, error } = await supabase
       .from('decks')
-      .select(`
-        *,
-        cards (*)
-      `)
+      .select(`*, cards (*)`)
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
@@ -66,32 +59,22 @@ export class CloudSync {
         }))
     }));
 
-    console.log(`✅ [CLOUD] Pulled ${decks.length} decks from cloud`);
+    console.log(`✅ [CLOUD] Pulled ${decks.length} decks`);
     return decks;
   }
 
   /**
    * Push a single deck (and its cards) to cloud.
-   *
-   * All IDs are namespaced with a user-specific suffix before hitting the DB.
-   * This guarantees:
-   *  - No two users ever share the same deck/card primary key.
-   *  - No RLS USING-expression violation (every row is owned by auth.uid()).
-   *  - No duplicate-key errors on re-sync (upsert on the namespaced ID).
+   * Uses the raw local ID — no namespacing.
+   * user_id is always included so RLS INSERT policy is satisfied.
    */
   static async pushDeck(deck: FlashcardSet): Promise<void> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
 
-    const cloudDeckId = toCloudId(deck.id, userId);
-
-    console.log(`\n📤 [CLOUD] Pushing deck: "${deck.title}"`);
-    console.log(`   - Local ID : ${deck.id}`);
-    console.log(`   - Cloud ID : ${cloudDeckId}`);
-    console.log(`   - User ID  : ${userId}`);
-    console.log(`   - Cards    : ${deck.cards.length}`);
+    console.log(`\n📤 [CLOUD] Pushing deck: "${deck.title}" (id: ${deck.id})`);
 
     const deckData = {
-      id: cloudDeckId,
+      id: deck.id,
       user_id: userId,
       title: deck.title,
       description: deck.description || '',
@@ -113,7 +96,7 @@ export class CloudSync {
     console.log(`   ✅ Deck metadata synced`);
 
     if (deck.cards.length > 0) {
-      await this.pushCards(cloudDeckId, userId, deck.cards);
+      await this.pushCards(deck.id, userId, deck.cards);
     }
 
     console.log(`✅ [CLOUD] Complete: "${deck.title}"\n`);
@@ -121,19 +104,19 @@ export class CloudSync {
 
   /**
    * Push cards for a deck.
-   * Card IDs are namespaced per-user to avoid PK collisions.
-   * Cards are linked to their deck via deck_id (no user_id column on cards table).
+   * Card IDs match local IDs exactly.
    */
   private static async pushCards(
-    cloudDeckId: string,
+    deckId: string,
     userId: string,
     cards: Array<{ id: string; front: string; back: string; example?: string }>
   ): Promise<void> {
     console.log(`   🃏 Syncing ${cards.length} cards...`);
 
     const cardsData = cards.map((card, index) => ({
-      id: toCloudId(card.id, userId),
-      deck_id: cloudDeckId,
+      id: card.id,
+      deck_id: deckId,
+      user_id: userId,
       front: card.front,
       back: card.back,
       example: card.example || null,
@@ -145,13 +128,12 @@ export class CloudSync {
     const CHUNK_SIZE = 50;
     for (let i = 0; i < cardsData.length; i += CHUNK_SIZE) {
       const chunk = cardsData.slice(i, i + CHUNK_SIZE);
-
       const { error } = await supabase
         .from('cards')
         .upsert(chunk, { onConflict: 'id' });
 
       if (error) {
-        console.error(`   ❌ Failed to sync cards ${i}-${i + chunk.length}:`, error);
+        console.error(`   ❌ Failed to sync cards chunk:`, error);
         throw new Error(`Failed to sync cards: ${error.message}`);
       }
 
@@ -160,18 +142,17 @@ export class CloudSync {
   }
 
   /**
-   * Delete a deck from cloud
+   * Delete a deck from cloud using the raw local ID.
    */
   static async deleteDeck(deckId: string): Promise<void> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
-
-    const cloudDeckId = toCloudId(deckId, userId);
-    console.log(`🗑️ [CLOUD] Deleting deck: ${cloudDeckId}`);
+    console.log(`🗑️ [CLOUD] Deleting deck: ${deckId} for user ${userId}`);
 
     const { error } = await supabase
       .from('decks')
       .delete()
-      .eq('id', cloudDeckId);
+      .eq('id', deckId)
+      .eq('user_id', userId); // safety: only delete own rows
 
     if (error) {
       console.error('❌ [CLOUD] Failed to delete deck:', error);
@@ -182,11 +163,11 @@ export class CloudSync {
   }
 
   /**
-   * Pull review data from cloud
+   * Pull review data from cloud.
+   * card_id and deck_id in the DB match local IDs.
    */
   static async pullReviews(): Promise<CardReviewData[]> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
-
     console.log(`📊 [CLOUD] Pulling reviews for user: ${userId}`);
 
     const { data, error } = await supabase
@@ -207,9 +188,9 @@ export class CloudSync {
       repetitions: r.repetition,
       nextReview: new Date(r.next_review_date).getTime(),
       status: r.repetition >= 5 ? 'mastered' : r.repetition > 0 ? 'reviewing' : 'learning',
-      totalReviews: r.total_reviews,
+      totalReviews: r.total_reviews || 0,
       knowItCount: 0,
-      againCount: r.lapses,
+      againCount: r.lapses || 0,
       masteredCount: 0,
       lastReviewed: new Date(r.last_review_date).getTime(),
       createdAt: new Date(r.last_review_date).getTime(),
@@ -221,7 +202,8 @@ export class CloudSync {
   }
 
   /**
-   * Push a single review to cloud
+   * Push a single review to cloud.
+   * card_id and deck_id stored as raw local IDs.
    */
   static async pushReview(review: CardReviewData): Promise<void> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
@@ -236,8 +218,8 @@ export class CloudSync {
       ease_factor: review.easeFactor,
       next_review_date: new Date(review.nextReview).toISOString(),
       last_review_date: new Date(review.lastReviewed).toISOString(),
-      total_reviews: review.totalReviews,
-      lapses: review.againCount
+      total_reviews: review.totalReviews || 0,
+      lapses: review.againCount || 0
     };
 
     const { error } = await supabase
@@ -248,8 +230,8 @@ export class CloudSync {
       });
 
     if (error) {
-      console.error('⚠️ [CLOUD] Failed to push review:', error);
-      // Don't throw - reviews are non-critical
+      // Reviews are non-critical — log but don't throw
+      console.warn('⚠️ [CLOUD] Failed to push review (non-fatal):', error.message);
     }
   }
 }
