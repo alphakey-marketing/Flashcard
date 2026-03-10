@@ -134,41 +134,14 @@ export const syncService = {
       title: deckData.title,
       has_tags: deckData.tags.length > 0
     });
-    
-    // Check if deck exists
-    console.log('   Checking if deck exists in cloud...');
-    const { data: existingDeck, error: checkError } = await supabase
+
+    // Use upsert with onConflict so both INSERT and UPDATE go through
+    // a single operation. This ensures the RLS INSERT policy is satisfied
+    // because user_id is always explicitly provided in the payload.
+    console.log('   Upserting deck (insert or update)...');
+    const { error: deckError } = await supabase
       .from('decks')
-      .select('id, user_id')
-      .eq('id', deck.id)
-      .maybeSingle();
-    
-    if (checkError) {
-      console.error('❌ Error checking existing deck:', checkError);
-      throw new Error(`Failed to check existing deck: ${checkError.message}`);
-    }
-    
-    if (existingDeck) {
-      console.log(`   ➡️ Deck exists, updating... (owner: ${existingDeck.user_id})`);
-    } else {
-      console.log('   ➕ Deck is new, inserting...');
-    }
-    
-    // Perform insert or update
-    let deckError;
-    if (existingDeck) {
-      const { error } = await supabase
-        .from('decks')
-        .update(deckData)
-        .eq('id', deck.id);
-      deckError = error;
-    } else {
-      // For INSERT, use the session's access token explicitly
-      const { error } = await supabase
-        .from('decks')
-        .insert([deckData]); // Note: wrap in array for single insert
-      deckError = error;
-    }
+      .upsert([deckData], { onConflict: 'id' });
 
     if (deckError) {
       console.error(`\n❌ [SYNC FAILED] Deck: "${deck.title}"`);
@@ -179,7 +152,6 @@ export const syncService = {
       console.error('   User ID in data:', userId);
       console.error('   Session user ID:', session.user.id);
       
-      // Show helpful message
       if (deckError.code === '42501') {
         console.error('\n🚫 RLS Policy Violation Detected!');
         console.error('   This means the database is blocking the insert.');
@@ -197,11 +169,12 @@ export const syncService = {
     console.log(`✅ Deck "${deck.title}" synced successfully`);
     console.log(`   Now syncing ${deck.cards.length} cards...`);
 
-    // Sync cards
+    // Sync cards — include user_id so the cards RLS policy is satisfied
     if (deck.cards.length > 0) {
       const cardsToUpsert = deck.cards.map((card, index) => ({
         id: card.id,
         deck_id: deck.id,
+        user_id: userId,
         front: card.front,
         back: card.back,
         example: card.example || null,
@@ -210,7 +183,7 @@ export const syncService = {
         updated_at: new Date().toISOString()
       }));
 
-      const CHUNK_SIZE = 50; // Reduced chunk size for stability
+      const CHUNK_SIZE = 50;
       for (let i = 0; i < cardsToUpsert.length; i += CHUNK_SIZE) {
         const chunk = cardsToUpsert.slice(i, i + CHUNK_SIZE);
         const { error: cardsError } = await supabase
