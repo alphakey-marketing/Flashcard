@@ -101,8 +101,6 @@ export class CloudSync {
       updated_at: new Date(deck.updatedAt).toISOString()
     };
 
-    // Safe upsert: the namespaced ID is unique per-user so this row is
-    // always owned by auth.uid(). Both INSERT and UPDATE satisfy RLS.
     const { error: deckError } = await supabase
       .from('decks')
       .upsert([deckData], { onConflict: 'id' });
@@ -123,8 +121,8 @@ export class CloudSync {
 
   /**
    * Push cards for a deck.
-   * Card IDs are also namespaced per-user to avoid PK collisions.
-   * user_id is included so the cards RLS policy is satisfied.
+   * Card IDs are namespaced per-user to avoid PK collisions.
+   * Cards are linked to their deck via deck_id (no user_id column on cards table).
    */
   private static async pushCards(
     cloudDeckId: string,
@@ -136,7 +134,6 @@ export class CloudSync {
     const cardsData = cards.map((card, index) => ({
       id: toCloudId(card.id, userId),
       deck_id: cloudDeckId,
-      user_id: userId,
       front: card.front,
       back: card.back,
       example: card.example || null,
