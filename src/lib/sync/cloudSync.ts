@@ -61,7 +61,19 @@ export class CloudSync {
   }
 
   /**
-   * Push a single deck to cloud
+   * Push a single deck (and its cards) to cloud.
+   *
+   * RLS-safe strategy:
+   *  1. Check if this deck ID already exists AND belongs to the current user.
+   *  2. If it belongs to the current user  -> UPDATE.
+   *  3. If it belongs to a DIFFERENT user  -> the deck ID is a collision
+   *     (e.g. two users both have the preset "n4-complete-1").
+   *     We cannot write to it, so we reassign a new unique ID for this user
+   *     and INSERT under the new ID.
+   *  4. If it does not exist at all        -> INSERT.
+   *
+   * This avoids the RLS USING-expression violation that occurs when upsert
+   * tries to UPDATE a row owned by a different user.
    */
   static async pushDeck(deck: FlashcardSet): Promise<void> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
@@ -71,26 +83,34 @@ export class CloudSync {
     console.log(`   - User ID: ${userId}`);
     console.log(`   - Cards: ${deck.cards.length}`);
 
-    // Check if deck already exists for THIS user
-    const { data: existing, error: checkError } = await supabase
+    // Step 1: Check what exists for this deck ID (no user_id filter — we need to know
+    // whether the row exists at all, regardless of owner).
+    const { data: existingRows, error: checkError } = await supabase
       .from('decks')
-      .select('id')
-      .eq('id', deck.id)
-      .eq('user_id', userId)
-      .maybeSingle();
+      .select('id, user_id')
+      .eq('id', deck.id);
 
     if (checkError) {
       console.error(`❌ [CLOUD] Error checking deck existence:`, checkError);
       throw new Error(`Failed to check deck: ${checkError.message}`);
     }
 
-    if (existing) {
-      console.log(`   ℹ️ Deck already exists in cloud, updating...`);
+    const existingRow = existingRows && existingRows.length > 0 ? existingRows[0] : null;
+    const ownedByCurrentUser = existingRow?.user_id === userId;
+    const ownedByOtherUser   = existingRow && existingRow.user_id !== userId;
+
+    // Step 2: Determine the actual deck ID to use for this user.
+    // If the ID is taken by another user, generate a user-scoped variant.
+    const effectiveDeckId = ownedByOtherUser
+      ? `${deck.id}--${userId.slice(0, 8)}`
+      : deck.id;
+
+    if (ownedByOtherUser) {
+      console.warn(`   ⚠️ Deck ID "${deck.id}" owned by another user. Using "${effectiveDeckId}" for this user.`);
     }
 
-    // Prepare deck data for Supabase
     const deckData = {
-      id: deck.id,
+      id: effectiveDeckId,
       user_id: userId,
       title: deck.title,
       description: deck.description || '',
@@ -100,42 +120,72 @@ export class CloudSync {
       updated_at: new Date(deck.updatedAt).toISOString()
     };
 
-    // Use upsert - this works because RLS allows updates to own decks
-    const { error: deckError } = await supabase
-      .from('decks')
-      .upsert(deckData, {
-        onConflict: 'id',
-        ignoreDuplicates: false
-      });
+    // Step 3: INSERT or UPDATE based on ownership.
+    if (ownedByCurrentUser) {
+      // UPDATE — safe because RLS USING(user_id = auth.uid()) is satisfied.
+      console.log(`   ℹ️ Updating existing own deck...`);
+      const { error } = await supabase
+        .from('decks')
+        .update(deckData)
+        .eq('id', effectiveDeckId)
+        .eq('user_id', userId);
 
-    if (deckError) {
-      // If it's a duplicate key error AND deck doesn't belong to this user,
-      // it means the deck ID collides with another user's deck
-      if (deckError.code === '23505' && !existing) {
-        console.warn(`   ⚠️ Deck ID collision with another user's deck`);
-        console.warn(`   ℹ️ Skipping this deck - already exists with different owner`);
-        return; // Skip this deck silently
+      if (error) {
+        console.error(`❌ [CLOUD] Failed to update deck:`, error);
+        throw new Error(`Failed to sync deck: ${error.message}`);
       }
-      
-      console.error(`❌ [CLOUD] Failed to push deck "${deck.title}":`, deckError);
-      throw new Error(`Failed to sync deck: ${deckError.message}`);
+    } else {
+      // INSERT — safe because this is a new row owned by the current user.
+      // Check the remapped ID too, in case we already inserted it before.
+      const { data: remappedCheck } = await supabase
+        .from('decks')
+        .select('id, user_id')
+        .eq('id', effectiveDeckId)
+        .maybeSingle();
+
+      if (remappedCheck) {
+        // Already inserted under remapped ID — just update.
+        console.log(`   ℹ️ Remapped deck already exists, updating...`);
+        const { error } = await supabase
+          .from('decks')
+          .update(deckData)
+          .eq('id', effectiveDeckId)
+          .eq('user_id', userId);
+        if (error) {
+          console.error(`❌ [CLOUD] Failed to update remapped deck:`, error);
+          throw new Error(`Failed to sync deck: ${error.message}`);
+        }
+      } else {
+        // Brand new insert.
+        console.log(`   ➕ Inserting new deck...`);
+        const { error } = await supabase
+          .from('decks')
+          .insert([deckData]);
+
+        if (error) {
+          console.error(`❌ [CLOUD] Failed to insert deck:`, error);
+          throw new Error(`Failed to sync deck: ${error.message}`);
+        }
+      }
     }
 
-    console.log(`   ✅ Deck metadata synced`);
+    console.log(`   ✅ Deck metadata synced (id: ${effectiveDeckId})`);
 
-    // Sync cards if there are any
+    // Step 4: Sync cards using the effective deck ID.
     if (deck.cards.length > 0) {
-      await this.pushCards(deck.id, deck.cards);
+      await this.pushCards(effectiveDeckId, userId, deck.cards);
     }
 
     console.log(`✅ [CLOUD] Complete: "${deck.title}"\n`);
   }
 
   /**
-   * Push cards for a deck
+   * Push cards for a deck.
+   * user_id is included so the cards RLS policy (user_id = auth.uid()) is satisfied.
    */
   private static async pushCards(
     deckId: string,
+    userId: string,
     cards: Array<{ id: string; front: string; back: string; example?: string }>
   ): Promise<void> {
     console.log(`   🃏 Syncing ${cards.length} cards...`);
@@ -143,6 +193,7 @@ export class CloudSync {
     const cardsData = cards.map((card, index) => ({
       id: card.id,
       deck_id: deckId,
+      user_id: userId,
       front: card.front,
       back: card.back,
       example: card.example || null,
@@ -151,7 +202,6 @@ export class CloudSync {
       updated_at: new Date().toISOString()
     }));
 
-    // Insert cards in chunks to avoid payload size limits
     const CHUNK_SIZE = 50;
     for (let i = 0; i < cardsData.length; i += CHUNK_SIZE) {
       const chunk = cardsData.slice(i, i + CHUNK_SIZE);
