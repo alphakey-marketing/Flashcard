@@ -38,10 +38,13 @@ export interface CardDraft {
 
 const INIT_FLAG_KEY = 'flashmind-initialized';
 const TEMPLATE_VERSION_KEY = 'flashmind-template-version';
-const CURRENT_TEMPLATE_VERSION = '4.0';
+// Bump this version whenever the preset deck list changes.
+// Existing accounts that stored the previous version will re-run
+// initializeTemplates and receive the new/updated preset decks.
+const CURRENT_TEMPLATE_VERSION = '4.1';
 
 /**
- * Initialize templates on first load
+ * Initialize templates on first load or when template version changes.
  */
 function initializeTemplates(): void {
   const isInitialized = localStorage.getItem(INIT_FLAG_KEY);
@@ -53,11 +56,13 @@ function initializeTemplates(): void {
     const existingSets = LocalStorageSync.loadDecks();
     const templateIds = new Set(jlptTemplates.map(t => t.id));
     
-    // Keep user-created sets
+    // Keep only user-created sets — strip out any old preset decks so they
+    // get replaced cleanly with the current template list.
     const userSets = existingSets.filter(
       set => !templateIds.has(set.id) && 
              !set.id.startsWith('jlpt-') && 
-             !set.id.startsWith('n5-complete-')
+             !set.id.startsWith('n5-complete-') &&
+             !set.id.startsWith('n4-complete-')
     );
 
     // Merge templates + user sets

@@ -24,6 +24,15 @@ type JLPTLevel = 'N5' | 'N4' | 'N3' | 'N2' | 'N1' | undefined;
 
 const CATEGORY_COLLAPSE_KEY = 'flashmind-collapsed-categories';
 
+/**
+ * Mirror of cloudSync.toCloudId — namespace a local deck ID with the
+ * first 8 chars of userId so it matches what was stored in the cloud.
+ */
+function toCloudId(localId: string, userId: string): string {
+  const suffix = `__${userId.slice(0, 8)}`;
+  return localId.endsWith(suffix) ? localId : `${localId}${suffix}`;
+}
+
 const Home: React.FC<HomeProps> = ({ 
   onNavigateToCreate, 
   onNavigateToSwipe, 
@@ -95,18 +104,29 @@ const Home: React.FC<HomeProps> = ({
     }
   };
 
+  /**
+   * Compare local deck IDs against cloud deck IDs.
+   *
+   * Cloud IDs are namespaced (e.g. 'n4-complete-1__abc12345'), so we must
+   * apply the same toCloudId() transform to local IDs before comparing.
+   * Without this, every local deck would appear "unsynced" even after a
+   * successful sync.
+   */
   const checkUnsyncedDecks = async (currentUserId: string) => {
     try {
       const localDecks = getAllSets();
       const { decks: cloudDecks } = await syncService.pullAll(currentUserId);
+
+      // Build a set of NAMESPACED cloud IDs
       const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
-      
+
       const unsynced = new Set(
         localDecks
-          .filter(d => !cloudDeckIds.has(d.id))
+          // A deck is unsynced if its namespaced ID is not in the cloud
+          .filter(d => !cloudDeckIds.has(toCloudId(d.id, currentUserId)))
           .map(d => d.id)
       );
-      
+
       console.log(`🔍 Check result: ${unsynced.size} unsynced decks out of ${localDecks.length} local decks`);
       setUnsyncedDeckIds(unsynced);
     } catch (err) {
@@ -141,7 +161,8 @@ const Home: React.FC<HomeProps> = ({
       console.log(`☁️ Cloud: ${cloudDecks.length} decks`);
       
       const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
-      const missingLocalDecks = localDecks.filter(d => !cloudDeckIds.has(d.id));
+      // Use namespaced IDs for comparison
+      const missingLocalDecks = localDecks.filter(d => !cloudDeckIds.has(toCloudId(d.id, userId)));
       
       console.log(`🔍 Found ${missingLocalDecks.length} decks to sync:`, missingLocalDecks.map(d => d.title));
       
