@@ -307,7 +307,7 @@ export const n4Sets: FlashcardSet[] = [
       { id: "n4-5-49", front: "寄付する[きふする]\n\n慈善団体に寄付します。", back: "To donate\n\nI donate to charities." },
       { id: "n4-5-50", front: "家計[かけい]\n\n家計を管理します。", back: "Household budget\n\nI manage the household budget." }
     ]
-  }
+  },
   {
     id: "n4-complete-6",
     title: "JLPT N4 - Body & Health",
@@ -859,5 +859,3 @@ export const n4Sets: FlashcardSet[] = [
     },
 
 ];
-
-export { n4Sets };  // ADD THIS if not already there
