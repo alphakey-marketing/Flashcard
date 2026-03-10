@@ -1,4 +1,5 @@
 import { FlashcardSet } from '../lib/storage';
+import { n4Sets } from './n4-sets-1-5';
 
 const currentTimestamp = Date.now();
 
@@ -3493,78 +3494,7 @@ const n5Sets: FlashcardSet[] = [
 
 export const jlptTemplates: FlashcardSet[] = [
   ...n5Sets,
-  {
-    id: 'jlpt-n4-vocab',
-    title: 'JLPT N4 Vocabulary',
-    description: 'Essential vocabulary for JLPT N4 level',
-    jlptLevel: 'N4',
-    tags: ['JLPT', 'N4', 'vocabulary'],
-    createdAt: currentTimestamp,
-    updatedAt: currentTimestamp,
-    cards: [
-      {
-        id: 'n4-1',
-        front: '便利[べんり]\nこの町は便利です。',
-        back: 'Convenient\nThis town is convenient.'
-      },
-      {
-        id: 'n4-2',
-        front: '楽しい[たのしい]\n日本語の勉強は楽しいです。',
-        back: 'Fun / Enjoyable\nStudying Japanese is fun.'
-      },
-      {
-        id: 'n4-3',
-        front: '残念[ざんねん]\n残念ですが、行けません。',
-        back: 'Regrettable / Too bad\nUnfortunately, I cannot go.'
-      },
-      {
-        id: 'n4-4',
-        front: '危険[きけん]\nここは危険です。',
-        back: 'Dangerous\nThis place is dangerous.'
-      },
-      {
-        id: 'n4-5',
-        front: '静か[しずか]\n図書館は静かです。',
-        back: 'Quiet\nThe library is quiet.'
-      }
-    ]
-  },
-  {
-    id: 'jlpt-n3-vocab',
-    title: 'JLPT N3 Vocabulary',
-    description: 'Essential vocabulary for JLPT N3 level',
-    jlptLevel: 'N3',
-    tags: ['JLPT', 'N3', 'vocabulary'],
-    createdAt: currentTimestamp,
-    updatedAt: currentTimestamp,
-    cards: [
-      {
-        id: 'n3-1',
-        front: '提出[ていしゅつ]\nレポートの提出は明日です。',
-        back: 'Submission\nThe report submission is tomorrow.'
-      },
-      {
-        id: 'n3-2',
-        front: '増加[ぞうか]\n人口が増加している。',
-        back: 'Increase\nThe population is increasing.'
-      },
-      {
-        id: 'n3-3',
-        front: '設置[せっち]\n駅に自動販売機を設置した。',
-        back: 'Installation / Establishment\nThey installed a vending machine at the station.'
-      },
-      {
-        id: 'n3-4',
-        front: '承知[しょうち]\n承知しました。',
-        back: 'Acknowledgment / Understanding\nI understand / Acknowledged.'
-      },
-      {
-        id: 'n3-5',
-        front: '解決[かいけつ]\n問題を解決しました。',
-        back: 'Solution / Resolution\nI solved the problem.'
-      }
-    ]
-  }
-];
+  ...n4Sets,
+ ];
 
 export default jlptTemplates;
