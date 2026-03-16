@@ -3,7 +3,8 @@ import { getAllSets, deleteSet, FlashcardSet, saveSet } from '../lib/storage';
 import { exportToCSV } from '../lib/csvParser';
 import { getStreak, getTodayStats } from '../lib/studyStats';
 import { getSetStudyStats, getSetReviewData } from '../lib/spacedRepetition';
-import { syncService } from '../lib/syncService';
+import { CloudSync } from '../lib/sync/cloudSync';
+import { SyncManager } from '../lib/sync/syncManager';
 import { supabase } from '../lib/supabaseClient';
 import { getTodayPrompt, getPromptStreak } from '../lib/sentenceBuilder';
 import ImportModal from '../components/ImportModal';
@@ -24,15 +25,15 @@ type JLPTLevel = 'N5' | 'N4' | 'N3' | 'N2' | 'N1' | undefined;
 
 const CATEGORY_COLLAPSE_KEY = 'flashmind-collapsed-categories';
 
-const Home: React.FC<HomeProps> = ({ 
-  onNavigateToCreate, 
-  onNavigateToSwipe, 
-  onNavigateToLearn, 
+const Home: React.FC<HomeProps> = ({
+  onNavigateToCreate,
+  onNavigateToSwipe,
+  onNavigateToLearn,
   onNavigateToStats,
   onNavigateToSentenceBuilder,
   onNavigateToSpeechPractice,
   onNavigateToDailyWriting,
-  onLogout 
+  onLogout
 }) => {
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -58,32 +59,26 @@ const Home: React.FC<HomeProps> = ({
   const loadCollapsedCategories = () => {
     try {
       const saved = localStorage.getItem(CATEGORY_COLLAPSE_KEY);
-      if (saved) {
-        setCollapsedCategories(new Set(JSON.parse(saved)));
-      }
-    } catch (error) {
-      console.error('Error loading collapsed categories:', error);
+      if (saved) setCollapsedCategories(new Set(JSON.parse(saved)));
+    } catch (e) {
+      console.error('Error loading collapsed categories:', e);
     }
   };
 
   const saveCollapsedCategories = (collapsed: Set<string>) => {
     try {
       localStorage.setItem(CATEGORY_COLLAPSE_KEY, JSON.stringify(Array.from(collapsed)));
-    } catch (error) {
-      console.error('Error saving collapsed categories:', error);
+    } catch (e) {
+      console.error('Error saving collapsed categories:', e);
     }
   };
 
   const toggleCategoryCollapse = (category: string) => {
     setCollapsedCategories(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(category)) {
-        newSet.delete(category);
-      } else {
-        newSet.add(category);
-      }
-      saveCollapsedCategories(newSet);
-      return newSet;
+      const next = new Set(prev);
+      next.has(category) ? next.delete(category) : next.add(category);
+      saveCollapsedCategories(next);
+      return next;
     });
   };
 
@@ -91,32 +86,33 @@ const Home: React.FC<HomeProps> = ({
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user) {
       setUserId(session.user.id);
-      await checkUnsyncedDecks(session.user.id);
+      await checkUnsyncedDecks();
     }
   };
 
-  const checkUnsyncedDecks = async (currentUserId: string) => {
+  /**
+   * Compare local deck IDs against cloud deck IDs.
+   * Both sides now use raw local IDs, so comparison is a direct string match.
+   * A deck is "unsynced" if its ID does not appear in the cloud.
+   */
+  const checkUnsyncedDecks = async () => {
     try {
       const localDecks = getAllSets();
-      const { decks: cloudDecks } = await syncService.pullAll(currentUserId);
-      const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
-      
+      const cloudDecks = await CloudSync.pullDecks();
+      const cloudIds = new Set(cloudDecks.map(d => d.id));
+
       const unsynced = new Set(
-        localDecks
-          .filter(d => !cloudDeckIds.has(d.id))
-          .map(d => d.id)
+        localDecks.filter(d => !cloudIds.has(d.id)).map(d => d.id)
       );
-      
-      console.log(`🔍 Check result: ${unsynced.size} unsynced decks out of ${localDecks.length} local decks`);
+
+      console.log(`🔍 Unsynced: ${unsynced.size} / ${localDecks.length} decks`);
       setUnsyncedDeckIds(unsynced);
     } catch (err) {
       console.error('Failed to check unsynced decks:', err);
     }
   };
 
-  const loadSets = () => {
-    setSets(getAllSets());
-  };
+  const loadSets = () => setSets(getAllSets());
 
   const loadStats = () => {
     setStreak(getStreak());
@@ -124,6 +120,9 @@ const Home: React.FC<HomeProps> = ({
     setTodayStats({ totalCards: today.totalCards, totalDuration: today.totalDuration });
   };
 
+  /**
+   * Manual sync: push all unsynced local decks to cloud, then re-check.
+   */
   const handleManualSync = async () => {
     if (!userId) {
       alert('Please log in to sync your data');
@@ -131,63 +130,35 @@ const Home: React.FC<HomeProps> = ({
     }
 
     setIsSyncing(true);
-    console.log('🔄 Manual sync initiated...');
-    
     try {
       const localDecks = getAllSets();
-      console.log(`📊 Local: ${localDecks.length} decks`);
-      
-      const { decks: cloudDecks } = await syncService.pullAll(userId);
-      console.log(`☁️ Cloud: ${cloudDecks.length} decks`);
-      
-      const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
-      const missingLocalDecks = localDecks.filter(d => !cloudDeckIds.has(d.id));
-      
-      console.log(`🔍 Found ${missingLocalDecks.length} decks to sync:`, missingLocalDecks.map(d => d.title));
-      
-      if (missingLocalDecks.length > 0) {
-        const results = await Promise.allSettled(
-          missingLocalDecks.map(deck => syncService.pushDeck(deck, userId))
-        );
-        
-        const successful = results.filter(r => r.status === 'fulfilled').length;
-        const failed = results.filter(r => r.status === 'rejected');
-        
-        console.log(`✅ ${successful} decks synced successfully`);
-        
-        if (failed.length > 0) {
-          console.error(`❌ ${failed.length} decks failed to sync:`, failed);
-          alert(`⚠️ Partially synced: ${successful}/${missingLocalDecks.length} decks succeeded.\n\nErrors:\n${failed.map((f: any) => f.reason?.message || 'Unknown error').join('\n')}`);
-        } else {
-          alert(`✅ Successfully synced ${missingLocalDecks.length} deck(s) to cloud!`);
-        }
-        
-        const syncedDeckIds = new Set(
-          missingLocalDecks
-            .filter((_, index) => results[index].status === 'fulfilled')
-            .map(d => d.id)
-        );
-        
-        setUnsyncedDeckIds(prevUnsynced => {
-          const newUnsynced = new Set(prevUnsynced);
-          syncedDeckIds.forEach(id => newUnsynced.delete(id));
-          console.log(`💾 Updated unsynced state: ${newUnsynced.size} remaining`);
-          return newUnsynced;
-        });
-        
-        setTimeout(async () => {
-          console.log('🔍 Running verification check...');
-          await checkUnsyncedDecks(userId);
-        }, 2000);
-      } else {
+      const cloudDecks = await CloudSync.pullDecks();
+      const cloudIds = new Set(cloudDecks.map(d => d.id));
+      const toSync = localDecks.filter(d => !cloudIds.has(d.id));
+
+      if (toSync.length === 0) {
         alert('✅ All decks are already synced!');
+        setUnsyncedDeckIds(new Set());
+        return;
+      }
+
+      console.log(`📤 Syncing ${toSync.length} deck(s)...`);
+      const results = await Promise.allSettled(toSync.map(d => CloudSync.pushDeck(d)));
+
+      const succeeded = results.filter(r => r.status === 'fulfilled').length;
+      const failed = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
+
+      if (failed.length > 0) {
+        alert(`⚠️ Partially synced: ${succeeded}/${toSync.length} succeeded.\n\n${failed.map(f => f.reason?.message).join('\n')}`);
+      } else {
+        alert(`✅ Successfully synced ${succeeded} deck(s) to cloud!`);
       }
     } catch (err: any) {
-      console.error('Sync failed:', err);
-      alert(`❌ Sync failed: ${err.message || 'Unknown error'}\n\nCheck browser console (F12) for details.`);
-      await checkUnsyncedDecks(userId);
+      alert(`❌ Sync failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsSyncing(false);
+      // Always re-check after sync attempt so the banner state is accurate
+      await checkUnsyncedDecks();
     }
   };
 
@@ -196,21 +167,16 @@ const Home: React.FC<HomeProps> = ({
     if (window.confirm('Are you sure you want to delete this flashcard set?')) {
       deleteSet(id);
       loadSets();
-      if (userId) {
-        checkUnsyncedDecks(userId);
-      }
+      checkUnsyncedDecks();
     }
   };
 
   const handleExport = (e: React.MouseEvent, set: FlashcardSet) => {
     e.stopPropagation();
-    
     const csvContent = exportToCSV(set.cards);
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    link.setAttribute('href', url);
+    link.setAttribute('href', URL.createObjectURL(blob));
     link.setAttribute('download', `${set.title.replace(/[^a-z0-9]/gi, '_')}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
@@ -219,12 +185,9 @@ const Home: React.FC<HomeProps> = ({
   };
 
   const handleExportAll = () => {
-    const allData = JSON.stringify(sets, null, 2);
-    const blob = new Blob([allData], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(sets, null, 2)], { type: 'application/json' });
     const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    link.setAttribute('href', url);
+    link.setAttribute('href', URL.createObjectURL(blob));
     link.setAttribute('download', `flashmind-backup-${Date.now()}.json`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
@@ -232,9 +195,8 @@ const Home: React.FC<HomeProps> = ({
     document.body.removeChild(link);
   };
 
-  const toggleCardExpansion = (cardId: string) => {
+  const toggleCardExpansion = (cardId: string) =>
     setExpandedCardId(expandedCardId === cardId ? null : cardId);
-  };
 
   const handleEditLevel = (e: React.MouseEvent, setId: string) => {
     e.stopPropagation();
@@ -244,78 +206,45 @@ const Home: React.FC<HomeProps> = ({
   const handleSaveLevel = (setId: string, newLevel: JLPTLevel) => {
     const set = sets.find(s => s.id === setId);
     if (set) {
-      const updatedSet = { ...set, jlptLevel: newLevel };
-      saveSet(updatedSet);
+      saveSet({ ...set, jlptLevel: newLevel });
       loadSets();
       setEditingLevelSetId(null);
-      if (userId) {
-        checkUnsyncedDecks(userId);
-      }
+      checkUnsyncedDecks();
     }
   };
 
   const toggleSelectionMode = () => {
-    setSelectionMode(!selectionMode);
-    if (selectionMode) {
-      setSelectedSetIds(new Set());
-    }
+    setSelectionMode(prev => !prev);
+    if (selectionMode) setSelectedSetIds(new Set());
   };
 
   const toggleSetSelection = (setId: string) => {
     setSelectedSetIds(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(setId)) {
-        newSet.delete(setId);
-      } else {
-        newSet.add(setId);
-      }
-      return newSet;
+      const next = new Set(prev);
+      next.has(setId) ? next.delete(setId) : next.add(setId);
+      return next;
     });
   };
 
   const handleBulkMove = (targetLevel: JLPTLevel) => {
-    if (selectedSetIds.size === 0) {
-      alert('Please select at least one set to move');
-      return;
-    }
-
-    selectedSetIds.forEach(setId => {
-      const set = sets.find(s => s.id === setId);
-      if (set) {
-        const updatedSet = { ...set, jlptLevel: targetLevel };
-        saveSet(updatedSet);
-      }
+    if (selectedSetIds.size === 0) { alert('Please select at least one set'); return; }
+    selectedSetIds.forEach(id => {
+      const set = sets.find(s => s.id === id);
+      if (set) saveSet({ ...set, jlptLevel: targetLevel });
     });
-
     loadSets();
     setSelectedSetIds(new Set());
     setSelectionMode(false);
-    
-    if (userId) {
-      checkUnsyncedDecks(userId);
-    }
-
-    const levelName = targetLevel || 'Custom';
-    alert(`✅ Successfully moved ${selectedSetIds.size} set(s) to ${levelName}!`);
+    checkUnsyncedDecks();
+    alert(`✅ Moved ${selectedSetIds.size} set(s) to ${targetLevel || 'Custom'}!`);
   };
 
   const hasUnsyncedDecks = unsyncedDeckIds.size > 0;
-  
-  const totalDueCards = sets.reduce((sum, set) => {
-    return sum + getSetStudyStats(set.id, set.cards.length).dueCards;
-  }, 0);
 
-  // Debug logging
-  console.log('🔍 Due Today Debug:');
-  sets.forEach(set => {
-    const stats = getSetStudyStats(set.id, set.cards.length);
-    if (stats.dueCards > 0) {
-      console.log(`  - ${set.title}: ${stats.dueCards} due cards`);
-    }
-  });
-  console.log(`  Total due cards across all sets: ${totalDueCards}`);
+  const totalDueCards = sets.reduce(
+    (sum, set) => sum + getSetStudyStats(set.id, set.cards.length).dueCards, 0
+  );
 
-  // Group sets by category
   const groupedSets = sets.reduce((acc, set) => {
     const level = set.jlptLevel || 'Custom';
     if (!acc[level]) acc[level] = [];
@@ -323,7 +252,9 @@ const Home: React.FC<HomeProps> = ({
     return acc;
   }, {} as Record<string, FlashcardSet[]>);
 
-  const categories = ['N5', 'N4', 'N3', 'N2', 'N1', 'Custom'].filter(cat => groupedSets[cat] && groupedSets[cat].length > 0);
+  const categories = ['N5', 'N4', 'N3', 'N2', 'N1', 'Custom'].filter(
+    cat => groupedSets[cat]?.length > 0
+  );
 
   const renderSetCard = (set: FlashcardSet) => {
     const stats = getSetStudyStats(set.id, set.cards.length);
@@ -334,7 +265,7 @@ const Home: React.FC<HomeProps> = ({
     const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
     const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
     const hasDue = stats.dueCards > 0;
-    
+
     let todayPrompt = null;
     let writingStreak = 0;
     let hasDailyPrompt = false;
@@ -342,23 +273,20 @@ const Home: React.FC<HomeProps> = ({
 
     try {
       const reviewData = getSetReviewData(set.id);
-      const masteredCardIds = new Set(
-        reviewData
-          .filter(r => r.status === 'mastered')
-          .map(r => r.cardId)
+      const masteredIds = new Set(
+        reviewData.filter(r => r.status === 'mastered').map(r => r.cardId)
       );
-      const masteredCards = set.cards.filter(card => masteredCardIds.has(card.id));
-      
+      const masteredCards = set.cards.filter(c => masteredIds.has(c.id));
       if (masteredCards.length >= 3) {
         todayPrompt = getTodayPrompt(set.id, masteredCards);
         writingStreak = getPromptStreak(set.id);
         hasDailyPrompt = todayPrompt !== null;
         isDailyCompleted = todayPrompt?.completedAt !== undefined;
       }
-    } catch (error) {
-      console.error('Error checking daily prompt:', error);
+    } catch (e) {
+      console.error('Error checking daily prompt:', e);
     }
-    
+
     return (
       <div
         key={set.id}
@@ -371,15 +299,10 @@ const Home: React.FC<HomeProps> = ({
       >
         {selectionMode && (
           <div style={styles.selectionCheckbox}>
-            <input
-              type="checkbox"
-              checked={isSelected}
-              onChange={() => toggleSetSelection(set.id)}
-              style={styles.checkbox}
-            />
+            <input type="checkbox" checked={isSelected} onChange={() => toggleSetSelection(set.id)} style={styles.checkbox} />
           </div>
         )}
-        
+
         <div style={styles.cardHeader}>
           <h3 style={styles.cardTitle}>
             {isUnsynced && <span style={styles.unsyncedBadge}>☁️</span>}
@@ -387,37 +310,18 @@ const Home: React.FC<HomeProps> = ({
           </h3>
           {!selectionMode && (
             <div style={styles.cardActions}>
-              <button
-                style={styles.editLevelButton}
-                onClick={(e) => handleEditLevel(e, set.id)}
-                title="Change JLPT Level"
-              >
-                📝
-              </button>
-              <button
-                style={styles.exportButton}
-                onClick={(e) => handleExport(e, set)}
-                title="Export to CSV"
-              >
-                📤
-              </button>
-              <button
-                style={styles.deleteButton}
-                onClick={(e) => handleDelete(e, set.id)}
-                title="Delete set"
-              >
-                🗑️
-              </button>
+              <button style={styles.editLevelButton} onClick={e => handleEditLevel(e, set.id)} title="Change JLPT Level">📝</button>
+              <button style={styles.exportButton} onClick={e => handleExport(e, set)} title="Export to CSV">📤</button>
+              <button style={styles.deleteButton} onClick={e => handleDelete(e, set.id)} title="Delete set">🗑️</button>
             </div>
           )}
         </div>
 
-        {/* Level Editor */}
         {isEditingLevel && !selectionMode && (
           <div style={styles.levelEditor}>
             <select
               value={set.jlptLevel || ''}
-              onChange={(e) => handleSaveLevel(set.id, (e.target.value as JLPTLevel) || undefined)}
+              onChange={e => handleSaveLevel(set.id, (e.target.value as JLPTLevel) || undefined)}
               style={styles.levelSelect}
               autoFocus
             >
@@ -428,25 +332,16 @@ const Home: React.FC<HomeProps> = ({
               <option value="N2">N2 (Upper-Intermediate)</option>
               <option value="N1">N1 (Advanced)</option>
             </select>
-            <button
-              style={styles.cancelLevelButton}
-              onClick={() => setEditingLevelSetId(null)}
-            >
-              Cancel
-            </button>
+            <button style={styles.cancelLevelButton} onClick={() => setEditingLevelSetId(null)}>Cancel</button>
           </div>
         )}
-        
+
         {!selectionMode && (
           <>
-            {set.description && (
-              <p style={styles.cardDescription}>{set.description}</p>
-            )}
+            {set.description && <p style={styles.cardDescription}>{set.description}</p>}
 
             {hasDue && (
-              <div style={styles.dueBadge}>
-                🎯 {stats.dueCards} {stats.dueCards === 1 ? 'card' : 'cards'} due
-              </div>
+              <div style={styles.dueBadge}>🎯 {stats.dueCards} {stats.dueCards === 1 ? 'card' : 'cards'} due</div>
             )}
 
             {hasDailyPrompt && (
@@ -459,40 +354,23 @@ const Home: React.FC<HomeProps> = ({
                 {writingStreak > 0 && <span style={styles.dailyStreakIcon}> 🔥{writingStreak}</span>}
               </div>
             )}
-            
+
             <div style={styles.cardFooter}>
               <span style={styles.cardCount}>{set.cards.length} cards</span>
-              <span style={styles.progressText}>
-                {reviewedCards}/{set.cards.length} reviewed
-              </span>
+              <span style={styles.progressText}>{reviewedCards}/{set.cards.length} reviewed</span>
             </div>
-            
+
             <div style={styles.progressBarContainer}>
               <div style={{ ...styles.progressBar, width: `${progress}%` }} />
             </div>
 
-            {/* Primary Study Buttons */}
             <div style={styles.studyButtons}>
-              <button
-                style={styles.learnButton}
-                onClick={() => onNavigateToLearn(set.id)}
-              >
-                🎯 Learn Mode
-              </button>
-              <button
-                style={styles.reviewButton}
-                onClick={() => onNavigateToSwipe(set.id)}
-              >
-                💭 Review
-              </button>
+              <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn Mode</button>
+              <button style={styles.reviewButton} onClick={() => onNavigateToSwipe(set.id)}>💬 Review</button>
             </div>
 
-            {/* Active Learning Section - Expandable */}
             <div style={styles.activeLearningSection}>
-              <button
-                style={styles.expandButton}
-                onClick={() => toggleCardExpansion(set.id)}
-              >
+              <button style={styles.expandButton} onClick={() => toggleCardExpansion(set.id)}>
                 <span style={styles.expandIcon}>🎤</span>
                 <span style={styles.expandText}>Active Practice</span>
                 <span style={styles.expandArrow}>{isExpanded ? '▲' : '▼'}</span>
@@ -500,37 +378,26 @@ const Home: React.FC<HomeProps> = ({
 
               {isExpanded && (
                 <div style={styles.activeButtons}>
-                  <button
-                    style={styles.activeButton}
-                    onClick={() => onNavigateToSentenceBuilder(set.id)}
-                  >
+                  <button style={styles.activeButton} onClick={() => onNavigateToSentenceBuilder(set.id)}>
                     <div style={styles.activeButtonIcon}>🏗️</div>
                     <div style={styles.activeButtonText}>
                       <div style={styles.activeButtonTitle}>Sentence Builder</div>
                       <div style={styles.activeButtonDesc}>Create sentences</div>
                     </div>
                   </button>
-
-                  <button
-                    style={styles.activeButton}
-                    onClick={() => onNavigateToSpeechPractice(set.id)}
-                  >
+                  <button style={styles.activeButton} onClick={() => onNavigateToSpeechPractice(set.id)}>
                     <div style={styles.activeButtonIcon}>🎤</div>
                     <div style={styles.activeButtonText}>
                       <div style={styles.activeButtonTitle}>Speech Practice</div>
                       <div style={styles.activeButtonDesc}>Record & compare</div>
                     </div>
                   </button>
-
-                  <button
-                    style={styles.activeButton}
-                    onClick={() => onNavigateToDailyWriting(set.id)}
-                  >
+                  <button style={styles.activeButton} onClick={() => onNavigateToDailyWriting(set.id)}>
                     <div style={styles.activeButtonIcon}>✍️</div>
                     <div style={styles.activeButtonText}>
                       <div style={styles.activeButtonTitle}>Daily Writing</div>
                       <div style={styles.activeButtonDesc}>
-                        {isDailyCompleted ? 'Complete! ✅' : 'Today\'s prompt'}
+                        {isDailyCompleted ? 'Complete! ✅' : "Today's prompt"}
                         {writingStreak > 0 && ` 🔥${writingStreak}`}
                       </div>
                     </div>
@@ -562,7 +429,7 @@ const Home: React.FC<HomeProps> = ({
               }}
               onClick={handleManualSync}
               disabled={isSyncing}
-              title={hasUnsyncedDecks ? `${unsyncedDeckIds.size} deck(s) not synced to cloud` : 'All decks synced'}
+              title={hasUnsyncedDecks ? `${unsyncedDeckIds.size} deck(s) not synced` : 'All decks synced'}
             >
               {isSyncing ? '🔄 Syncing...' : hasUnsyncedDecks ? `⚠️ Sync (${unsyncedDeckIds.size})` : '✅ Synced'}
             </button>
@@ -575,7 +442,6 @@ const Home: React.FC<HomeProps> = ({
         </div>
       </header>
 
-      {/* Streak Banner */}
       {streak.current > 0 && (
         <div style={styles.streakBanner} onClick={onNavigateToStats}>
           <span style={styles.streakIcon}>🔥</span>
@@ -586,7 +452,6 @@ const Home: React.FC<HomeProps> = ({
         </div>
       )}
 
-      {/* Review Due Today Banner */}
       {totalDueCards > 0 && (
         <div style={styles.dueTodayBanner}>
           <div style={styles.dueTodayInfo}>
@@ -596,13 +461,10 @@ const Home: React.FC<HomeProps> = ({
               <p style={styles.dueTodayDesc}>Review cards across all your sets to maintain your progress.</p>
             </div>
           </div>
-          <button style={styles.dueTodayButton} onClick={() => onNavigateToSwipe('due-today')}>
-            Review All Due Now
-          </button>
+          <button style={styles.dueTodayButton} onClick={() => onNavigateToSwipe('due-today')}>Review All Due Now</button>
         </div>
       )}
 
-      {/* Selection Mode Toolbar */}
       {selectionMode && (
         <div style={styles.selectionToolbar}>
           <div style={styles.selectionInfo}>
@@ -611,18 +473,15 @@ const Home: React.FC<HomeProps> = ({
           </div>
           <div style={styles.selectionActions}>
             <span style={styles.moveLabel}>Move to:</span>
-            <button style={styles.moveButton} onClick={() => handleBulkMove('N5')}>N5</button>
-            <button style={styles.moveButton} onClick={() => handleBulkMove('N4')}>N4</button>
-            <button style={styles.moveButton} onClick={() => handleBulkMove('N3')}>N3</button>
-            <button style={styles.moveButton} onClick={() => handleBulkMove('N2')}>N2</button>
-            <button style={styles.moveButton} onClick={() => handleBulkMove('N1')}>N1</button>
+            {(['N5','N4','N3','N2','N1'] as JLPTLevel[]).map(lvl => (
+              <button key={lvl} style={styles.moveButton} onClick={() => handleBulkMove(lvl)}>{lvl}</button>
+            ))}
             <button style={styles.moveButton} onClick={() => handleBulkMove(undefined)}>Custom</button>
             <button style={styles.cancelSelectionButton} onClick={toggleSelectionMode}>Cancel</button>
           </div>
         </div>
       )}
 
-      {/* Unsynced Warning Banner */}
       {hasUnsyncedDecks && userId && (
         <div style={styles.warningBanner}>
           <span style={styles.warningIcon}>⚠️</span>
@@ -642,23 +501,19 @@ const Home: React.FC<HomeProps> = ({
             <span style={styles.statLabel}>Sets</span>
           </div>
           <div style={styles.stat}>
-            <span style={styles.statValue}>
-              {sets.reduce((sum, set) => sum + set.cards.length, 0)}
-            </span>
+            <span style={styles.statValue}>{sets.reduce((s, set) => s + set.cards.length, 0)}</span>
             <span style={styles.statLabel}>Total Cards</span>
           </div>
           <div style={styles.stat}>
             <span style={styles.statValue}>
-              {sets.reduce((sum, set) => sum + getSetStudyStats(set.id, set.cards.length).masteredCards, 0)}
+              {sets.reduce((s, set) => s + getSetStudyStats(set.id, set.cards.length).masteredCards, 0)}
             </span>
             <span style={styles.statLabel}>Mastered</span>
           </div>
           <button style={styles.bulkSelectButton} onClick={toggleSelectionMode}>
             {selectionMode ? '❌ Cancel' : '☑️ Select Multiple'}
           </button>
-          <button style={styles.exportAllButton} onClick={handleExportAll}>
-            💾 Backup All
-          </button>
+          <button style={styles.exportAllButton} onClick={handleExportAll}>💾 Backup All</button>
         </div>
       )}
 
@@ -676,44 +531,31 @@ const Home: React.FC<HomeProps> = ({
         <div style={styles.categoriesContainer}>
           {categories.map(category => {
             const isCollapsed = collapsedCategories.has(category);
-            const categoryStats = groupedSets[category].reduce(
+            const catStats = groupedSets[category].reduce(
               (acc, set) => {
-                const stats = getSetStudyStats(set.id, set.cards.length);
-                return {
-                  totalCards: acc.totalCards + set.cards.length,
-                  dueCards: acc.dueCards + stats.dueCards,
-                  masteredCards: acc.masteredCards + stats.masteredCards
-                };
+                const s = getSetStudyStats(set.id, set.cards.length);
+                return { totalCards: acc.totalCards + set.cards.length, dueCards: acc.dueCards + s.dueCards, masteredCards: acc.masteredCards + s.masteredCards };
               },
               { totalCards: 0, dueCards: 0, masteredCards: 0 }
             );
 
             return (
               <div key={category} style={styles.categorySection}>
-                <div 
-                  style={styles.categoryHeaderContainer}
-                  onClick={() => !selectionMode && toggleCategoryCollapse(category)}
-                >
+                <div style={styles.categoryHeaderContainer} onClick={() => !selectionMode && toggleCategoryCollapse(category)}>
                   <h2 style={styles.categoryHeader}>
-                    {!selectionMode && (
-                      <span style={styles.categoryToggle}>{isCollapsed ? '▶' : '▼'}</span>
-                    )}
-                    <span>
-                      {category === 'Custom' ? 'My Custom Sets' : `${category} Level Sets`}
-                    </span>
+                    {!selectionMode && <span style={styles.categoryToggle}>{isCollapsed ? '▶' : '▼'}</span>}
+                    <span>{category === 'Custom' ? 'My Custom Sets' : `${category} Level Sets`}</span>
                     <span style={styles.categoryBadge}>{groupedSets[category].length}</span>
                   </h2>
                   {isCollapsed && !selectionMode && (
                     <div style={styles.categoryPreview}>
-                      <span style={styles.previewStat}>{categoryStats.totalCards} cards</span>
-                      {categoryStats.dueCards > 0 && (
-                        <span style={styles.previewDue}>🎯 {categoryStats.dueCards} due</span>
-                      )}
-                      <span style={styles.previewStat}>✅ {categoryStats.masteredCards} mastered</span>
+                      <span style={styles.previewStat}>{catStats.totalCards} cards</span>
+                      {catStats.dueCards > 0 && <span style={styles.previewDue}>🎯 {catStats.dueCards} due</span>}
+                      <span style={styles.previewStat}>✅ {catStats.masteredCards} mastered</span>
                     </div>
                   )}
                 </div>
-                
+
                 {(!isCollapsed || selectionMode) && (
                   <div style={styles.grid}>
                     {groupedSets[category].map(set => renderSetCard(set))}
@@ -727,21 +569,12 @@ const Home: React.FC<HomeProps> = ({
 
       {showImportModal && (
         <ImportModal
-          onClose={() => {
-            setShowImportModal(false);
-            loadSets();
-            if (userId) checkUnsyncedDecks(userId);
-          }}
-          onImportSuccess={() => {
-            loadSets();
-            if (userId) checkUnsyncedDecks(userId);
-          }}
+          onClose={() => { setShowImportModal(false); loadSets(); checkUnsyncedDecks(); }}
+          onImportSuccess={() => { loadSets(); checkUnsyncedDecks(); }}
         />
       )}
 
-      {showLearningTips && (
-        <LearningTips onClose={() => setShowLearningTips(false)} />
-      )}
+      {showLearningTips && <LearningTips onClose={() => setShowLearningTips(false)} />}
     </div>
   );
 };
@@ -752,7 +585,7 @@ const styles: { [key: string]: CSSProperties } = {
   title: { fontSize: '32px', fontWeight: 700, color: '#0f172a', margin: 0, marginBottom: '4px' },
   subtitle: { fontSize: '16px', color: '#64748b', margin: 0 },
   headerButtons: { display: 'flex', gap: '12px', flexWrap: 'wrap' },
-  syncButton: { color: 'white', border: 'none', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer', transition: 'transform 0.2s' },
+  syncButton: { color: 'white', border: 'none', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
   tipsButton: { backgroundColor: '#fff', color: '#f59e0b', border: '2px solid #f59e0b', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
   logoutButton: { backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
   statsButton: { backgroundColor: '#fff', color: '#8b5cf6', border: '2px solid #8b5cf6', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
@@ -767,7 +600,7 @@ const styles: { [key: string]: CSSProperties } = {
   dueTodayIcon: { fontSize: '32px' },
   dueTodayTitle: { margin: '0 0 4px 0', color: '#1e3a8a', fontSize: '18px', fontWeight: 700 },
   dueTodayDesc: { margin: 0, color: '#3b82f6', fontSize: '14px' },
-  dueTodayButton: { backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '15px', fontWeight: 600, cursor: 'pointer', boxShadow: '0 2px 4px rgba(37, 99, 235, 0.2)' },
+  dueTodayButton: { backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '15px', fontWeight: 600, cursor: 'pointer' },
   selectionToolbar: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#3b82f6', borderRadius: '12px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' },
   selectionInfo: { display: 'flex', alignItems: 'center', gap: '12px' },
   selectionIcon: { fontSize: '24px', color: 'white' },
@@ -795,15 +628,15 @@ const styles: { [key: string]: CSSProperties } = {
   importButtonLarge: { backgroundColor: '#fff', color: '#3b82f6', border: '2px solid #3b82f6', borderRadius: '12px', padding: '12px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
   categoriesContainer: { maxWidth: '1000px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' },
   categorySection: { display: 'flex', flexDirection: 'column', gap: '16px' },
-  categoryHeaderContainer: { cursor: 'pointer', userSelect: 'none', backgroundColor: '#fff', borderRadius: '12px', padding: '16px 20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', transition: 'all 0.2s', border: '2px solid #e2e8f0' },
+  categoryHeaderContainer: { cursor: 'pointer', userSelect: 'none', backgroundColor: '#fff', borderRadius: '12px', padding: '16px 20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', border: '2px solid #e2e8f0' },
   categoryHeader: { margin: 0, fontSize: '20px', fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '12px' },
-  categoryToggle: { fontSize: '16px', color: '#64748b', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '20px' },
+  categoryToggle: { fontSize: '16px', color: '#64748b', width: '20px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   categoryBadge: { backgroundColor: '#e2e8f0', color: '#475569', fontSize: '14px', padding: '4px 10px', borderRadius: '12px', fontWeight: 600 },
   categoryPreview: { marginTop: '12px', display: 'flex', gap: '16px', alignItems: 'center', fontSize: '13px', color: '#64748b', flexWrap: 'wrap' },
   previewStat: { fontWeight: 500 },
   previewDue: { backgroundColor: '#fef2f2', color: '#dc2626', padding: '4px 8px', borderRadius: '8px', fontSize: '12px', fontWeight: 600 },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' },
-  card: { backgroundColor: '#fff', borderRadius: '16px', padding: '20px', transition: 'all 0.3s', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', position: 'relative', cursor: 'default' },
+  card: { backgroundColor: '#fff', borderRadius: '16px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', position: 'relative', cursor: 'default' },
   selectionCheckbox: { position: 'absolute', top: '12px', left: '12px', zIndex: 5 },
   checkbox: { width: '20px', height: '20px', cursor: 'pointer' },
   cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' },
