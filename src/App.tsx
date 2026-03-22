@@ -12,6 +12,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { supabase } from './lib/supabaseClient';
 import { SyncManager, type SyncProgress } from './lib/sync/syncManager';
 import { getSet } from './lib/storage';
+import { setReviewUserId } from './lib/spacedRepetition';
 
 type Page = 'home' | 'create' | 'swipe' | 'stats' | 'learn' | 'sentence-builder' | 'speech-practice' | 'daily-writing';
 
@@ -57,6 +58,9 @@ const App: React.FC = () => {
   const handleSessionChange = async (newSession: any) => {
     setSession(newSession);
     setSyncError(null);
+
+    // Keep spacedRepetition's background-push userId in sync
+    setReviewUserId(newSession?.user?.id ?? null);
     
     if (newSession?.user) {
       console.log('\n' + '='.repeat(60));

@@ -10,6 +10,7 @@
  * - Decks that exist only locally are pushed to cloud.
  * - Decks that exist only in cloud are written to local.
  * - Reviews: keep the most recently reviewed entry per card.
+ *   Reviews that exist only locally, or are newer locally, are pushed to cloud.
  */
 
 import { SupabaseAuth } from './supabaseAuth';
@@ -29,6 +30,7 @@ export interface SyncResult {
   decksAdded: number;
   decksUpdated: number;
   decksPushed: number;
+  reviewsPushed: number;
   error?: string;
 }
 
@@ -49,7 +51,9 @@ export class SyncManager {
    *   1. Pull cloud state
    *   2. Merge with local state (last-write-wins)
    *   3. Push local-only decks to cloud
-   *   4. Save merged state locally
+   *   4. Merge reviews (last-write-wins)
+   *   5. Push local-only or newer reviews to cloud
+   *   6. Save merged state locally
    */
   static async performSync(): Promise<SyncResult> {
     console.log('\n' + '='.repeat(50));
@@ -76,7 +80,7 @@ export class SyncManager {
       const localReviews = LocalStorageSync.loadReviews();
       console.log(`📱 [SYNC] Local: ${localDecks.length} decks, ${localReviews.length} reviews`);
 
-      // Phase 4: Merge
+      // Phase 4: Merge decks
       this.updateProgress({ phase: 'merging', message: 'Merging local and cloud data...' });
       const { merged, added, updated } = this.mergeDecks(localDecks, cloudDecks);
       console.log(`🔀 [SYNC] Merge result: ${merged.length} total, ${added} added, ${updated} updated`);
@@ -110,7 +114,7 @@ export class SyncManager {
         }
       }
 
-      // Phase 7: Merge reviews
+      // Phase 7: Merge reviews (last-write-wins)
       const mergedReviews = this.mergeReviews(localReviews, cloudReviews);
       console.log(`🔀 [SYNC] Merged ${mergedReviews.length} reviews`);
 
@@ -119,19 +123,56 @@ export class SyncManager {
       LocalStorageSync.saveReviews(mergedReviews);
       LocalStorageSync.setLastSyncTime();
 
+      // Phase 9: Push local-only or newer reviews back to cloud
+      const cloudReviewMap = new Map<string, CardReviewData>();
+      cloudReviews.forEach(r => cloudReviewMap.set(`${r.setId}::${r.cardId}`, r));
+
+      const reviewsToPush = mergedReviews.filter(r => {
+        const key = `${r.setId}::${r.cardId}`;
+        const cloudReview = cloudReviewMap.get(key);
+        // Push if: not in cloud at all, OR local version is newer
+        return !cloudReview || r.lastReviewed > cloudReview.lastReviewed;
+      });
+
+      console.log(`📤 [SYNC] ${reviewsToPush.length} reviews to push to cloud`);
+
+      if (reviewsToPush.length > 0) {
+        this.updateProgress({
+          phase: 'pushing',
+          message: `Uploading ${reviewsToPush.length} review(s) to cloud...`
+        });
+
+        for (const review of reviewsToPush) {
+          try {
+            await CloudSync.pushReview(review);
+          } catch (err) {
+            // Non-fatal: log and continue so one bad review doesn't block everything
+            console.error(`⚠️ [SYNC] Failed to push review for card ${review.cardId} (non-fatal):`, err);
+          }
+        }
+
+        console.log(`✅ [SYNC] Reviews pushed: ${reviewsToPush.length}`);
+      }
+
       this.updateProgress({ phase: 'complete', message: 'Sync completed successfully!' });
 
       console.log('='.repeat(50));
       console.log(`✅ [SYNC] Done. ${merged.length} decks, ${mergedReviews.length} reviews`);
       console.log('='.repeat(50) + '\n');
 
-      return { success: true, decksAdded: added, decksUpdated: updated, decksPushed: decksToPush.length };
+      return {
+        success: true,
+        decksAdded: added,
+        decksUpdated: updated,
+        decksPushed: decksToPush.length,
+        reviewsPushed: reviewsToPush.length
+      };
 
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       console.error('❌ [SYNC] Failed:', msg);
       this.updateProgress({ phase: 'error', message: `Sync failed: ${msg}` });
-      return { success: false, decksAdded: 0, decksUpdated: 0, decksPushed: 0, error: msg };
+      return { success: false, decksAdded: 0, decksUpdated: 0, decksPushed: 0, reviewsPushed: 0, error: msg };
     }
   }
 
