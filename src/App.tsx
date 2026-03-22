@@ -41,18 +41,21 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // Check active session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      handleSessionChange(session);
+    // Check active session via the auth client
+    const authClient = supabase.auth as any;
+
+    authClient.getSession().then(({ data }: any) => {
+      handleSessionChange(data?.session ?? null);
       setIsLoadingSession(false);
     });
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      handleSessionChange(session);
-    });
+    const { data: listenerData } = authClient.onAuthStateChange(
+      (_event: any, newSession: any) => {
+        handleSessionChange(newSession ?? null);
+      }
+    );
 
-    return () => subscription.unsubscribe();
+    return () => listenerData?.subscription?.unsubscribe();
   }, []);
 
   const handleSessionChange = async (newSession: any) => {
@@ -61,7 +64,7 @@ const App: React.FC = () => {
 
     // Keep spacedRepetition's background-push userId in sync
     setReviewUserId(newSession?.user?.id ?? null);
-    
+
     if (newSession?.user) {
       console.log('\n' + '='.repeat(60));
       console.log('👤 User logged in:', newSession.user.email);
@@ -70,10 +73,10 @@ const App: React.FC = () => {
 
       setIsSyncing(true);
       setSyncStatus('Starting sync...');
-      
+
       try {
         const result = await SyncManager.performSync();
-        
+
         if (!result.success && result.error) {
           setSyncError(result.error);
         }
@@ -86,7 +89,8 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    const authClient = supabase.auth as any;
+    await authClient.signOut();
   };
 
   const navigateToHome = () => setCurrentPage('home');
@@ -149,14 +153,10 @@ const App: React.FC = () => {
     );
   }
 
-  // Show sync error modal
   const syncErrorModal = syncError ? (
     <div style={{
       position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
+      top: 0, left: 0, right: 0, bottom: 0,
       backgroundColor: 'rgba(0,0,0,0.5)',
       display: 'flex',
       alignItems: 'center',
@@ -173,8 +173,8 @@ const App: React.FC = () => {
       }}>
         <div style={{ fontSize: '48px', textAlign: 'center', marginBottom: '16px' }}>⚠️</div>
         <h2 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '16px', textAlign: 'center', color: '#1e293b' }}>Sync Error</h2>
-        <p style={{ 
-          fontSize: '14px', 
+        <p style={{
+          fontSize: '14px',
           color: '#64748b',
           backgroundColor: '#f8fafc',
           padding: '16px',

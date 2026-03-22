@@ -8,7 +8,7 @@ import type { CardReviewData } from '../spacedRepetition';
 
 const STORAGE_KEYS = {
   DECKS: 'flashmind-decks',
-  REVIEWS: 'flashmind-reviews',
+  REVIEWS: 'flashcard-review-data',
   LAST_SYNC: 'flashmind-last-sync'
 } as const;
 
