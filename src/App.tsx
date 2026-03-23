@@ -25,19 +25,19 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
 
-  // Refs so the callback closure always sees the latest setters without re-registering
+  // Tracks the user ID we last synced for — prevents re-syncing on TOKEN_REFRESHED events
+  const lastSyncedUserIdRef = useRef<string | null>(null);
+
   const setIsSyncingRef = useRef(setIsSyncing);
   const setSyncStatusRef = useRef(setSyncStatus);
   const setSyncErrorRef = useRef(setSyncError);
 
-  // Keep refs fresh every render
   useEffect(() => {
     setIsSyncingRef.current = setIsSyncing;
     setSyncStatusRef.current = setSyncStatus;
     setSyncErrorRef.current = setSyncError;
   });
 
-  // Register SyncManager callback once on mount — before the session effect fires
   useEffect(() => {
     SyncManager.setProgressCallback((progress: SyncProgress) => {
       if (progress.phase === 'error') {
@@ -61,7 +61,12 @@ const App: React.FC = () => {
     });
 
     const { data: listenerData } = authClient.onAuthStateChange(
-      (_event: any, newSession: any) => {
+      (event: string, newSession: any) => {
+        // TOKEN_REFRESHED fires every ~60s — only update session, never re-sync
+        if (event === 'TOKEN_REFRESHED') {
+          setSession(newSession ?? null);
+          return;
+        }
         handleSessionChange(newSession ?? null);
       }
     );
@@ -72,13 +77,21 @@ const App: React.FC = () => {
   const handleSessionChange = async (newSession: any) => {
     setSession(newSession);
     setSyncError(null);
-
     setReviewUserId(newSession?.user?.id ?? null);
 
     if (newSession?.user) {
+      const userId = newSession.user.id;
+
+      // Only sync once per unique user login — skip duplicate auth state events
+      if (lastSyncedUserIdRef.current === userId) {
+        console.log('⏭️ [APP] Skipping sync — already synced for this user');
+        return;
+      }
+      lastSyncedUserIdRef.current = userId;
+
       console.log('\n' + '='.repeat(60));
       console.log('👤 User logged in:', newSession.user.email);
-      console.log('🆔 User ID:', newSession.user.id);
+      console.log('🆔 User ID:', userId);
       console.log('='.repeat(60) + '\n');
 
       setIsSyncing(true);
@@ -86,18 +99,18 @@ const App: React.FC = () => {
 
       try {
         const result = await SyncManager.performSync();
-
         if (!result.success && result.error) {
           setSyncError(result.error);
         }
-        // FIX: always clear the spinner after performSync() resolves,
-        // regardless of whether the progress callback already fired.
         setIsSyncing(false);
       } catch (err: any) {
         console.error('❌ Unexpected sync error:', err);
         setSyncError(err.message || 'Unknown sync error');
         setIsSyncing(false);
       }
+    } else {
+      // User logged out — reset so next login syncs fresh
+      lastSyncedUserIdRef.current = null;
     }
   };
 
@@ -109,26 +122,11 @@ const App: React.FC = () => {
   const navigateToHome = () => setCurrentPage('home');
   const navigateToCreate = () => setCurrentPage('create');
   const navigateToStats = () => setCurrentPage('stats');
-  const navigateToSwipe = (setId: string) => {
-    setSelectedSetId(setId);
-    setCurrentPage('swipe');
-  };
-  const navigateToLearn = (setId: string) => {
-    setSelectedSetId(setId);
-    setCurrentPage('learn');
-  };
-  const navigateToSentenceBuilder = (setId: string) => {
-    setSelectedSetId(setId);
-    setCurrentPage('sentence-builder');
-  };
-  const navigateToSpeechPractice = (setId: string) => {
-    setSelectedSetId(setId);
-    setCurrentPage('speech-practice');
-  };
-  const navigateToDailyWriting = (setId: string) => {
-    setSelectedSetId(setId);
-    setCurrentPage('daily-writing');
-  };
+  const navigateToSwipe = (setId: string) => { setSelectedSetId(setId); setCurrentPage('swipe'); };
+  const navigateToLearn = (setId: string) => { setSelectedSetId(setId); setCurrentPage('learn'); };
+  const navigateToSentenceBuilder = (setId: string) => { setSelectedSetId(setId); setCurrentPage('sentence-builder'); };
+  const navigateToSpeechPractice = (setId: string) => { setSelectedSetId(setId); setCurrentPage('speech-practice'); };
+  const navigateToDailyWriting = (setId: string) => { setSelectedSetId(setId); setCurrentPage('daily-writing'); };
 
   if (isLoadingSession) {
     return (
