@@ -5,6 +5,7 @@
 
 import type { FlashcardSet } from '../storage';
 import type { CardReviewData } from '../spacedRepetition';
+import { storageCache } from '../storageCache';
 
 const STORAGE_KEYS = {
   DECKS: 'flashmind-decks',
@@ -13,9 +14,6 @@ const STORAGE_KEYS = {
 } as const;
 
 export class LocalStorageSync {
-  /**
-   * Load decks from localStorage
-   */
   static loadDecks(): FlashcardSet[] {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.DECKS);
@@ -23,7 +21,6 @@ export class LocalStorageSync {
         console.log('📊 [LOCAL] No decks in localStorage');
         return [];
       }
-
       const decks = JSON.parse(stored) as FlashcardSet[];
       console.log(`✅ [LOCAL] Loaded ${decks.length} decks from localStorage`);
       return decks;
@@ -33,9 +30,6 @@ export class LocalStorageSync {
     }
   }
 
-  /**
-   * Save decks to localStorage
-   */
   static saveDecks(decks: FlashcardSet[]): void {
     try {
       localStorage.setItem(STORAGE_KEYS.DECKS, JSON.stringify(decks));
@@ -46,9 +40,6 @@ export class LocalStorageSync {
     }
   }
 
-  /**
-   * Load reviews from localStorage
-   */
   static loadReviews(): CardReviewData[] {
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.REVIEWS);
@@ -56,7 +47,6 @@ export class LocalStorageSync {
         console.log('📊 [LOCAL] No reviews in localStorage');
         return [];
       }
-
       const reviews = JSON.parse(stored) as CardReviewData[];
       console.log(`✅ [LOCAL] Loaded ${reviews.length} reviews from localStorage`);
       return reviews;
@@ -66,12 +56,13 @@ export class LocalStorageSync {
     }
   }
 
-  /**
-   * Save reviews to localStorage
-   */
   static saveReviews(reviews: CardReviewData[]): void {
     try {
       localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
+      // Invalidate storageCache so spacedRepetition.ts immediately reads the
+      // freshly merged reviews on the next access, instead of serving stale
+      // in-memory data for up to 5 seconds (the cache TTL).
+      storageCache.invalidate(STORAGE_KEYS.REVIEWS);
       console.log(`✅ [LOCAL] Saved ${reviews.length} reviews to localStorage`);
     } catch (error) {
       console.error('❌ [LOCAL] Error saving reviews:', error);
@@ -79,35 +70,24 @@ export class LocalStorageSync {
     }
   }
 
-  /**
-   * Get last sync timestamp
-   */
   static getLastSyncTime(): number | null {
     const stored = localStorage.getItem(STORAGE_KEYS.LAST_SYNC);
     return stored ? parseInt(stored, 10) : null;
   }
 
-  /**
-   * Update last sync timestamp
-   */
   static setLastSyncTime(timestamp: number = Date.now()): void {
     localStorage.setItem(STORAGE_KEYS.LAST_SYNC, timestamp.toString());
     console.log(`✅ [LOCAL] Updated last sync time: ${new Date(timestamp).toISOString()}`);
   }
 
-  /**
-   * Clear all stored data
-   */
   static clearAll(): void {
     localStorage.removeItem(STORAGE_KEYS.DECKS);
     localStorage.removeItem(STORAGE_KEYS.REVIEWS);
     localStorage.removeItem(STORAGE_KEYS.LAST_SYNC);
+    storageCache.invalidate(STORAGE_KEYS.REVIEWS);
     console.log('✅ [LOCAL] Cleared all data');
   }
 
-  /**
-   * Get storage size in MB
-   */
   static getStorageSize(): string {
     let total = 0;
     for (const key in localStorage) {
