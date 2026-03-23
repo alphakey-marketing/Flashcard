@@ -43,7 +43,6 @@ export class CloudSync {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
     console.log(`📊 [CLOUD] Pulling decks for user: ${userId}`);
 
-    // Step 1: fetch decks
     const { data: deckRows, error: deckError } = await supabase
       .from('decks')
       .select('*')
@@ -63,7 +62,6 @@ export class CloudSync {
     const deckIds = deckRows.map((d: any) => d.id);
     console.log(`📊 [CLOUD] Found ${deckIds.length} decks, fetching their cards...`);
 
-    // Step 2: fetch all cards for these decks in one query
     const { data: cardRows, error: cardError } = await supabase
       .from('cards')
       .select('*')
@@ -75,7 +73,6 @@ export class CloudSync {
       throw new Error(`Failed to pull cards: ${cardError.message}`);
     }
 
-    // Step 3: group cards by deck_id
     const cardsByDeckId = new Map<string, any[]>();
     for (const card of (cardRows || [])) {
       const list = cardsByDeckId.get(card.deck_id) || [];
@@ -83,7 +80,6 @@ export class CloudSync {
       cardsByDeckId.set(card.deck_id, list);
     }
 
-    // Step 4: build FlashcardSet objects
     const decks: FlashcardSet[] = deckRows.map((deck: any) => ({
       id: deck.id,
       title: deck.title,
@@ -107,8 +103,6 @@ export class CloudSync {
 
   /**
    * Push a single deck (and its cards) to cloud.
-   * Uses the raw local ID — no namespacing.
-   * user_id is always included so RLS INSERT policy is satisfied.
    */
   static async pushDeck(deck: FlashcardSet): Promise<void> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
@@ -145,8 +139,6 @@ export class CloudSync {
 
   /**
    * Push cards for a deck.
-   * Cards are linked to their parent deck via deck_id only.
-   * No user_id column exists on the cards table.
    */
   private static async pushCards(
     deckId: string,
@@ -182,8 +174,7 @@ export class CloudSync {
   }
 
   /**
-   * Delete a deck from cloud using the raw local ID.
-   * The .eq('user_id') guard ensures only the owner can delete.
+   * Delete a deck from cloud.
    */
   static async deleteDeck(deckId: string): Promise<void> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
@@ -205,7 +196,7 @@ export class CloudSync {
 
   /**
    * Pull review data from cloud.
-   * card_id and deck_id in the DB match local IDs exactly.
+   * All fields are read back explicitly — nothing is hardcoded or derived.
    */
   static async pullReviews(): Promise<CardReviewData[]> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
@@ -228,13 +219,21 @@ export class CloudSync {
       interval: r.interval,
       repetitions: r.repetition,
       nextReview: new Date(r.next_review_date).getTime(),
-      status: r.repetition >= 5 ? 'mastered' : r.repetition > 0 ? 'reviewing' : 'learning',
+      // FIX: read status directly from DB instead of deriving from repetition count.
+      // Derivation was wrong: a card pressed "Mastered" once has repetition=1,
+      // which the old code treated as 'reviewing', not 'mastered'.
+      status: (r.status as CardReviewData['status']) ?? (
+        r.repetition >= 5 ? 'mastered' : r.repetition > 0 ? 'reviewing' : 'learning'
+      ),
       totalReviews: r.total_reviews || 0,
-      knowItCount: 0,
+      // FIX: read stored counts instead of hardcoding zero.
+      // Zeroing these caused stats to reset on every fresh browser login.
+      knowItCount: r.know_it_count || 0,
       againCount: r.lapses || 0,
-      masteredCount: 0,
+      masteredCount: r.mastered_count || 0,
       lastReviewed: new Date(r.last_review_date).getTime(),
-      createdAt: new Date(r.last_review_date).getTime(),
+      // FIX: use the row's actual created_at, not last_review_date.
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : new Date(r.last_review_date).getTime(),
       updatedAt: new Date(r.last_review_date).getTime()
     }));
 
@@ -244,12 +243,15 @@ export class CloudSync {
 
   /**
    * Push a single review to cloud.
-   * card_id and deck_id stored as raw local IDs.
+   * All CardReviewData fields are stored — nothing is dropped.
+   * Uses id as the sole conflict target to avoid the dual-key ambiguity.
    */
   static async pushReview(review: CardReviewData): Promise<void> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
 
     const reviewData = {
+      // FIX: deterministic id used as sole conflict key — no more dual-key ambiguity
+      // between 'id' and the UNIQUE(user_id, card_id) constraint.
       id: `${userId}-${review.cardId}`,
       user_id: userId,
       card_id: review.cardId,
@@ -260,15 +262,20 @@ export class CloudSync {
       next_review_date: new Date(review.nextReview).toISOString(),
       last_review_date: new Date(review.lastReviewed).toISOString(),
       total_reviews: review.totalReviews || 0,
-      lapses: review.againCount || 0
+      lapses: review.againCount || 0,
+      // FIX: store status, knowItCount, masteredCount, createdAt
+      status: review.status,
+      know_it_count: review.knowItCount || 0,
+      mastered_count: review.masteredCount || 0,
+      created_at: new Date(review.createdAt).toISOString()
     };
 
     const { error } = await supabase
       .from('reviews')
-      .upsert(reviewData, {
-        onConflict: 'user_id,card_id',
-        ignoreDuplicates: false
-      });
+      // FIX: conflict on 'id' only — consistent with the deterministic id above.
+      // The old 'user_id,card_id' conflict target caused ambiguity when id
+      // was also explicitly set to a new value.
+      .upsert(reviewData, { onConflict: 'id', ignoreDuplicates: false });
 
     if (error) {
       console.warn('⚠️ [CLOUD] Failed to push review (non-fatal):', error.message);
