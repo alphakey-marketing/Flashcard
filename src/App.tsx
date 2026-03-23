@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Home from './pages/Home';
 import Create from './pages/Create';
 import Swipe from './pages/Swipe';
@@ -25,23 +25,34 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
 
-  // Set up sync progress callback
+  // Refs so the callback closure always sees the latest setters without re-registering
+  const setIsSyncingRef = useRef(setIsSyncing);
+  const setSyncStatusRef = useRef(setSyncStatus);
+  const setSyncErrorRef = useRef(setSyncError);
+
+  // Keep refs fresh every render
+  useEffect(() => {
+    setIsSyncingRef.current = setIsSyncing;
+    setSyncStatusRef.current = setSyncStatus;
+    setSyncErrorRef.current = setSyncError;
+  });
+
+  // Register SyncManager callback once on mount — before the session effect fires
   useEffect(() => {
     SyncManager.setProgressCallback((progress: SyncProgress) => {
       if (progress.phase === 'error') {
-        setSyncError(progress.message);
-        setIsSyncing(false);
+        setSyncErrorRef.current(progress.message);
+        setIsSyncingRef.current(false);
       } else if (progress.phase === 'complete') {
-        setSyncStatus(progress.message);
-        setTimeout(() => setIsSyncing(false), 1000);
+        setSyncStatusRef.current(progress.message);
+        setTimeout(() => setIsSyncingRef.current(false), 1000);
       } else {
-        setSyncStatus(progress.message);
+        setSyncStatusRef.current(progress.message);
       }
     });
   }, []);
 
   useEffect(() => {
-    // Check active session via the auth client
     const authClient = supabase.auth as any;
 
     authClient.getSession().then(({ data }: any) => {
@@ -62,7 +73,6 @@ const App: React.FC = () => {
     setSession(newSession);
     setSyncError(null);
 
-    // Keep spacedRepetition's background-push userId in sync
     setReviewUserId(newSession?.user?.id ?? null);
 
     if (newSession?.user) {
@@ -80,6 +90,9 @@ const App: React.FC = () => {
         if (!result.success && result.error) {
           setSyncError(result.error);
         }
+        // FIX: always clear the spinner after performSync() resolves,
+        // regardless of whether the progress callback already fired.
+        setIsSyncing(false);
       } catch (err: any) {
         console.error('❌ Unexpected sync error:', err);
         setSyncError(err.message || 'Unknown sync error');

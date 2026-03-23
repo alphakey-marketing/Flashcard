@@ -34,6 +34,8 @@ export interface SyncResult {
   error?: string;
 }
 
+const REVIEW_PUSH_BATCH_SIZE = 10;
+
 export class SyncManager {
   private static onProgressCallback?: (progress: SyncProgress) => void;
 
@@ -52,7 +54,7 @@ export class SyncManager {
    *   2. Merge with local state (last-write-wins)
    *   3. Push local-only decks to cloud
    *   4. Merge reviews (last-write-wins)
-   *   5. Push local-only or newer reviews to cloud
+   *   5. Push local-only or newer reviews to cloud (in parallel batches)
    *   6. Save merged state locally
    */
   static async performSync(): Promise<SyncResult> {
@@ -123,14 +125,13 @@ export class SyncManager {
       LocalStorageSync.saveReviews(mergedReviews);
       LocalStorageSync.setLastSyncTime();
 
-      // Phase 9: Push local-only or newer reviews back to cloud
+      // Phase 9: Push local-only or newer reviews back to cloud — in parallel batches
       const cloudReviewMap = new Map<string, CardReviewData>();
       cloudReviews.forEach(r => cloudReviewMap.set(`${r.setId}::${r.cardId}`, r));
 
       const reviewsToPush = mergedReviews.filter(r => {
         const key = `${r.setId}::${r.cardId}`;
         const cloudReview = cloudReviewMap.get(key);
-        // Push if: not in cloud at all, OR local version is newer
         return !cloudReview || r.lastReviewed > cloudReview.lastReviewed;
       });
 
@@ -142,13 +143,18 @@ export class SyncManager {
           message: `Uploading ${reviewsToPush.length} review(s) to cloud...`
         });
 
-        for (const review of reviewsToPush) {
-          try {
-            await CloudSync.pushReview(review);
-          } catch (err) {
-            // Non-fatal: log and continue so one bad review doesn't block everything
-            console.error(`⚠️ [SYNC] Failed to push review for card ${review.cardId} (non-fatal):`, err);
-          }
+        // Push in parallel batches to avoid blocking the spinner for large sets
+        for (let i = 0; i < reviewsToPush.length; i += REVIEW_PUSH_BATCH_SIZE) {
+          const batch = reviewsToPush.slice(i, i + REVIEW_PUSH_BATCH_SIZE);
+          await Promise.all(
+            batch.map(review =>
+              CloudSync.pushReview(review).catch(err => {
+                // Non-fatal: log and continue so one bad review doesn't block everything
+                console.error(`⚠️ [SYNC] Failed to push review for card ${review.cardId} (non-fatal):`, err);
+              })
+            )
+          );
+          console.log(`   ✅ Reviews ${Math.min(i + batch.length, reviewsToPush.length)}/${reviewsToPush.length}`);
         }
 
         console.log(`✅ [SYNC] Reviews pushed: ${reviewsToPush.length}`);
@@ -183,8 +189,6 @@ export class SyncManager {
    * - If a deck exists only locally  → keep it locally (will be pushed)
    * - If a deck exists only in cloud → add it locally
    * - If a deck exists in both       → keep whichever has the newer updatedAt
-   *
-   * Both sides use the same raw IDs, so comparison is a straight string match.
    */
   private static mergeDecks(
     localDecks: FlashcardSet[],
@@ -194,22 +198,17 @@ export class SyncManager {
     let added = 0;
     let updated = 0;
 
-    // Seed map with all local decks
     localDecks.forEach(deck => deckMap.set(deck.id, deck));
 
-    // Merge cloud decks in
     cloudDecks.forEach(cloudDeck => {
       const local = deckMap.get(cloudDeck.id);
       if (!local) {
-        // New deck from cloud — add it locally
         deckMap.set(cloudDeck.id, cloudDeck);
         added++;
       } else if (cloudDeck.updatedAt > local.updatedAt) {
-        // Cloud version is newer — prefer it
         deckMap.set(cloudDeck.id, cloudDeck);
         updated++;
       }
-      // else: local version is same age or newer — keep it
     });
 
     return { merged: Array.from(deckMap.values()), added, updated };
@@ -254,7 +253,6 @@ export class SyncManager {
   static async deleteDeck(deckId: string): Promise<void> {
     console.log(`🗑️ [SYNC] Deleting deck: ${deckId}`);
 
-    // Cloud delete first (best-effort)
     const isAuth = await SupabaseAuth.isAuthenticated();
     if (isAuth) {
       try {
@@ -264,7 +262,6 @@ export class SyncManager {
       }
     }
 
-    // Local delete
     const localDecks = LocalStorageSync.loadDecks();
     LocalStorageSync.saveDecks(localDecks.filter(d => d.id !== deckId));
     console.log(`✅ [SYNC] Deck deleted`);
