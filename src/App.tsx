@@ -24,10 +24,11 @@ const App: React.FC = () => {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
+  // Increments after every completed sync — forces Home to re-mount and re-read fresh localStorage
+  const [syncGeneration, setSyncGeneration] = useState(0);
 
   // Tracks the user ID we last synced for — prevents re-syncing on TOKEN_REFRESHED events
   const lastSyncedUserIdRef = useRef<string | null>(null);
-
   const setIsSyncingRef = useRef(setIsSyncing);
   const setSyncStatusRef = useRef(setSyncStatus);
   const setSyncErrorRef = useRef(setSyncError);
@@ -62,7 +63,7 @@ const App: React.FC = () => {
 
     const { data: listenerData } = authClient.onAuthStateChange(
       (event: string, newSession: any) => {
-        // TOKEN_REFRESHED fires every ~60s — only update session, never re-sync
+        // TOKEN_REFRESHED fires every ~60s — only update session state, never re-sync
         if (event === 'TOKEN_REFRESHED') {
           setSession(newSession ?? null);
           return;
@@ -102,6 +103,8 @@ const App: React.FC = () => {
         if (!result.success && result.error) {
           setSyncError(result.error);
         }
+        // Bump generation BEFORE clearing spinner so Home re-mounts with fresh data
+        setSyncGeneration(g => g + 1);
         setIsSyncing(false);
       } catch (err: any) {
         console.error('❌ Unexpected sync error:', err);
@@ -223,6 +226,7 @@ const App: React.FC = () => {
         {syncErrorModal}
         {currentPage === 'home' && (
           <Home
+            key={syncGeneration}
             onNavigateToCreate={navigateToCreate}
             onNavigateToSwipe={navigateToSwipe}
             onNavigateToLearn={navigateToLearn}
