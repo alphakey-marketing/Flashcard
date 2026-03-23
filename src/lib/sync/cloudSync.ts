@@ -64,7 +64,7 @@ export class CloudSync {
       tags: deck.tags || [],
       jlptLevel: deck.jlpt_level,
       createdAt: new Date(deck.created_at).getTime(),
-      updatedAt: new Date(deck.updated_at).getTime(),
+      updatedAt: new Date(deck.updatedAt).getTime(),
       cards: (cardsByDeckId.get(deck.id) || []).map((card: any) => ({
         id: card.id,
         front: card.front,
@@ -222,7 +222,7 @@ export class CloudSync {
       created_at: new Date(review.createdAt).toISOString()
     };
 
-    // Step 1: try insert first
+    // Step 1: try insert
     const { error: insertError } = await supabase
       .from('reviews')
       .insert(reviewData);
@@ -232,12 +232,14 @@ export class CloudSync {
       return;
     }
 
-    // Step 2: row exists — explicitly update every column so DB column
-    // defaults (e.g. mastered_count DEFAULT 0) don't silently block the update
+    // Step 2: row exists — update matching on (user_id, card_id) NOT on id.
+    // This handles rows inserted with ANY historical id format (old or new)
+    // and also migrates the id column to the current format on update.
     if (insertError.code === '23505') {
       const { error: updateError } = await supabase
         .from('reviews')
         .update({
+          id,  // migrate old-format id to new format
           deck_id: reviewData.deck_id,
           interval: reviewData.interval,
           repetition: reviewData.repetition,
@@ -250,7 +252,8 @@ export class CloudSync {
           know_it_count: reviewData.know_it_count,
           mastered_count: reviewData.mastered_count
         })
-        .eq('id', id);
+        .eq('user_id', userId)
+        .eq('card_id', review.cardId);
 
       if (updateError) {
         console.warn('⚠️ [CLOUD] Failed to update review (non-fatal):', updateError.message);

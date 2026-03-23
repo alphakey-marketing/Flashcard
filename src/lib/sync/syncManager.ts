@@ -1,16 +1,6 @@
 /**
  * Sync Manager
  * Orchestrates synchronization between local storage and cloud.
- *
- * MERGE STRATEGY:
- * - Decks: last-write-wins based on updatedAt timestamp.
- *   If the same deck exists in both local and cloud, whichever
- *   has the newer updatedAt is kept. New decks from either side
- *   are always added.
- * - Decks that exist only locally are pushed to cloud.
- * - Decks that exist only in cloud are written to local.
- * - Reviews: keep the most recently reviewed entry per card.
- *   Reviews that exist only locally, or are newer locally, are pushed to cloud.
  */
 
 import { SupabaseAuth } from './supabaseAuth';
@@ -48,15 +38,6 @@ export class SyncManager {
     this.onProgressCallback?.(progress);
   }
 
-  /**
-   * Full bidirectional sync:
-   *   1. Pull cloud state
-   *   2. Merge with local state (last-write-wins)
-   *   3. Push local-only decks to cloud
-   *   4. Merge reviews (last-write-wins)
-   *   5. Push local-only or newer reviews to cloud (in parallel batches)
-   *   6. Save merged state locally
-   */
   static async performSync(): Promise<SyncResult> {
     console.log('\n' + '='.repeat(50));
     console.log('🔄 [SYNC] Starting full sync...');
@@ -87,12 +68,16 @@ export class SyncManager {
       const { merged, added, updated } = this.mergeDecks(localDecks, cloudDecks);
       console.log(`🔀 [SYNC] Merge result: ${merged.length} total, ${added} added, ${updated} updated`);
 
-      // Phase 5: Find decks that exist locally but NOT in cloud → push them
-      const cloudDeckIds = new Set(cloudDecks.map(d => d.id));
-      const decksToPush = localDecks.filter(d => !cloudDeckIds.has(d.id));
+      // Phase 5: Push decks that are missing from cloud OR have 0 cards in cloud
+      // The 0-cards check repairs decks whose cards were never successfully pushed
+      const cloudDeckMap = new Map(cloudDecks.map(d => [d.id, d]));
+      const decksToPush = localDecks.filter(d => {
+        const cloudDeck = cloudDeckMap.get(d.id);
+        return !cloudDeck || (cloudDeck.cards.length === 0 && d.cards.length > 0);
+      });
       console.log(`📤 [SYNC] ${decksToPush.length} local decks to push to cloud`);
 
-      // Phase 6: Push local-only decks
+      // Phase 6: Push those decks
       if (decksToPush.length > 0) {
         this.updateProgress({
           phase: 'pushing',
@@ -125,7 +110,7 @@ export class SyncManager {
       LocalStorageSync.saveReviews(mergedReviews);
       LocalStorageSync.setLastSyncTime();
 
-      // Phase 9: Push local-only or newer reviews back to cloud — in parallel batches
+      // Phase 9: Push local-only or newer reviews back to cloud in parallel batches
       const cloudReviewMap = new Map<string, CardReviewData>();
       cloudReviews.forEach(r => cloudReviewMap.set(`${r.setId}::${r.cardId}`, r));
 
@@ -143,13 +128,11 @@ export class SyncManager {
           message: `Uploading ${reviewsToPush.length} review(s) to cloud...`
         });
 
-        // Push in parallel batches to avoid blocking the spinner for large sets
         for (let i = 0; i < reviewsToPush.length; i += REVIEW_PUSH_BATCH_SIZE) {
           const batch = reviewsToPush.slice(i, i + REVIEW_PUSH_BATCH_SIZE);
           await Promise.all(
             batch.map(review =>
               CloudSync.pushReview(review).catch(err => {
-                // Non-fatal: log and continue so one bad review doesn't block everything
                 console.error(`⚠️ [SYNC] Failed to push review for card ${review.cardId} (non-fatal):`, err);
               })
             )
@@ -182,14 +165,6 @@ export class SyncManager {
     }
   }
 
-  /**
-   * Merge local and cloud deck lists.
-   *
-   * Rules:
-   * - If a deck exists only locally  → keep it locally (will be pushed)
-   * - If a deck exists only in cloud → add it locally
-   * - If a deck exists in both       → keep whichever has the newer updatedAt
-   */
   private static mergeDecks(
     localDecks: FlashcardSet[],
     cloudDecks: FlashcardSet[]
@@ -214,11 +189,6 @@ export class SyncManager {
     return { merged: Array.from(deckMap.values()), added, updated };
   }
 
-  /**
-   * Merge local and cloud reviews.
-   * For each (deckId, cardId) pair, keep the entry with the most
-   * recent lastReviewed timestamp.
-   */
   private static mergeReviews(
     localReviews: CardReviewData[],
     cloudReviews: CardReviewData[]
@@ -239,17 +209,11 @@ export class SyncManager {
     return Array.from(reviewMap.values());
   }
 
-  /**
-   * Force-push a single deck to cloud (called by storage.ts on every save).
-   */
   static async pushDeckToCloud(deck: FlashcardSet): Promise<void> {
     console.log(`📤 [SYNC] Background push: "${deck.title}"`);
     await CloudSync.pushDeck(deck);
   }
 
-  /**
-   * Delete a deck from both local storage and cloud.
-   */
   static async deleteDeck(deckId: string): Promise<void> {
     console.log(`🗑️ [SYNC] Deleting deck: ${deckId}`);
 
