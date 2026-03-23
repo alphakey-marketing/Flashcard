@@ -39,29 +39,32 @@ const INIT_FLAG_KEY = 'flashmind-initialized';
 const TEMPLATE_VERSION_KEY = 'flashmind-template-version';
 const CURRENT_TEMPLATE_VERSION = '4.1';
 
-/**
- * Initialize templates ONLY on a genuinely fresh install —
- * i.e. when there is no sync history AND no existing decks.
- *
- * If the user has ever synced (lastSyncTime exists) we skip template
- * injection entirely: cloud data is authoritative and must not be
- * overwritten by local template defaults.
- *
- * If the user has existing decks but no sync history (offline-only),
- * we still merge templates in, but we never replace or remove decks
- * that are already stored.
- */
+// Set by App.tsx the moment a user session is detected.
+// Blocks template injection so cloud data is never overwritten
+// on a fresh browser before SyncManager finishes pulling.
+let _userIsAuthenticated = false;
+export function setStorageAuthState(authenticated: boolean) {
+  _userIsAuthenticated = authenticated;
+}
+
 function initializeTemplates(): void {
   const templateVersion = localStorage.getItem(TEMPLATE_VERSION_KEY);
 
   // Already up-to-date — nothing to do
   if (templateVersion === CURRENT_TEMPLATE_VERSION) return;
 
-  // FIX: If the user has a sync history, cloud data was already written
-  // by SyncManager. DO NOT overwrite it with local templates.
+  // If user is authenticated, cloud sync is authoritative.
+  // Never inject templates — they would overwrite pulled cloud decks.
+  if (_userIsAuthenticated) {
+    localStorage.setItem(INIT_FLAG_KEY, 'true');
+    localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
+    console.log('⏭️ [STORAGE] Skipping template init — user is authenticated, cloud is authoritative');
+    return;
+  }
+
+  // If the user has a prior sync history, cloud data was already written.
   const lastSync = LocalStorageSync.getLastSyncTime();
   if (lastSync !== null) {
-    // Just stamp the version so we don't check again next load
     localStorage.setItem(INIT_FLAG_KEY, 'true');
     localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
     console.log('⏭️ [STORAGE] Skipping template init — synced data is authoritative');
@@ -73,7 +76,6 @@ function initializeTemplates(): void {
   const existingSets = LocalStorageSync.loadDecks();
   const templateIds = new Set(jlptTemplates.map(t => t.id));
 
-  // Keep only user-created sets — strip out any old preset decks
   const userSets = existingSets.filter(
     set => !templateIds.has(set.id) &&
            !set.id.startsWith('jlpt-') &&
@@ -157,7 +159,6 @@ export function saveSet(set: FlashcardSet): void {
   LocalStorageSync.saveDecks(sets);
   console.log(`✅ [STORAGE] Saved set: ${set.title}`);
 
-  // Background sync to cloud
   SupabaseAuth.isAuthenticated().then(isAuth => {
     if (isAuth) {
       SyncManager.pushDeckToCloud(set).catch(error => {

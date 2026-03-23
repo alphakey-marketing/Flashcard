@@ -11,7 +11,7 @@ import DailyWriting from './pages/DailyWriting';
 import ErrorBoundary from './components/ErrorBoundary';
 import { supabase } from './lib/supabaseClient';
 import { SyncManager, type SyncProgress } from './lib/sync/syncManager';
-import { getSet } from './lib/storage';
+import { getSet, setStorageAuthState } from './lib/storage';
 import { setReviewUserId } from './lib/spacedRepetition';
 
 type Page = 'home' | 'create' | 'swipe' | 'stats' | 'learn' | 'sentence-builder' | 'speech-practice' | 'daily-writing';
@@ -81,6 +81,10 @@ const App: React.FC = () => {
     setReviewUserId(newSession?.user?.id ?? null);
 
     if (newSession?.user) {
+      // Block initializeTemplates() from injecting template decks before
+      // SyncManager has written cloud data to localStorage
+      setStorageAuthState(true);
+
       const userId = newSession.user.id;
 
       // Only sync once per unique user login — skip duplicate auth state events
@@ -103,7 +107,7 @@ const App: React.FC = () => {
         if (!result.success && result.error) {
           setSyncError(result.error);
         }
-        // Bump generation BEFORE clearing spinner so Home re-mounts with fresh data
+        // Bump generation BEFORE clearing spinner — Home re-mounts with fresh data
         setSyncGeneration(g => g + 1);
         setIsSyncing(false);
       } catch (err: any) {
@@ -112,7 +116,8 @@ const App: React.FC = () => {
         setIsSyncing(false);
       }
     } else {
-      // User logged out — reset so next login syncs fresh
+      // User logged out — reset auth state and sync guard
+      setStorageAuthState(false);
       lastSyncedUserIdRef.current = null;
     }
   };
