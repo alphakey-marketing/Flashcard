@@ -15,6 +15,8 @@ export interface SyncResult {
   error?: string;
 }
 
+const PAGE_SIZE = 1000;
+
 export class CloudSync {
   static async pullDecks(): Promise<FlashcardSet[]> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
@@ -39,19 +41,34 @@ export class CloudSync {
     const deckIds = deckRows.map((d: any) => d.id);
     console.log(`📊 [CLOUD] Found ${deckIds.length} decks, fetching their cards...`);
 
-    const { data: cardRows, error: cardError } = await supabase
-      .from('cards')
-      .select('*')
-      .in('deck_id', deckIds)
-      .order('position', { ascending: true });
+    // Paginate cards fetch — Supabase default cap is 1000 rows per query.
+    // With 1717+ cards this silently truncated to 1000 without pagination.
+    const allCardRows: any[] = [];
+    let from = 0;
+    while (true) {
+      const { data: cardPage, error: cardError } = await supabase
+        .from('cards')
+        .select('*')
+        .in('deck_id', deckIds)
+        .order('position', { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
 
-    if (cardError) {
-      console.error('❌ [CLOUD] Error pulling cards:', cardError);
-      throw new Error(`Failed to pull cards: ${cardError.message}`);
+      if (cardError) {
+        console.error('❌ [CLOUD] Error pulling cards:', cardError);
+        throw new Error(`Failed to pull cards: ${cardError.message}`);
+      }
+
+      allCardRows.push(...(cardPage || []));
+      console.log(`   📄 Cards page: ${allCardRows.length} total so far`);
+
+      if (!cardPage || cardPage.length < PAGE_SIZE) break; // last page
+      from += PAGE_SIZE;
     }
 
+    console.log(`📊 [CLOUD] Total cards fetched: ${allCardRows.length}`);
+
     const cardsByDeckId = new Map<string, any[]>();
-    for (const card of (cardRows || [])) {
+    for (const card of allCardRows) {
       const list = cardsByDeckId.get(card.deck_id) || [];
       list.push(card);
       cardsByDeckId.set(card.deck_id, list);
@@ -64,7 +81,7 @@ export class CloudSync {
       tags: deck.tags || [],
       jlptLevel: deck.jlpt_level,
       createdAt: new Date(deck.created_at).getTime(),
-      updatedAt: new Date(deck.updatedAt).getTime(),
+      updatedAt: new Date(deck.updated_at).getTime(), // ← FIX: was deck.updatedAt (undefined)
       cards: (cardsByDeckId.get(deck.id) || []).map((card: any) => ({
         id: card.id,
         front: card.front,
@@ -166,17 +183,27 @@ export class CloudSync {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
     console.log(`📊 [CLOUD] Pulling reviews for user: ${userId}`);
 
-    const { data, error } = await supabase
-      .from('reviews')
-      .select('*')
-      .eq('user_id', userId);
+    // Paginate reviews too — same 1000-row Supabase cap applies
+    const allRows: any[] = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('*')
+        .eq('user_id', userId)
+        .range(from, from + PAGE_SIZE - 1);
 
-    if (error) {
-      console.error('❌ [CLOUD] Error pulling reviews:', error);
-      throw new Error(`Failed to pull reviews: ${error.message}`);
+      if (error) {
+        console.error('❌ [CLOUD] Error pulling reviews:', error);
+        throw new Error(`Failed to pull reviews: ${error.message}`);
+      }
+
+      allRows.push(...(data || []));
+      if (!data || data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
     }
 
-    const reviews: CardReviewData[] = (data || []).map((r: any) => ({
+    const reviews: CardReviewData[] = allRows.map((r: any) => ({
       cardId: r.card_id,
       setId: r.deck_id,
       easeFactor: r.ease_factor,
@@ -232,14 +259,12 @@ export class CloudSync {
       return;
     }
 
-    // Step 2: row exists — update matching on (user_id, card_id) NOT on id.
-    // This handles rows inserted with ANY historical id format (old or new)
-    // and also migrates the id column to the current format on update.
+    // Step 2: row exists — update on (user_id, card_id) to handle any historical id format
     if (insertError.code === '23505') {
       const { error: updateError } = await supabase
         .from('reviews')
         .update({
-          id,  // migrate old-format id to new format
+          id,
           deck_id: reviewData.deck_id,
           interval: reviewData.interval,
           repetition: reviewData.repetition,
