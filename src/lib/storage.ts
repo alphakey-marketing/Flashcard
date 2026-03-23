@@ -8,7 +8,6 @@ import { SyncManager } from './sync/syncManager';
 import { LocalStorageSync } from './sync/localStorageSync';
 import { SupabaseAuth } from './sync/supabaseAuth';
 
-// Data models
 export interface Card {
   id: string;
   front: string;
@@ -38,42 +37,57 @@ export interface CardDraft {
 
 const INIT_FLAG_KEY = 'flashmind-initialized';
 const TEMPLATE_VERSION_KEY = 'flashmind-template-version';
-// Bump this version whenever the preset deck list changes.
-// Existing accounts that stored the previous version will re-run
-// initializeTemplates and receive the new/updated preset decks.
 const CURRENT_TEMPLATE_VERSION = '4.1';
 
 /**
- * Initialize templates on first load or when template version changes.
+ * Initialize templates ONLY on a genuinely fresh install —
+ * i.e. when there is no sync history AND no existing decks.
+ *
+ * If the user has ever synced (lastSyncTime exists) we skip template
+ * injection entirely: cloud data is authoritative and must not be
+ * overwritten by local template defaults.
+ *
+ * If the user has existing decks but no sync history (offline-only),
+ * we still merge templates in, but we never replace or remove decks
+ * that are already stored.
  */
 function initializeTemplates(): void {
-  const isInitialized = localStorage.getItem(INIT_FLAG_KEY);
   const templateVersion = localStorage.getItem(TEMPLATE_VERSION_KEY);
 
-  if (!isInitialized || templateVersion !== CURRENT_TEMPLATE_VERSION) {
-    console.log(`🎉 [STORAGE] Initializing with template version ${CURRENT_TEMPLATE_VERSION}`);
-    
-    const existingSets = LocalStorageSync.loadDecks();
-    const templateIds = new Set(jlptTemplates.map(t => t.id));
-    
-    // Keep only user-created sets — strip out any old preset decks so they
-    // get replaced cleanly with the current template list.
-    const userSets = existingSets.filter(
-      set => !templateIds.has(set.id) && 
-             !set.id.startsWith('jlpt-') && 
-             !set.id.startsWith('n5-complete-') &&
-             !set.id.startsWith('n4-complete-')
-    );
+  // Already up-to-date — nothing to do
+  if (templateVersion === CURRENT_TEMPLATE_VERSION) return;
 
-    // Merge templates + user sets
-    const allSets = [...jlptTemplates, ...userSets];
-    LocalStorageSync.saveDecks(allSets);
-    
+  // FIX: If the user has a sync history, cloud data was already written
+  // by SyncManager. DO NOT overwrite it with local templates.
+  const lastSync = LocalStorageSync.getLastSyncTime();
+  if (lastSync !== null) {
+    // Just stamp the version so we don't check again next load
     localStorage.setItem(INIT_FLAG_KEY, 'true');
     localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
-    
-    console.log(`✅ [STORAGE] Initialized with ${jlptTemplates.length} templates + ${userSets.length} user sets`);
+    console.log('⏭️ [STORAGE] Skipping template init — synced data is authoritative');
+    return;
   }
+
+  console.log(`🎉 [STORAGE] Initializing with template version ${CURRENT_TEMPLATE_VERSION}`);
+
+  const existingSets = LocalStorageSync.loadDecks();
+  const templateIds = new Set(jlptTemplates.map(t => t.id));
+
+  // Keep only user-created sets — strip out any old preset decks
+  const userSets = existingSets.filter(
+    set => !templateIds.has(set.id) &&
+           !set.id.startsWith('jlpt-') &&
+           !set.id.startsWith('n5-complete-') &&
+           !set.id.startsWith('n4-complete-')
+  );
+
+  const allSets = [...jlptTemplates, ...userSets];
+  LocalStorageSync.saveDecks(allSets);
+
+  localStorage.setItem(INIT_FLAG_KEY, 'true');
+  localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
+
+  console.log(`✅ [STORAGE] Initialized with ${jlptTemplates.length} templates + ${userSets.length} user sets`);
 }
 
 // READ operations
@@ -160,12 +174,10 @@ export function deleteSet(id: string): void {
   });
 }
 
-// Force reload templates
 export function forceReloadTemplates(): void {
   localStorage.removeItem(TEMPLATE_VERSION_KEY);
   initializeTemplates();
 }
 
-// Export sync manager for external use
 export { SyncManager } from './sync/syncManager';
 export type { SyncProgress, SyncResult } from './sync/syncManager';
