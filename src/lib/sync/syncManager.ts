@@ -9,6 +9,8 @@ import { LocalStorageSync } from './localStorageSync';
 import type { FlashcardSet } from '../storage';
 import type { CardReviewData } from '../spacedRepetition';
 
+const REVIEW_PUSH_BATCH_SIZE = 10;
+
 export interface SyncProgress {
   phase: 'checking-auth' | 'pulling' | 'merging' | 'pushing' | 'complete' | 'error';
   message: string;
@@ -23,8 +25,6 @@ export interface SyncResult {
   reviewsPushed: number;
   error?: string;
 }
-
-const REVIEW_PUSH_BATCH_SIZE = 10;
 
 export class SyncManager {
   private static onProgressCallback?: (progress: SyncProgress) => void;
@@ -68,21 +68,21 @@ export class SyncManager {
       const { merged, added, updated } = this.mergeDecks(localDecks, cloudDecks);
       console.log(`🔀 [SYNC] Merge result: ${merged.length} total, ${added} added, ${updated} updated`);
 
-      // Phase 5: Push decks that are missing from cloud OR have 0 cards in cloud
-      // The 0-cards check repairs decks whose cards were never successfully pushed
-      const cloudDeckMap = new Map(cloudDecks.map(d => [d.id, d]));
-      const decksToPush = localDecks.filter(d => {
+      // Phase 5: Identify decks that are local but missing from cloud OR outdated
+      const cloudDeckMap = new Map(cloudDecks.map((d) => [d.id, d]));
+      const decksToPush = localDecks.filter((d) => {
         const cloudDeck = cloudDeckMap.get(d.id);
-        return !cloudDeck || (cloudDeck.cards.length === 0 && d.cards.length > 0);
+        // push if not in cloud or local is newer
+        return !cloudDeck || cloudDeck.updatedAt < d.updatedAt;
       });
       console.log(`📤 [SYNC] ${decksToPush.length} local decks to push to cloud`);
 
-      // Phase 6: Push those decks
+      // Phase 6: Push decks
       if (decksToPush.length > 0) {
         this.updateProgress({
           phase: 'pushing',
           message: `Uploading ${decksToPush.length} deck(s) to cloud...`,
-          progress: { current: 0, total: decksToPush.length }
+          progress: { current: 0, total: decksToPush.length },
         });
 
         for (let i = 0; i < decksToPush.length; i++) {
@@ -92,7 +92,7 @@ export class SyncManager {
             this.updateProgress({
               phase: 'pushing',
               message: `Uploaded: ${deck.title}`,
-              progress: { current: i + 1, total: decksToPush.length }
+              progress: { current: 1 + i, total: decksToPush.length },
             });
           } catch (err) {
             console.error(`❌ [SYNC] Failed to push "${deck.title}":`, err);
@@ -101,7 +101,7 @@ export class SyncManager {
         }
       }
 
-      // Phase 7: Merge reviews (last-write-wins)
+      // Phase 7: Merge reviews (last‑write‑wins)
       const mergedReviews = this.mergeReviews(localReviews, cloudReviews);
       console.log(`🔀 [SYNC] Merged ${mergedReviews.length} reviews`);
 
@@ -110,11 +110,11 @@ export class SyncManager {
       LocalStorageSync.saveReviews(mergedReviews);
       LocalStorageSync.setLastSyncTime();
 
-      // Phase 9: Push local-only or newer reviews back to cloud in parallel batches
+      // Phase 9: Push newer reviews back to cloud
       const cloudReviewMap = new Map<string, CardReviewData>();
-      cloudReviews.forEach(r => cloudReviewMap.set(`${r.setId}::${r.cardId}`, r));
+      cloudReviews.forEach((r) => cloudReviewMap.set(`${r.setId}::${r.cardId}`, r));
 
-      const reviewsToPush = mergedReviews.filter(r => {
+      const reviewsToPush = mergedReviews.filter((r) => {
         const key = `${r.setId}::${r.cardId}`;
         const cloudReview = cloudReviewMap.get(key);
         return !cloudReview || r.lastReviewed > cloudReview.lastReviewed;
@@ -125,19 +125,25 @@ export class SyncManager {
       if (reviewsToPush.length > 0) {
         this.updateProgress({
           phase: 'pushing',
-          message: `Uploading ${reviewsToPush.length} review(s) to cloud...`
+          message: `Uploading ${reviewsToPush.length} review(s) to cloud...`,
         });
 
         for (let i = 0; i < reviewsToPush.length; i += REVIEW_PUSH_BATCH_SIZE) {
           const batch = reviewsToPush.slice(i, i + REVIEW_PUSH_BATCH_SIZE);
           await Promise.all(
-            batch.map(review =>
-              CloudSync.pushReview(review).catch(err => {
-                console.error(`⚠️ [SYNC] Failed to push review for card ${review.cardId} (non-fatal):`, err);
-              })
+            batch.map(
+              (review) =>
+                CloudSync.pushReview(review).catch((err) => {
+                  console.error(
+                    `⚠️ [SYNC] Failed to push review for card ${review.cardId} (non‑fatal):`,
+                    err
+                  );
+                })
             )
           );
-          console.log(`   ✅ Reviews ${Math.min(i + batch.length, reviewsToPush.length)}/${reviewsToPush.length}`);
+          console.log(
+            `   ✅ Reviews ${Math.min(i + batch.length, reviewsToPush.length)}/${reviewsToPush.length}`
+          );
         }
 
         console.log(`✅ [SYNC] Reviews pushed: ${reviewsToPush.length}`);
@@ -152,16 +158,22 @@ export class SyncManager {
       return {
         success: true,
         decksAdded: added,
-        decksUpdated: updated,
+        decksUpdated: 0,
         decksPushed: decksToPush.length,
-        reviewsPushed: reviewsToPush.length
+        reviewsPushed: reviewsToPush.length,
       };
-
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       console.error('❌ [SYNC] Failed:', msg);
       this.updateProgress({ phase: 'error', message: `Sync failed: ${msg}` });
-      return { success: false, decksAdded: 0, decksUpdated: 0, decksPushed: 0, reviewsPushed: 0, error: msg };
+      return {
+        success: false,
+        decksAdded: 0,
+        decksUpdated: 0,
+        decksPushed: 0,
+        reviewsPushed: 0,
+        error: msg,
+      };
     }
   }
 
@@ -173,9 +185,9 @@ export class SyncManager {
     let added = 0;
     let updated = 0;
 
-    localDecks.forEach(deck => deckMap.set(deck.id, deck));
+    localDecks.forEach((deck) => deckMap.set(deck.id, deck));
 
-    cloudDecks.forEach(cloudDeck => {
+    cloudDecks.forEach((cloudDeck) => {
       const local = deckMap.get(cloudDeck.id);
       if (!local) {
         deckMap.set(cloudDeck.id, cloudDeck);
@@ -209,11 +221,6 @@ export class SyncManager {
     return Array.from(reviewMap.values());
   }
 
-  static async pushDeckToCloud(deck: FlashcardSet): Promise<void> {
-    console.log(`📤 [SYNC] Background push: "${deck.title}"`);
-    await CloudSync.pushDeck(deck);
-  }
-
   static async deleteDeck(deckId: string): Promise<void> {
     console.log(`🗑️ [SYNC] Deleting deck: ${deckId}`);
 
@@ -227,7 +234,27 @@ export class SyncManager {
     }
 
     const localDecks = LocalStorageSync.loadDecks();
-    LocalStorageSync.saveDecks(localDecks.filter(d => d.id !== deckId));
+    LocalStorageSync.saveDecks(localDecks.filter((d) => d.id !== deckId));
     console.log(`✅ [SYNC] Deck deleted`);
+  }
+
+  static async softDeleteCard(cardId: string): Promise<void> {
+    const isAuth = await SupabaseAuth.isAuthenticated();
+    if (isAuth) {
+      try {
+        await CloudSync.softDeleteCard(cardId);
+      } catch (err) {
+        console.error('⚠️ [SYNC] Cloud card delete failed (continuing local cleanup):', err);
+      }
+    }
+
+    const localDecks = LocalStorageSync.loadDecks();
+    const updatedDecks = localDecks.map((deck) => ({
+      ...deck,
+      cards: deck.cards.filter((c) => c.id !== cardId),
+    }));
+
+    LocalStorageSync.saveDecks(updatedDecks);
+    console.log(`✅ [SYNC] Card ${cardId} deleted`);
   }
 }
