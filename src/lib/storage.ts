@@ -5,6 +5,7 @@
 
 import { jlptTemplates } from '../data/jlpt-templates';
 import { SyncManager } from './sync/syncManager';
+import { CloudSync } from './sync/cloudSync';
 import { LocalStorageSync } from './sync/localStorageSync';
 import { SupabaseAuth } from './sync/supabaseAuth';
 
@@ -159,9 +160,10 @@ export function saveSet(set: FlashcardSet): void {
   LocalStorageSync.saveDecks(sets);
   console.log(`✅ [STORAGE] Saved set: ${set.title}`);
 
+  // ✅ FIXED: use CloudSync.pushDeck (SyncManager has no pushDeckToCloud method)
   SupabaseAuth.isAuthenticated().then(isAuth => {
     if (isAuth) {
-      SyncManager.pushDeckToCloud(set).catch(error => {
+      CloudSync.pushDeck(set).catch((error: unknown) => {
         console.error('⚠️ [STORAGE] Background sync failed:', error);
       });
     }
@@ -170,7 +172,7 @@ export function saveSet(set: FlashcardSet): void {
 
 // DELETE operation
 export function deleteSet(id: string): void {
-  SyncManager.deleteDeck(id).catch(error => {
+  SyncManager.deleteDeck(id).catch((error: unknown) => {
     console.error('⚠️ [STORAGE] Delete failed:', error);
   });
 }
