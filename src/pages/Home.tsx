@@ -1,5 +1,5 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
-import { getAllSets, deleteSet, FlashcardSet, saveSet } from '../lib/storage';
+import { getAllSets, FlashcardSet, saveSet } from '../lib/storage';
 import { exportToCSV } from '../lib/csvParser';
 import { getStreak, getTodayStats } from '../lib/studyStats';
 import { getSetStudyStats, getSetReviewData } from '../lib/spacedRepetition';
@@ -162,10 +162,17 @@ const Home: React.FC<HomeProps> = ({
     }
   };
 
-  const handleDelete = (e: React.MouseEvent, id: string) => {
+  // ✅ FIXED: now async and uses SyncManager.deleteDeck for cloud soft-delete
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (window.confirm('Are you sure you want to delete this flashcard set?')) {
-      deleteSet(id);
+      try {
+        await SyncManager.deleteDeck(id);
+      } catch (err) {
+        console.error('❌ Failed to delete deck:', err);
+        alert('Failed to delete deck. Please try again.');
+        return;
+      }
       loadSets();
       checkUnsyncedDecks();
     }
