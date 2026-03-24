@@ -12,24 +12,24 @@ export interface CardReviewData {
   setId: string;
   
   // SM-2 Algorithm data
-  easeFactor: number;      // Default: 2.5, Range: 1.3-2.5+
-  interval: number;        // Days until next review
-  repetitions: number;     // Consecutive successful reviews
-  nextReview: number;      // Timestamp (ms) for next review
+  easeFactor: number;
+  interval: number;
+  repetitions: number;
+  nextReview: number;
   
   // Card status
-  status: 'learning' | 'reviewing' | 'mastered'; // Learning state
+  status: 'learning' | 'reviewing' | 'mastered';
   
   // Performance tracking
-  totalReviews: number;    // Total number of times reviewed
-  knowItCount: number;     // Times marked as "Know It"
-  againCount: number;      // Times marked as "Again" (struggling)
-  masteredCount: number;   // Times marked as "Mastered"
+  totalReviews: number;
+  knowItCount: number;
+  againCount: number;
+  masteredCount: number;
   
   // Timestamps
-  lastReviewed: number;    // Last review timestamp
-  createdAt: number;       // First time card was studied
-  updatedAt: number;       // Last update timestamp
+  lastReviewed: number;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface ReviewSession {
@@ -43,56 +43,44 @@ export interface ReviewSession {
   cardsMastered: number;
 }
 
-// 3-button rating system
 export type ReviewRating = 'again' | 'know_it' | 'mastered';
 
 const STORAGE_KEY_REVIEWS = 'flashcard-review-data';
 const STORAGE_KEY_SESSIONS = 'flashcard-review-sessions';
-const CACHE_TTL = 5000; // 5 seconds cache for review data
+const CACHE_TTL = 5000;
 
-// SM-2 Algorithm Constants
 const MIN_EASE_FACTOR = 1.3;
 const DEFAULT_EASE_FACTOR = 2.5;
 
-// Auth context logic (similar to storage)
 let currentUserId: string | null = null;
 export function setReviewUserId(id: string | null) {
   currentUserId = id;
 }
 
 /**
- * Direct override for syncing cloud down to local storage
- * Implements a smart merge to prevent losing local status
+ * Direct override for syncing cloud down to local storage.
+ * Kept for compatibility — SyncManager.performSync() is the authoritative sync path.
  */
 export function overrideReviewsWithCloud(cloudReviews: CardReviewData[]) {
   const localReviews = getReviewDataFromStorage();
   const mergedReviews = [...cloudReviews];
 
-  // Restore local status/counts for reviews that haven't changed in the cloud
-  // This prevents the "Active Practice" challenges from disappearing when
-  // the status field (which isn't stored in the cloud) gets wiped out by a sync.
   for (let i = 0; i < mergedReviews.length; i++) {
     const cloudReview = mergedReviews[i];
     const localReview = localReviews.find(
       r => r.cardId === cloudReview.cardId && r.setId === cloudReview.setId
     );
 
-    if (localReview) {
-      // If the cloud review is the same age or older than our local review,
-      // it means the cloud didn't have any newer data. We should preserve
-      // our local status and counts.
-      if (cloudReview.lastReviewed <= localReview.lastReviewed) {
-        mergedReviews[i] = {
-          ...cloudReview,
-          status: localReview.status, // Preserve 'mastered' status!
-          knowItCount: localReview.knowItCount || cloudReview.knowItCount,
-          masteredCount: localReview.masteredCount || cloudReview.masteredCount
-        };
-      }
+    if (localReview && cloudReview.lastReviewed <= localReview.lastReviewed) {
+      mergedReviews[i] = {
+        ...cloudReview,
+        status: localReview.status,
+        knowItCount: localReview.knowItCount || cloudReview.knowItCount,
+        masteredCount: localReview.masteredCount || cloudReview.masteredCount
+      };
     }
   }
 
-  // Also add any local reviews that haven't been synced to the cloud yet
   for (const localReview of localReviews) {
     if (!mergedReviews.some(r => r.cardId === localReview.cardId && r.setId === localReview.setId)) {
       mergedReviews.push(localReview);
@@ -110,7 +98,7 @@ export function initializeCardReview(setId: string, cardId: string): CardReviewD
     easeFactor: DEFAULT_EASE_FACTOR,
     interval: 0,
     repetitions: 0,
-    nextReview: now, 
+    nextReview: now,
     status: 'learning',
     totalReviews: 0,
     knowItCount: 0,
@@ -125,17 +113,18 @@ export function initializeCardReview(setId: string, cardId: string): CardReviewD
 function getReviewDataFromStorage(): CardReviewData[] {
   try {
     const data = storageCache.get<CardReviewData[]>(STORAGE_KEY_REVIEWS, CACHE_TTL);
-    
     if (!data) return [];
-    
+
     return data.map((item: any) => {
+      // Migration path for legacy records that pre-date the status field.
+      // Use ?? to NEVER overwrite counts that already exist on synced data.
       if (!item.status) {
         return {
           ...item,
           status: item.repetitions >= 5 ? 'mastered' : item.repetitions > 0 ? 'reviewing' : 'learning',
-          knowItCount: (item.correctCount || 0) + (item.hardCount || 0),
-          masteredCount: 0,
-          againCount: item.againCount || 0
+          knowItCount: item.knowItCount ?? ((item.correctCount || 0) + (item.hardCount || 0)),
+          masteredCount: item.masteredCount ?? 0,
+          againCount: item.againCount ?? 0
         };
       }
       return item;
@@ -157,11 +146,9 @@ function saveReviewDataToStorage(data: CardReviewData[]): void {
 export function getCardReviewData(setId: string, cardId: string): CardReviewData {
   const allData = getReviewDataFromStorage();
   const existing = allData.find(d => d.setId === setId && d.cardId === cardId);
-  
-  if (existing) {
-    return existing;
-  }
-  
+
+  if (existing) return existing;
+
   const newData = initializeCardReview(setId, cardId);
   allData.push(newData);
   saveReviewDataToStorage(allData);
@@ -179,21 +166,21 @@ export function calculateNextReview(
 ): CardReviewData {
   const now = Date.now();
   let { easeFactor, interval, repetitions, status } = currentData;
-  
+
   const totalReviews = currentData.totalReviews + 1;
   let knowItCount = currentData.knowItCount;
   let againCount = currentData.againCount;
   let masteredCount = currentData.masteredCount;
-  
+
   switch (rating) {
     case 'again':
       againCount++;
       repetitions = 0;
-      interval = 1; 
+      interval = 1;
       status = 'learning';
       easeFactor = Math.max(MIN_EASE_FACTOR, easeFactor - 0.2);
       break;
-      
+
     case 'know_it':
       knowItCount++;
       if (repetitions === 0) {
@@ -206,7 +193,7 @@ export function calculateNextReview(
       status = 'reviewing';
       repetitions++;
       break;
-      
+
     case 'mastered':
       masteredCount++;
       if (repetitions === 0) {
@@ -219,9 +206,9 @@ export function calculateNextReview(
       easeFactor = Math.min(3.0, easeFactor + 0.15);
       break;
   }
-  
+
   const nextReview = now + (interval * 24 * 60 * 60 * 1000);
-  
+
   return {
     ...currentData,
     easeFactor,
@@ -245,25 +232,24 @@ export function saveCardReview(
 ): CardReviewData {
   const allData = getReviewDataFromStorage();
   const index = allData.findIndex(d => d.setId === setId && d.cardId === cardId);
-  
+
   let currentData: CardReviewData;
   if (index >= 0) {
     currentData = allData[index];
   } else {
     currentData = initializeCardReview(setId, cardId);
   }
-  
+
   const updatedData = calculateNextReview(rating, currentData);
-  
+
   if (index >= 0) {
     allData[index] = updatedData;
   } else {
     allData.push(updatedData);
   }
-  
+
   saveReviewDataToStorage(allData);
 
-  // Background sync
   if (currentUserId) {
     syncService.pushReview(updatedData, currentUserId);
   }
@@ -274,9 +260,9 @@ export function saveCardReview(
 export function getDueCards(setId: string): CardReviewData[] {
   const now = Date.now();
   const setData = getSetReviewData(setId);
-  return setData.filter(card => 
-    card.nextReview <= now || 
-    card.status === 'learning' || 
+  return setData.filter(card =>
+    card.nextReview <= now ||
+    card.status === 'learning' ||
     card.status === 'reviewing'
   );
 }
@@ -304,27 +290,23 @@ export function getMasteredCards(setId: string): CardReviewData[] {
 export function getSetStudyStats(setId: string, totalCards: number) {
   const setData = getSetReviewData(setId);
   const now = Date.now();
-  
+
   const dueCards = setData.filter(card => card.nextReview <= now);
   const learningCards = getLearningCards(setId);
   const masteredCards = getMasteredCards(setId);
   const difficultCards = getDifficultCards(setId);
-  
+
   const totalReviews = setData.reduce((sum, card) => sum + card.totalReviews, 0);
   const averageEaseFactor = setData.length > 0
     ? setData.reduce((sum, card) => sum + card.easeFactor, 0) / setData.length
     : DEFAULT_EASE_FACTOR;
-  
-  const totalAttempts = setData.reduce(
-    (sum, card) => sum + card.totalReviews,
-    0
-  );
+
+  const totalAttempts = setData.reduce((sum, card) => sum + card.totalReviews, 0);
   const totalKnowIt = setData.reduce(
-    (sum, card) => sum + card.knowItCount + card.masteredCount,
-    0
+    (sum, card) => sum + card.knowItCount + card.masteredCount, 0
   );
   const successRate = totalAttempts > 0 ? (totalKnowIt / totalAttempts) * 100 : 0;
-  
+
   return {
     totalCards,
     studiedCards: setData.length,
@@ -340,7 +322,7 @@ export function getSetStudyStats(setId: string, totalCards: number) {
 }
 
 export function startReviewSession(setId: string): ReviewSession {
-  const session: ReviewSession = {
+  return {
     setId,
     sessionId: crypto.randomUUID(),
     startTime: Date.now(),
@@ -349,27 +331,17 @@ export function startReviewSession(setId: string): ReviewSession {
     cardsKnowIt: 0,
     cardsMastered: 0,
   };
-  
-  return session;
 }
 
 export function endReviewSession(session: ReviewSession): ReviewSession {
-  const endedSession = {
-    ...session,
-    endTime: Date.now(),
-  };
-  
+  const endedSession = { ...session, endTime: Date.now() };
+
   try {
     const sessions = storageCache.get<ReviewSession[]>(STORAGE_KEY_SESSIONS) || [];
     sessions.push(endedSession);
-    
-    if (sessions.length > 100) {
-      sessions.shift();
-    }
-    
+    if (sessions.length > 100) sessions.shift();
     storageCache.set(STORAGE_KEY_SESSIONS, sessions);
 
-    // If we wanted to sync sessions to study_sessions table, we would add that here.
     if (currentUserId && endedSession.endTime) {
       supabase.from('study_sessions').insert({
         user_id: currentUserId,
@@ -379,15 +351,14 @@ export function endReviewSession(session: ReviewSession): ReviewSession {
         duration_seconds: Math.floor((endedSession.endTime - endedSession.startTime) / 1000),
         cards_studied: endedSession.cardsReviewed,
         cards_mastered: endedSession.cardsMastered
-      }).then(({ error }) => {
-        if (error) console.error("Error syncing session: ", error);
+      }).then(({ error }: { error: { message: string } | null }) => {
+        if (error) console.error('Error syncing session:', error);
       });
     }
-
   } catch (error) {
     console.error('Error saving session:', error);
   }
-  
+
   return endedSession;
 }
 
@@ -411,29 +382,20 @@ export function getRecentSessions(
 // COMPATIBILITY EXPORTS FOR LearnSession.tsx
 // ============================================
 
-/**
- * Compatibility wrapper: getCardReview
- * Maps to getCardReviewData with reversed parameter order
- */
 export function getCardReview(cardId: string, setId: string): CardReviewData {
   return getCardReviewData(setId, cardId);
 }
 
-/**
- * Compatibility wrapper: recordReview
- * Maps 4-quality system (again/hard/good/easy) to 3-button system
- */
 export function recordReview(
   cardId: string,
   setId: string,
   quality: 'again' | 'hard' | 'good' | 'easy'
 ): CardReviewData {
-  // Map 4-quality to 3-button rating system
   const rating: ReviewRating =
     quality === 'again' ? 'again' :
-    quality === 'hard' ? 'again' :      // Conservative: treat "hard" as "again"
+    quality === 'hard' ? 'again' :
     quality === 'good' ? 'know_it' :
-    'mastered';  // "easy" maps to "mastered"
+    'mastered';
 
   return saveCardReview(setId, cardId, rating);
 }

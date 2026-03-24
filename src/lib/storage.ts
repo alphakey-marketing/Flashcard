@@ -1,16 +1,21 @@
-import { jlptTemplates } from '../data/jlpt-templates';
-import { syncService } from './syncService';
-import { supabase } from './supabaseClient';
+/**
+ * Storage Module
+ * Handles flashcard sets management with local and cloud sync
+ */
 
-// Data models
+import { jlptTemplates } from '../data/jlpt-templates';
+import { SyncManager } from './sync/syncManager';
+import { CloudSync } from './sync/cloudSync';
+import { LocalStorageSync } from './sync/localStorageSync';
+import { SupabaseAuth } from './sync/supabaseAuth';
+
 export interface Card {
   id: string;
   front: string;
   back: string;
-  example?: string; // Optional example sentence in Japanese
+  example?: string;
 }
 
-// Compatibility alias for older code that imports 'Flashcard'
 export type Flashcard = Card;
 
 export interface FlashcardSet {
@@ -18,8 +23,8 @@ export interface FlashcardSet {
   title: string;
   description?: string;
   cards: Card[];
-  tags?: string[]; // Tags for organization
-  jlptLevel?: 'N5' | 'N4' | 'N3' | 'N2' | 'N1'; // JLPT level category
+  tags?: string[];
+  jlptLevel?: 'N5' | 'N4' | 'N3' | 'N2' | 'N1';
   createdAt: number;
   updatedAt: number;
 }
@@ -31,107 +36,88 @@ export interface CardDraft {
   example?: string;
 }
 
-const STORAGE_KEY = 'flashcard-sets';
-const INIT_FLAG_KEY = 'flashcard-initialized';
-const TEMPLATE_VERSION_KEY = 'flashcard-template-version';
-const CURRENT_TEMPLATE_VERSION = '4.0'; // Version 4.0 includes complete 800 N5 words
+const INIT_FLAG_KEY = 'flashmind-initialized';
+const TEMPLATE_VERSION_KEY = 'flashmind-template-version';
+const CURRENT_TEMPLATE_VERSION = '4.1';
 
-// Internal variables
-let currentUserId: string | null = null;
-
-export function setUserId(id: string | null) {
-  currentUserId = id;
+// Set by App.tsx the moment a user session is detected.
+// Blocks template injection so cloud data is never overwritten
+// on a fresh browser before SyncManager finishes pulling.
+let _userIsAuthenticated = false;
+export function setStorageAuthState(authenticated: boolean) {
+  _userIsAuthenticated = authenticated;
 }
 
-// Helper function to get all sets from localStorage
-function getSetsFromStorage(): FlashcardSet[] {
-  try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    if (!data) return [];
-    return JSON.parse(data);
-  } catch (error) {
-    console.error('Error reading from localStorage:', error);
-    return [];
-  }
-}
-
-// Helper function to save sets to localStorage
-function saveSetsToStorage(sets: FlashcardSet[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sets));
-  } catch (error) {
-    console.error('Error writing to localStorage:', error);
-  }
-}
-
-// Direct override for sync (called after login)
-export function overrideStorageWithCloud(sets: FlashcardSet[]) {
-  saveSetsToStorage(sets);
-  localStorage.setItem(INIT_FLAG_KEY, 'true');
-  localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
-}
-
-// Initialize with JLPT templates on first load or version upgrade
 function initializeTemplates(): void {
-  const isInitialized = localStorage.getItem(INIT_FLAG_KEY);
   const templateVersion = localStorage.getItem(TEMPLATE_VERSION_KEY);
 
-  // Check if this is first time OR if template version has changed
-  if (!isInitialized || templateVersion !== CURRENT_TEMPLATE_VERSION) {
-    const existingSets = getSetsFromStorage();
+  // Already up-to-date — nothing to do
+  if (templateVersion === CURRENT_TEMPLATE_VERSION) return;
 
-    // Get IDs of template sets (they start with 'jlpt-' or 'n5-complete-')
-    const templateIds = new Set(jlptTemplates.map(t => t.id));
-
-    // Keep user-created sets (non-template sets)
-    const userSets = existingSets.filter(set => !templateIds.has(set.id) && !set.id.startsWith('jlpt-') && !set.id.startsWith('n5-complete-'));
-
-    // Merge: new templates + user sets
-    const allSets = [...jlptTemplates, ...userSets];
-
-    saveSetsToStorage(allSets);
+  // If user is authenticated, cloud sync is authoritative.
+  // Never inject templates — they would overwrite pulled cloud decks.
+  if (_userIsAuthenticated) {
     localStorage.setItem(INIT_FLAG_KEY, 'true');
     localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
-
-    console.log(`Initialized with template version ${CURRENT_TEMPLATE_VERSION} - Added complete N5 vocabulary`);
-
-    // DO NOT auto-sync templates here - let App.tsx handle it after login
-    // This prevents RLS policy errors when templates are initialized before user session is ready
+    console.log('⏭️ [STORAGE] Skipping template init — user is authenticated, cloud is authoritative');
+    return;
   }
+
+  // If the user has a prior sync history, cloud data was already written.
+  const lastSync = LocalStorageSync.getLastSyncTime();
+  if (lastSync !== null) {
+    localStorage.setItem(INIT_FLAG_KEY, 'true');
+    localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
+    console.log('⏭️ [STORAGE] Skipping template init — synced data is authoritative');
+    return;
+  }
+
+  console.log(`🎉 [STORAGE] Initializing with template version ${CURRENT_TEMPLATE_VERSION}`);
+
+  const existingSets = LocalStorageSync.loadDecks();
+  const templateIds = new Set(jlptTemplates.map(t => t.id));
+
+  const userSets = existingSets.filter(
+    set => !templateIds.has(set.id) &&
+           !set.id.startsWith('jlpt-') &&
+           !set.id.startsWith('n5-complete-') &&
+           !set.id.startsWith('n4-complete-')
+  );
+
+  const allSets = [...jlptTemplates, ...userSets];
+  LocalStorageSync.saveDecks(allSets);
+
+  localStorage.setItem(INIT_FLAG_KEY, 'true');
+  localStorage.setItem(TEMPLATE_VERSION_KEY, CURRENT_TEMPLATE_VERSION);
+
+  console.log(`✅ [STORAGE] Initialized with ${jlptTemplates.length} templates + ${userSets.length} user sets`);
 }
 
 // READ operations
 export function getAllSets(): FlashcardSet[] {
   initializeTemplates();
-  return getSetsFromStorage();
+  return LocalStorageSync.loadDecks();
 }
 
 export function getSet(id: string): FlashcardSet | undefined {
-  const sets = getSetsFromStorage();
+  const sets = getAllSets();
   return sets.find(set => set.id === id);
 }
 
-// Get all unique tags
 export function getAllTags(): string[] {
-  const sets = getSetsFromStorage();
+  const sets = getAllSets();
   const tagSet = new Set<string>();
-
-  sets.forEach(set => {
-    set.tags?.forEach(tag => tagSet.add(tag));
-  });
-
+  sets.forEach(set => set.tags?.forEach(tag => tagSet.add(tag)));
   return Array.from(tagSet).sort();
 }
 
-// Filter sets by tag
 export function getSetsByTag(tag: string): FlashcardSet[] {
-  const sets = getSetsFromStorage();
+  const sets = getAllSets();
   return sets.filter(set => set.tags?.includes(tag));
 }
 
-// Filter sets by JLPT level
 export function getSetsByJLPTLevel(level: 'N5' | 'N4' | 'N3' | 'N2' | 'N1'): FlashcardSet[] {
-  const sets = getSetsFromStorage();
+  const sets = getAllSets();
   return sets.filter(set => set.jlptLevel === level);
 }
 
@@ -162,7 +148,7 @@ export function createNewSet(
 }
 
 export function saveSet(set: FlashcardSet): void {
-  const sets = getSetsFromStorage();
+  const sets = getAllSets();
   const existingIndex = sets.findIndex(s => s.id === set.id);
 
   if (existingIndex >= 0) {
@@ -171,28 +157,30 @@ export function saveSet(set: FlashcardSet): void {
     sets.push(set);
   }
 
-  saveSetsToStorage(sets);
+  LocalStorageSync.saveDecks(sets);
+  console.log(`✅ [STORAGE] Saved set: ${set.title}`);
 
-  // Background sync to cloud
-  if (currentUserId) {
-    syncService.pushDeck(set, currentUserId);
-  }
+  // ✅ FIXED: use CloudSync.pushDeck (SyncManager has no pushDeckToCloud method)
+  SupabaseAuth.isAuthenticated().then(isAuth => {
+    if (isAuth) {
+      CloudSync.pushDeck(set).catch((error: unknown) => {
+        console.error('⚠️ [STORAGE] Background sync failed:', error);
+      });
+    }
+  });
 }
 
 // DELETE operation
 export function deleteSet(id: string): void {
-  const sets = getSetsFromStorage();
-  const filteredSets = sets.filter(set => set.id !== id);
-  saveSetsToStorage(filteredSets);
-
-  // Background delete from cloud
-  if (currentUserId) {
-    syncService.deleteDeck(id);
-  }
+  SyncManager.deleteDeck(id).catch((error: unknown) => {
+    console.error('⚠️ [STORAGE] Delete failed:', error);
+  });
 }
 
-// Force reload templates (for debugging/admin purposes)
 export function forceReloadTemplates(): void {
   localStorage.removeItem(TEMPLATE_VERSION_KEY);
   initializeTemplates();
 }
+
+export { SyncManager } from './sync/syncManager';
+export type { SyncProgress, SyncResult } from './sync/syncManager';
