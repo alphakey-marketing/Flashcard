@@ -76,6 +76,7 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
         <button
           style={styles.closeButton}
           onClick={onNavigateToHome}
+          aria-label="Cancel editing"
           onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
           onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
         >
@@ -137,6 +138,7 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
                   <button
                     style={styles.deleteCardButton}
                     onClick={() => handleDeleteCard(card.id)}
+                    aria-label="Delete card"
                     onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
                     onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.6')}
                   >
