@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Home from './pages/Home';
 import Create from './pages/Create';
+import EditSet from './pages/EditSet';
 import Swipe from './pages/Swipe';
 import Stats from './pages/Stats';
 import Auth from './pages/Auth';
@@ -14,7 +15,7 @@ import { SyncManager, type SyncProgress } from './lib/sync/syncManager';
 import { getSet, setStorageAuthState } from './lib/storage';
 import { setReviewUserId } from './lib/spacedRepetition';
 
-type Page = 'home' | 'create' | 'swipe' | 'stats' | 'learn' | 'sentence-builder' | 'speech-practice' | 'daily-writing';
+type Page = 'home' | 'create' | 'edit-set' | 'swipe' | 'stats' | 'learn' | 'sentence-builder' | 'speech-practice' | 'daily-writing';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -129,6 +130,7 @@ const App: React.FC = () => {
 
   const navigateToHome = () => setCurrentPage('home');
   const navigateToCreate = () => setCurrentPage('create');
+  const navigateToEditSet = (setId: string) => { setSelectedSetId(setId); setCurrentPage('edit-set'); };
   const navigateToStats = () => setCurrentPage('stats');
   const navigateToSwipe = (setId: string) => { setSelectedSetId(setId); setCurrentPage('swipe'); };
   const navigateToLearn = (setId: string) => { setSelectedSetId(setId); setCurrentPage('learn'); };
@@ -233,6 +235,7 @@ const App: React.FC = () => {
           <Home
             key={syncGeneration}
             onNavigateToCreate={navigateToCreate}
+            onNavigateToEditSet={navigateToEditSet}
             onNavigateToSwipe={navigateToSwipe}
             onNavigateToLearn={navigateToLearn}
             onNavigateToStats={navigateToStats}
@@ -244,6 +247,9 @@ const App: React.FC = () => {
         )}
         {currentPage === 'create' && (
           <Create onNavigateToHome={navigateToHome} />
+        )}
+        {currentPage === 'edit-set' && selectedSetId && (
+          <EditSet setId={selectedSetId} onNavigateToHome={navigateToHome} />
         )}
         {currentPage === 'swipe' && selectedSetId && (
           <Swipe setId={selectedSetId} onNavigateToHome={navigateToHome} />

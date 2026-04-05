@@ -12,6 +12,7 @@ import LearningTips from '../components/LearningTips';
 
 interface HomeProps {
   onNavigateToCreate: () => void;
+  onNavigateToEditSet: (setId: string) => void;
   onNavigateToSwipe: (setId: string) => void;
   onNavigateToLearn: (setId: string) => void;
   onNavigateToStats: () => void;
@@ -27,6 +28,7 @@ const CATEGORY_COLLAPSE_KEY = 'flashmind-collapsed-categories';
 
 const Home: React.FC<HomeProps> = ({
   onNavigateToCreate,
+  onNavigateToEditSet,
   onNavigateToSwipe,
   onNavigateToLearn,
   onNavigateToStats,
@@ -39,7 +41,6 @@ const Home: React.FC<HomeProps> = ({
   const [showImportModal, setShowImportModal] = useState(false);
   const [showLearningTips, setShowLearningTips] = useState(false);
   const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
-  const [editingLevelSetId, setEditingLevelSetId] = useState<string | null>(null);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedSetIds, setSelectedSetIds] = useState<Set<string>>(new Set());
@@ -205,19 +206,9 @@ const Home: React.FC<HomeProps> = ({
   const toggleCardExpansion = (cardId: string) =>
     setExpandedCardId(expandedCardId === cardId ? null : cardId);
 
-  const handleEditLevel = (e: React.MouseEvent, setId: string) => {
+  const handleEditSet = (e: React.MouseEvent, setId: string) => {
     e.stopPropagation();
-    setEditingLevelSetId(setId);
-  };
-
-  const handleSaveLevel = (setId: string, newLevel: JLPTLevel) => {
-    const set = sets.find(s => s.id === setId);
-    if (set) {
-      saveSet({ ...set, jlptLevel: newLevel });
-      loadSets();
-      setEditingLevelSetId(null);
-      checkUnsyncedDecks();
-    }
+    onNavigateToEditSet(setId);
   };
 
   const toggleSelectionMode = () => {
@@ -267,7 +258,6 @@ const Home: React.FC<HomeProps> = ({
     const stats = getSetStudyStats(set.id, set.cards.length);
     const isUnsynced = unsyncedDeckIds.has(set.id);
     const isExpanded = expandedCardId === set.id;
-    const isEditingLevel = editingLevelSetId === set.id;
     const isSelected = selectedSetIds.has(set.id);
     const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
     const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
@@ -317,31 +307,12 @@ const Home: React.FC<HomeProps> = ({
           </h3>
           {!selectionMode && (
             <div style={styles.cardActions}>
-              <button style={styles.editLevelButton} onClick={e => handleEditLevel(e, set.id)} title="Change JLPT Level">📝</button>
+              <button style={styles.editLevelButton} onClick={e => handleEditSet(e, set.id)} title="Edit set">📝</button>
               <button style={styles.exportButton} onClick={e => handleExport(e, set)} title="Export to CSV">📤</button>
               <button style={styles.deleteButton} onClick={e => handleDelete(e, set.id)} title="Delete set">🗑️</button>
             </div>
           )}
         </div>
-
-        {isEditingLevel && !selectionMode && (
-          <div style={styles.levelEditor}>
-            <select
-              value={set.jlptLevel || ''}
-              onChange={e => handleSaveLevel(set.id, (e.target.value as JLPTLevel) || undefined)}
-              style={styles.levelSelect}
-              autoFocus
-            >
-              <option value="">Custom / No Level</option>
-              <option value="N5">N5 (Beginner)</option>
-              <option value="N4">N4 (Elementary)</option>
-              <option value="N3">N3 (Intermediate)</option>
-              <option value="N2">N2 (Upper-Intermediate)</option>
-              <option value="N1">N1 (Advanced)</option>
-            </select>
-            <button style={styles.cancelLevelButton} onClick={() => setEditingLevelSetId(null)}>Cancel</button>
-          </div>
-        )}
 
         {!selectionMode && (
           <>
