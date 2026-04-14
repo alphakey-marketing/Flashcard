@@ -18,5 +18,19 @@ publicDir = "dist"
 localPort = 5173
 externalPort = 80
 
+[[ports]]
+localPort = 5174
+externalPort = 3000
+
+[[ports]]
+localPort = 5175
+externalPort = 3001
+
 [agent]
 expertMode = true
+
+[userenv]
+
+[userenv.shared]
+VITE_SUPABASE_URL = "https://btvvuenqfuqnietyafpd.supabase.co"
+VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ0dnZ1ZW5xZnVxbmlldHlhZnBkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzOTA5NjAsImV4cCI6MjA4Nzk2Njk2MH0.KLNMsTDAlHU2r5IItR_MrHXYV-HgzpDMZBdQsHfRdfA"
