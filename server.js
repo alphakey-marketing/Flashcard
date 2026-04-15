@@ -1,4 +1,7 @@
 // server.js
+// Load .env file first — required for OPENROUTER_API_KEY to reach this process
+// when launched as a child of `concurrently` (Replit Secrets don't always propagate to child processes).
+import 'dotenv/config';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
