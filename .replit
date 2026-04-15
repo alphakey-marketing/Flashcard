@@ -1,4 +1,4 @@
-run = "npm run dev"
+run = "npm run dev:all"
 modules = ["nodejs-20"]
 hidden = [".config", "tsconfig.json", "tsconfig.node.json", "vite.config.js", ".gitignore"]
 entrypoint = "src/App.tsx"

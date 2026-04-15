@@ -1,5 +1,6 @@
 import React, { useState, CSSProperties } from 'react';
 import { createNewSet, saveSet, CardDraft } from '../lib/storage';
+import { useGenerateSentence } from '../hooks/useGenerateSentence';
 
 interface CreateProps {
   onNavigateToHome: () => void;
@@ -16,6 +17,9 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
     { id: crypto.randomUUID(), front: '', back: '' }
   ]);
 
+  const { generate, isGenerating, error: generateError } = useGenerateSentence();
+  const [vocabWords, setVocabWords] = useState<Record<string, string>>({});
+
   const handleAddCard = () => {
     setCards([...cards, { id: crypto.randomUUID(), front: '', back: '' }]);
   };
@@ -29,6 +33,18 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
   const handleDeleteCard = (id: string) => {
     if (cards.length > 1) {
       setCards(cards.filter(card => card.id !== id));
+    }
+  };
+
+  const handleAutoFill = async (cardId: string) => {
+    const word = vocabWords[cardId] ?? '';
+    if (!word.trim()) return;
+    const result = await generate(word);
+    if (result) {
+      setCards(cards.map(card =>
+        card.id === cardId ? { ...card, front: result.front, back: result.back } : card
+      ));
+      setVocabWords(prev => ({ ...prev, [cardId]: '' }));
     }
   };
 
@@ -124,6 +140,38 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
                   >
                     🗑️
                   </button>
+                )}
+              </div>
+              <div style={styles.autoFillContainer}>
+                <label style={styles.autoFillLabel}>
+                  Japanese vocab (auto-fill)
+                </label>
+                <div style={styles.autoFillRow}>
+                  <input
+                    type="text"
+                    value={vocabWords[card.id] ?? ''}
+                    onChange={(e) => setVocabWords(prev => ({ ...prev, [card.id]: e.target.value }))}
+                    placeholder="e.g. 食べる"
+                    style={styles.vocabInput}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAutoFill(card.id);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleAutoFill(card.id)}
+                    disabled={!(vocabWords[card.id] ?? '').trim() || isGenerating}
+                    style={{
+                      ...styles.autoFillButton,
+                      background: isGenerating ? '#ccc' : '#4f46e5',
+                      cursor: isGenerating ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {isGenerating ? '⏳ Generating...' : '✨ Auto-fill'}
+                  </button>
+                </div>
+                {generateError && (
+                  <p style={styles.autoFillError}>{generateError}</p>
                 )}
               </div>
               <textarea
@@ -319,6 +367,45 @@ const styles: { [key: string]: CSSProperties } = {
     fontWeight: 600,
     cursor: 'pointer',
     transition: 'all 0.2s'
+  },
+  autoFillContainer: {
+    marginBottom: '12px'
+  },
+  autoFillLabel: {
+    display: 'block',
+    marginBottom: '4px',
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#64748b'
+  },
+  autoFillRow: {
+    display: 'flex',
+    gap: '8px'
+  },
+  vocabInput: {
+    flex: 1,
+    padding: '8px 12px',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
+    fontSize: '15px',
+    fontFamily: 'inherit',
+    outline: 'none'
+  },
+  autoFillButton: {
+    padding: '8px 16px',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: 600,
+    whiteSpace: 'nowrap',
+    transition: 'background 0.2s'
+  },
+  autoFillError: {
+    color: '#dc2626',
+    fontSize: '13px',
+    marginTop: '4px',
+    marginBottom: 0
   }
 };
 
