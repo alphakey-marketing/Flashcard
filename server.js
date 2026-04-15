@@ -107,18 +107,22 @@ app.post('/api/generate-sentence', generateLimiter, async (req, res) => {
     }
 
     // Step 2: OpenRouter — generate a simple sentence
-    const systemPrompt = `You are a Japanese language teacher creating beginner flashcards.
-Given a Japanese vocabulary word, generate ONE short, natural, everyday example sentence using that word.
-The sentence must be suitable for JLPT N4–N5 level learners (8–20 characters).
+const systemPrompt = `You are a Japanese language teacher creating intermediate flashcards.
+Given a Japanese vocabulary word, generate ONE natural, contextually rich example sentence using that word.
+The sentence must be suitable for JLPT N3–N2 level learners (15–35 characters).
 Return ONLY this exact JSON object with no extra text:
 {
-  "japaneseSentence": "<short Japanese sentence using the word>",
+  "japaneseSentence": "<Japanese sentence using the word>",
   "englishTranslation": "<natural English translation of that sentence>"
 }
 Rules:
-- Use simple, common vocabulary in the sentence
-- The sentence must actually contain the given word (or its conjugated form)
-- englishTranslation must be a natural English sentence, not a word-for-word translation`;
+- The sentence must actually contain the given word (or its conjugated/declined form)
+- Use a mix of kanji and kana naturally — do not over-simplify
+- Sentences may include subordinate clauses, て-form chains, or conditional forms (〜たら、〜ば、〜のに)
+- Avoid tourist-phrase or textbook-cliché sentences (e.g. do NOT write "私は学生です")
+- The situation should feel like something a real adult Japanese speaker would say or think
+- englishTranslation must be a natural English sentence — not a word-for-word literal translation
+- Do NOT include furigana or reading hints in the sentence itself`;
 
     const userMessage = `Vocabulary word: ${word}`;
 
