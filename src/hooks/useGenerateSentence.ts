@@ -23,6 +23,14 @@ export function useGenerateSentence() {
         body: JSON.stringify({ word: word.trim() }),
       });
 
+      // If the response is not JSON (e.g. the server is not running and a
+      // static host returned an HTML page), surface a clearer message.
+      const contentType = res.headers.get('content-type') ?? '';
+      if (!contentType.includes('application/json')) {
+        setError('Auto-fill service is unavailable. This feature requires the server to be running with OPENROUTER_API_KEY configured.');
+        return null;
+      }
+
       const data = await res.json();
 
       if (!res.ok) {
@@ -32,7 +40,9 @@ export function useGenerateSentence() {
 
       return { front: data.front, back: data.back };
 
-    } catch {
+    } catch (err) {
+      // fetch() itself throws only for true network-level failures (offline,
+      // DNS failure, CORS block, etc.).
       setError('Network error — please check your connection and try again.');
       return null;
     } finally {

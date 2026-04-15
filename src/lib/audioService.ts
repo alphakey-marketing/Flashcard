@@ -13,6 +13,13 @@ export class AudioService {
   // (a known Chrome/WebKit bug with SpeechSynthesis.cancel()).
   private currentResolve: (() => void) | null = null;
 
+  // Fallback timeout constants for utterance promises that never settle.
+  // CHARS_PER_MS_ESTIMATE: rough speaking rate — 1 char ≈ 150 ms at rate=1.
+  // MIN/MAX cap the range to sensible values regardless of text length.
+  private static readonly CHARS_PER_MS_ESTIMATE = 150;
+  private static readonly MIN_UTTERANCE_TIMEOUT_MS = 5000;
+  private static readonly MAX_UTTERANCE_TIMEOUT_MS = 30000;
+
   constructor() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       this.synth = window.speechSynthesis;
@@ -98,7 +105,13 @@ export class AudioService {
 
         // Safety-net: if onend/onerror never fire (e.g. browser bug),
         // resolve after a generous timeout so the caller is never stuck.
-        const estimatedMs = Math.min(30000, Math.max(5000, (item.text.length / rate) * 150));
+        const estimatedMs = Math.min(
+          AudioService.MAX_UTTERANCE_TIMEOUT_MS,
+          Math.max(
+            AudioService.MIN_UTTERANCE_TIMEOUT_MS,
+            (item.text.length / rate) * AudioService.CHARS_PER_MS_ESTIMATE
+          )
+        );
         const fallbackTimer = setTimeout(settle, estimatedMs);
 
         this.synth!.speak(utterance);

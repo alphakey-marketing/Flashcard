@@ -10,21 +10,17 @@ channel = "stable-24_05"
 language = "nodejs"
 
 [deployment]
-deploymentTarget = "static"
+deploymentTarget = "autoscale"
 build = ["npm", "run", "build"]
-publicDir = "dist"
+run = ["npm", "run", "start"]
 
 [[ports]]
-localPort = 5173
+localPort = 3001
 externalPort = 80
 
 [[ports]]
-localPort = 5174
+localPort = 5173
 externalPort = 3000
-
-[[ports]]
-localPort = 5175
-externalPort = 3001
 
 [agent]
 expertMode = true
