@@ -398,7 +398,10 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       const count = againCountsRef.current.get(cardKey) ?? 0;
       againCountsRef.current.set(cardKey, count + 1);
 
-      if (count < MAX_AGAIN_REQUEUES_PER_SESSION && newQueue.length >= 2) {
+      // Requeue this card once (or twice at most) if there are other cards remaining.
+      // Requiring at least 1 other card prevents the card from being the only item and
+      // re-inserted into an effectively single-card queue.
+      if (count < MAX_AGAIN_REQUEUES_PER_SESSION && newQueue.length >= 1) {
         const insertIndex = Math.min(newQueue.length, Math.floor(Math.random() * 3) + 2);
         newQueue.splice(insertIndex, 0, reviewedCard);
       }

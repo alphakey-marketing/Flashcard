@@ -58,6 +58,7 @@ const MIN_EASE_FACTOR = 1.3;
 const DEFAULT_EASE_FACTOR = 2.5;
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_INTERVAL_DAYS = 365;
 
 /** Daily workload caps — configurable at app level. */
 export const DAILY_LIMITS = {
@@ -209,7 +210,8 @@ export function calculateNextReview(
   } else if (rating === 'know_it') {
     knowItCount++;
     if (isMatureReview) {
-      // Mature review card: grow interval using ease factor (conservative)
+      // Mature review card: conservative growth (0.9×) so the interval extends gradually
+      // and gives the user a reliable review before stretching to longer gaps.
       interval = Math.max(1, Math.round(interval * easeFactor * 0.9));
       status = 'reviewing';
       learningStep = 0;
@@ -238,18 +240,17 @@ export function calculateNextReview(
     // 'mastered'
     masteredCount++;
     if (isMatureReview) {
-      // Mature review card: aggressive interval growth
+      // Mature review card: aggressive interval growth with upper bound
       interval = Math.max(1, Math.round(interval * easeFactor * 1.3));
-      interval = Math.min(interval, 365); // cap at 1 year
+      interval = Math.min(interval, MAX_INTERVAL_DAYS);
       status = 'mastered';
       easeFactor = Math.min(3.0, easeFactor + 0.15);
       learningStep = 0;
       repetitions++;
       nextReviewMs = now + interval * ONE_DAY_MS;
     } else {
-      // New / learning card: skip remaining learning steps and graduate
-      const hasRepeatedlyFailed = lapses > 2;
-      interval = hasRepeatedlyFailed ? 3 : 4;
+      // New / learning card: skip remaining learning steps and graduate at 4 days
+      interval = 4;
       learningStep = 0;
       status = 'reviewing';
       easeFactor = Math.min(3.0, easeFactor + 0.1);
