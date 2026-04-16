@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { buildSentence, tokenizeSentence, type Word } from '../lib/sentenceBuilder';
+import { tokenizeSentence } from '../lib/sentenceBuilder';
 
 interface SpeechPracticeProps {
   targetSentence: string;

@@ -356,6 +356,14 @@ export function validateSentence(sentence: string, requiredWords: Card[]): {
   };
 }
 
+// Tokenize a sentence into an array of lowercase words
+export function tokenizeSentence(sentence: string): string[] {
+  return sentence
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(w => w.length > 0);
+}
+
 // Daily Writing Prompt Functions
 export function getTodayPrompt(setId: string, cards: Card[]): DailyPrompt | null {
   const today = new Date().toISOString().split('T')[0];
