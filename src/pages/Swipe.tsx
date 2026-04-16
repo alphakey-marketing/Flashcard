@@ -2,7 +2,7 @@ import React, { useState, useEffect, CSSProperties, useCallback, useMemo } from 
 import { getSet, getAllSets, FlashcardSet, Card } from '../lib/storage';
 import { audioService } from '../lib/audioService';
 import { recordSession } from '../lib/studyStats';
-import { saveCardReview, ReviewRating, getDueCards, getSetReviewData, getLearningCards } from '../lib/spacedRepetition';
+import { saveCardReview, ReviewRating, getDailyQueueCardIds, getSetReviewData } from '../lib/spacedRepetition';
 
 interface SwipeProps {
   setId: string;
@@ -20,6 +20,7 @@ interface SavedSwipeSession {
 
 const STORAGE_KEY = 'swipe-mode-session';
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_AGAIN_REQUEUES_PER_SESSION = 2;
 
 const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [set, setSet] = useState<FlashcardSet | null>(null);
@@ -36,6 +37,9 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [savedSession, setSavedSession] = useState<SavedSwipeSession | null>(null);
+
+  // Per-session "Again" requeue counter — reset on each new session start
+  const againCountsRef = React.useRef<Map<string, number>>(new Map());
 
   const loadSavedSession = (): SavedSwipeSession | null => {
     try {
@@ -97,6 +101,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   const handleStartNewSession = () => {
     clearSavedSession();
+    againCountsRef.current = new Map();
     setShowResumePrompt(false);
     // Will trigger loadQueue in the next useEffect
   };
@@ -132,52 +137,60 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       // We just need to shuffle them.
       queueCards = shuffleArray(flashcardSet.cards);
     } else {
-      const reviewedData = getSetReviewData(setId);
-      const learningCards = getLearningCards(setId);
-      const dueCardsData = getDueCards(setId);
-      
-      // Optimized: Create single Set for all priority cards
-      const priorityCardIds = new Set([
-        ...learningCards.map(d => d.cardId),
-        ...dueCardsData.map(d => d.cardId)
-      ]);
-      
       if (mode === 'due') {
-        // Show learning/reviewing cards (not mastered yet) + due mastered cards
-        const dueCards = flashcardSet.cards.filter(card => priorityCardIds.has(card.id));
-        
-        // If no learning/due cards, check if we have any new cards (never studied)
-        if (dueCards.length === 0) {
-          const reviewedIds = new Set(reviewedData.map(d => d.cardId));
-          const newCards = flashcardSet.cards.filter(card => !reviewedIds.has(card.id));
-          
-          if (newCards.length > 0) {
-            // Start with first 10 new cards, randomized
-            queueCards = shuffleArray(newCards.slice(0, 10));
+        // Build today's capped queue: learning → review → new
+        const allCardIds = flashcardSet.cards.map(c => c.id);
+        const dailyIds = getDailyQueueCardIds(setId, allCardIds);
+        const dailyIdSet = new Set(dailyIds);
+        const cardById = new Map(flashcardSet.cards.map(c => [c.id, c]));
+        // Maintain bucket order (learning first, then review, then new) with shuffle within each group
+        const learningCards: Card[] = [];
+        const reviewCards: Card[] = [];
+        const newCards: Card[] = [];
+        const reviewData = getSetReviewData(setId);
+        const reviewDataMap = new Map(reviewData.map(d => [d.cardId, d]));
+        const reviewedIds = new Set(reviewData.map(d => d.cardId));
+
+        for (const id of dailyIds) {
+          const card = cardById.get(id);
+          if (!card) continue;
+          if (!reviewedIds.has(id)) {
+            newCards.push(card);
           } else {
-            queueCards = [];
+            const data = reviewDataMap.get(id);
+            if (data?.status === 'learning') {
+              learningCards.push(card);
+            } else {
+              reviewCards.push(card);
+            }
           }
-        } else {
-          // Randomize due cards
-          queueCards = shuffleArray(dueCards);
         }
+
+        queueCards = [
+          ...shuffleArray(learningCards),
+          ...shuffleArray(reviewCards),
+          ...shuffleArray(newCards),
+        ];
       } else {
-        // All cards: priority cards first (randomized), then other cards (randomized)
+        // All cards mode: due/learning cards first (shuffled), then other cards (shuffled)
+        const allCardIds = flashcardSet.cards.map(c => c.id);
+        const dailyIds = getDailyQueueCardIds(setId, allCardIds);
+        const dailyIdSet = new Set(dailyIds);
+
         const priorityCards: Card[] = [];
         const otherCards: Card[] = [];
-        
+
         for (const card of flashcardSet.cards) {
-          if (priorityCardIds.has(card.id)) {
+          if (dailyIdSet.has(card.id)) {
             priorityCards.push(card);
           } else {
             otherCards.push(card);
           }
         }
-        
-        // Randomize each group separately, then combine
+
         queueCards = [
           ...shuffleArray(priorityCards),
-          ...shuffleArray(otherCards)
+          ...shuffleArray(otherCards),
         ];
       }
     }
@@ -196,9 +209,9 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       let allDueCards: Card[] = [];
       
       allSets.forEach(s => {
-        const dueCardsData = getDueCards(s.id);
-        const dueCardIds = new Set(dueCardsData.map(d => d.cardId));
-        const dueCardsForSet = s.cards.filter(c => dueCardIds.has(c.id)).map(c => ({
+        const dailyIds = getDailyQueueCardIds(s.id, s.cards.map(c => c.id));
+        const dailyIdSet = new Set(dailyIds);
+        const dueCardsForSet = s.cards.filter(c => dailyIdSet.has(c.id)).map(c => ({
           ...c,
           setId: s.id // Inject original set ID for tracking!
         }));
@@ -236,8 +249,8 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         const hasSomeReviews = reviewedData.length > 0;
         
         if (hasSomeReviews) {
-          const learningCards = getLearningCards(setId);
-          const initialMode = learningCards.length > 0 ? 'due' : 'all';
+          const dailyIds = getDailyQueueCardIds(setId, flashcardSet.cards.map(c => c.id));
+          const initialMode = dailyIds.length > 0 ? 'due' : 'all';
           loadQueue(flashcardSet, initialMode);
         } else {
           loadQueue(flashcardSet, 'all');
@@ -380,12 +393,16 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     const reviewedCard = activeQueue[0];
 
     if (rating === 'again') {
-      if (newQueue.length === 0) {
-        newQueue.push(reviewedCard);
-      } else {
+      // Limit how many times a card can be requeued in the same session to prevent infinite loops.
+      const cardKey = reviewedCard.id;
+      const count = againCountsRef.current.get(cardKey) ?? 0;
+      againCountsRef.current.set(cardKey, count + 1);
+
+      if (count < MAX_AGAIN_REQUEUES_PER_SESSION && newQueue.length >= 2) {
         const insertIndex = Math.min(newQueue.length, Math.floor(Math.random() * 3) + 2);
         newQueue.splice(insertIndex, 0, reviewedCard);
       }
+      // If at limit or queue too short: do not requeue — scheduling will handle the next appearance.
     }
 
     if (newQueue.length === 0) {
@@ -468,7 +485,8 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   const handleStudyAgain = useCallback(() => {
     if (!set) return;
-    clearSavedSession(); 
+    clearSavedSession();
+    againCountsRef.current = new Map();
     loadQueue(set, studyMode);
     setIsFlipped(false);
     setIsFinished(false);

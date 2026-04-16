@@ -2,7 +2,7 @@ import React, { useState, useEffect, CSSProperties } from 'react';
 import { getAllSets, FlashcardSet, saveSet } from '../lib/storage';
 import { exportToCSV } from '../lib/csvParser';
 import { getStreak, getTodayStats } from '../lib/studyStats';
-import { getSetStudyStats, getSetReviewData } from '../lib/spacedRepetition';
+import { getSetStudyStats, getSetReviewData, getDailyQueueCardIds } from '../lib/spacedRepetition';
 import { CloudSync } from '../lib/sync/cloudSync';
 import { SyncManager } from '../lib/sync/syncManager';
 import { supabase } from '../lib/supabaseClient';
@@ -239,8 +239,9 @@ const Home: React.FC<HomeProps> = ({
 
   const hasUnsyncedDecks = unsyncedDeckIds.size > 0;
 
+  // Use the same shared selector as the review queue so the banner count always matches.
   const totalDueCards = sets.reduce(
-    (sum, set) => sum + getSetStudyStats(set.id, set.cards.length).dueCards, 0
+    (sum, set) => sum + getDailyQueueCardIds(set.id, set.cards.map(c => c.id)).length, 0
   );
 
   const groupedSets = sets.reduce((acc, set) => {
@@ -261,7 +262,8 @@ const Home: React.FC<HomeProps> = ({
     const isSelected = selectedSetIds.has(set.id);
     const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
     const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
-    const hasDue = stats.dueCards > 0;
+    const dailyDueCount = getDailyQueueCardIds(set.id, set.cards.map(c => c.id)).length;
+    const hasDue = dailyDueCount > 0;
 
     let todayPrompt = null;
     let writingStreak = 0;
@@ -319,7 +321,7 @@ const Home: React.FC<HomeProps> = ({
             {set.description && <p style={styles.cardDescription}>{set.description}</p>}
 
             {hasDue && (
-              <div style={styles.dueBadge}>🎯 {stats.dueCards} {stats.dueCards === 1 ? 'card' : 'cards'} due</div>
+              <div style={styles.dueBadge}>🎯 {dailyDueCount} {dailyDueCount === 1 ? 'card' : 'cards'} due</div>
             )}
 
             {hasDailyPrompt && (

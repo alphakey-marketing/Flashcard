@@ -19,6 +19,11 @@ export interface CardReviewData {
   
   // Card status
   status: 'learning' | 'reviewing' | 'mastered';
+
+  // Learning step within the short-interval phase (0 = just started/failed, 1 = passed 10-min step)
+  learningStep?: number;
+  // Number of times this card has lapsed (failed after becoming a mature review card)
+  lapses?: number;
   
   // Performance tracking
   totalReviews: number;
@@ -51,6 +56,16 @@ const CACHE_TTL = 5000;
 
 const MIN_EASE_FACTOR = 1.3;
 const DEFAULT_EASE_FACTOR = 2.5;
+const TEN_MINUTES_MS = 10 * 60 * 1000;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Daily workload caps — configurable at app level. */
+export const DAILY_LIMITS = {
+  maxNewPerDay: 20,
+  maxLearningPerDay: 30,
+  maxReviewPerDay: 100,
+  maxTotalPerDay: 150,
+};
 
 let currentUserId: string | null = null;
 export function setReviewUserId(id: string | null) {
@@ -166,56 +181,92 @@ export function calculateNextReview(
 ): CardReviewData {
   const now = Date.now();
   let { easeFactor, interval, repetitions, status } = currentData;
+  let learningStep = currentData.learningStep ?? 0;
+  let lapses = currentData.lapses ?? 0;
 
   const totalReviews = currentData.totalReviews + 1;
   let knowItCount = currentData.knowItCount;
   let againCount = currentData.againCount;
   let masteredCount = currentData.masteredCount;
 
-  switch (rating) {
-    case 'again':
-      againCount++;
-      repetitions = 0;
-      interval = 1;
-      status = 'learning';
-      easeFactor = Math.max(MIN_EASE_FACTOR, easeFactor - 0.2);
-      break;
+  let nextReviewMs: number;
 
-    case 'know_it':
-      knowItCount++;
-      if (repetitions === 0) {
-        interval = 2;
-      } else if (repetitions === 1) {
-        interval = 4;
-      } else {
-        interval = Math.round(interval * 1.5);
-      }
+  const isMatureReview = status === 'reviewing' || status === 'mastered';
+
+  if (rating === 'again') {
+    againCount++;
+    easeFactor = Math.max(MIN_EASE_FACTOR, easeFactor - 0.2);
+    if (isMatureReview) {
+      // Mature card failed → reset to relearning
+      lapses++;
+    }
+    status = 'learning';
+    learningStep = 0;
+    interval = 0;
+    repetitions = 0;
+    nextReviewMs = now + TEN_MINUTES_MS;
+
+  } else if (rating === 'know_it') {
+    knowItCount++;
+    if (isMatureReview) {
+      // Mature review card: grow interval using ease factor (conservative)
+      interval = Math.max(1, Math.round(interval * easeFactor * 0.9));
       status = 'reviewing';
+      learningStep = 0;
       repetitions++;
-      break;
-
-    case 'mastered':
-      masteredCount++;
-      if (repetitions === 0) {
-        interval = 7;
+      nextReviewMs = now + interval * ONE_DAY_MS;
+    } else {
+      // New / learning card: advance through learning steps
+      if (learningStep === 0) {
+        // Step 0 → Step 1: schedule for 1 day
+        learningStep = 1;
+        interval = 1;
+        status = 'learning';
+        repetitions++;
+        nextReviewMs = now + ONE_DAY_MS;
       } else {
-        interval = Math.round(interval * easeFactor);
+        // Step 1 → graduate: schedule for 3 days
+        learningStep = 0;
+        interval = 3;
+        status = 'reviewing';
+        repetitions++;
+        nextReviewMs = now + 3 * ONE_DAY_MS;
       }
-      status = 'mastered';
-      repetitions++;
-      easeFactor = Math.min(3.0, easeFactor + 0.15);
-      break;
-  }
+    }
 
-  const nextReview = now + (interval * 24 * 60 * 60 * 1000);
+  } else {
+    // 'mastered'
+    masteredCount++;
+    if (isMatureReview) {
+      // Mature review card: aggressive interval growth
+      interval = Math.max(1, Math.round(interval * easeFactor * 1.3));
+      interval = Math.min(interval, 365); // cap at 1 year
+      status = 'mastered';
+      easeFactor = Math.min(3.0, easeFactor + 0.15);
+      learningStep = 0;
+      repetitions++;
+      nextReviewMs = now + interval * ONE_DAY_MS;
+    } else {
+      // New / learning card: skip remaining learning steps and graduate
+      const hasRepeatedlyFailed = lapses > 2;
+      interval = hasRepeatedlyFailed ? 3 : 4;
+      learningStep = 0;
+      status = 'reviewing';
+      easeFactor = Math.min(3.0, easeFactor + 0.1);
+      repetitions++;
+      nextReviewMs = now + interval * ONE_DAY_MS;
+    }
+  }
 
   return {
     ...currentData,
     easeFactor,
     interval,
     repetitions,
-    nextReview,
+    nextReview: nextReviewMs,
     status,
+    learningStep,
+    lapses,
     totalReviews,
     knowItCount,
     againCount,
@@ -259,12 +310,52 @@ export function saveCardReview(
 
 export function getDueCards(setId: string): CardReviewData[] {
   const now = Date.now();
-  const setData = getSetReviewData(setId);
-  return setData.filter(card =>
-    card.nextReview <= now ||
-    card.status === 'learning' ||
-    card.status === 'reviewing'
-  );
+  return getSetReviewData(setId).filter(card => card.nextReview <= now);
+}
+
+/**
+ * Returns review records that are due right now (nextReview <= now).
+ * Use this as the single source of truth for "due" state.
+ */
+export function getDueNowCardsForSet(setId: string): CardReviewData[] {
+  const now = Date.now();
+  return getSetReviewData(setId).filter(card => card.nextReview <= now);
+}
+
+/**
+ * Builds the capped daily queue for a set, respecting DAILY_LIMITS.
+ * Returns an ordered list of card IDs: learning due → review due → new cards.
+ * This is the shared selector used by both the Home banner and the review queue.
+ */
+export function getDailyQueueCardIds(
+  setId: string,
+  allCardIds: string[],
+  limits = DAILY_LIMITS
+): string[] {
+  const now = Date.now();
+  const reviewData = getSetReviewData(setId);
+  const reviewedIds = new Set(reviewData.map(d => d.cardId));
+
+  // Bucket 1: learning/relearning cards due now
+  const learningDue = reviewData
+    .filter(d => d.status === 'learning' && d.nextReview <= now)
+    .slice(0, limits.maxLearningPerDay)
+    .map(d => d.cardId);
+
+  // Bucket 2: mature review cards due now
+  const reviewDue = reviewData
+    .filter(d => (d.status === 'reviewing' || d.status === 'mastered') && d.nextReview <= now)
+    .slice(0, limits.maxReviewPerDay)
+    .map(d => d.cardId);
+
+  // Bucket 3: new cards (never studied)
+  const newCards = allCardIds
+    .filter(id => !reviewedIds.has(id))
+    .slice(0, limits.maxNewPerDay);
+
+  // Combine and apply total cap
+  const combined = [...learningDue, ...reviewDue, ...newCards];
+  return combined.slice(0, limits.maxTotalPerDay);
 }
 
 export function getLearningCards(setId: string): CardReviewData[] {
