@@ -1,6 +1,6 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
 import { FlashcardSet, Flashcard } from '../lib/storage';
-import { CardReviewData, saveCardReview, ReviewRating } from '../lib/spacedRepetition';
+import { CardReviewData, saveCardReview, ReviewRating, getSetReviewData } from '../lib/spacedRepetition';
 import { audioService } from '../lib/audioService';
 import { checkAnswerWithDetails, MatchResult } from '../lib/answerMatcher';
 
@@ -24,10 +24,13 @@ interface SavedSession {
   currentIndex: number;
   correctCount: number;
   timestamp: number;
+  isReversed?: boolean;
 }
 
 const STORAGE_KEY = 'learn-mode-session';
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_NEW_CARDS_PER_SESSION = 10;
+const SESSION_SIZE = 20;
 
 const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -42,6 +45,11 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [savedSession, setSavedSession] = useState<SavedSession | null>(null);
+  const [showSetup, setShowSetup] = useState(false);
+  const [isReversed, setIsReversed] = useState(false);
+  const [nothingDueToday, setNothingDueToday] = useState(false);
+  const [nextDueDate, setNextDueDate] = useState<number | null>(null);
+  const [showSRGuide, setShowSRGuide] = useState(false);
 
   useEffect(() => {
     // Check for saved session
@@ -50,7 +58,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       setSavedSession(saved);
       setShowResumePrompt(true);
     } else {
-      initializeSession();
+      setShowSetup(true);
     }
 
     // Save session on unmount (when navigating away)
@@ -96,7 +104,8 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
         questions,
         currentIndex,
         correctCount,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        isReversed
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
     } catch (error) {
@@ -117,6 +126,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       setQuestions(savedSession.questions);
       setCurrentIndex(savedSession.currentIndex);
       setCorrectCount(savedSession.correctCount);
+      setIsReversed(savedSession.isReversed ?? false);
       setShowResumePrompt(false);
     }
   };
@@ -124,17 +134,63 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const handleStartNewSession = () => {
     clearSavedSession();
     setShowResumePrompt(false);
-    initializeSession();
+    setShowSetup(true);
   };
 
-  const initializeSession = () => {
-    // Select up to 20 cards, prioritize new and due cards
-    const sessionSize = Math.min(20, set.cards.length);
-    if (sessionSize === 0) return;
-    
-    const selectedCards = [...set.cards]
-      .sort(() => Math.random() - 0.5)
-      .slice(0, sessionSize);
+  const initializeSession = (reversed: boolean = false, studyAll: boolean = false) => {
+    const now = Date.now();
+    const reviewDataMap = new Map<string, CardReviewData>(
+      getSetReviewData(set.id).map((r: CardReviewData) => [r.cardId, r])
+    );
+
+    let selectedCards: Flashcard[];
+
+    if (studyAll) {
+      // Bypass spaced repetition — show all cards shuffled
+      selectedCards = [...set.cards].sort(() => Math.random() - 0.5).slice(0, SESSION_SIZE);
+      setNothingDueToday(false);
+    } else {
+      // Spaced repetition: only show due and new cards
+      const dueCards: Flashcard[] = [];
+      const newCards: Flashcard[] = [];
+
+      for (const card of set.cards) {
+        const reviewData = reviewDataMap.get(card.id);
+        if (!reviewData) {
+          newCards.push(card);
+        } else if (reviewData.nextReview <= now) {
+          dueCards.push(card);
+        }
+        // Cards not due are intentionally skipped
+      }
+
+      const shuffledDue = [...dueCards].sort(() => Math.random() - 0.5);
+      const shuffledNew = [...newCards]
+        .sort(() => Math.random() - 0.5)
+        .slice(0, MAX_NEW_CARDS_PER_SESSION);
+
+      selectedCards = [...shuffledDue, ...shuffledNew].slice(0, SESSION_SIZE);
+
+      if (selectedCards.length === 0) {
+        // Find the next due date so we can tell the user when to return
+        let earliest: number | null = null;
+        for (const reviewData of reviewDataMap.values()) {
+          if (reviewData.nextReview > now) {
+            if (earliest === null || reviewData.nextReview < earliest) {
+              earliest = reviewData.nextReview;
+            }
+          }
+        }
+        setNextDueDate(earliest);
+        setNothingDueToday(true);
+        return;
+      }
+    }
+
+    setNothingDueToday(false);
+
+    // Select up to SESSION_SIZE cards
+    const sessionSize = selectedCards.length;
 
     // Generate questions with mixed types
     const generatedQuestions: Question[] = selectedCards.map((card, index) => {
@@ -143,13 +199,10 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       const progress = index / sessionSize;
       
       if (progress < 0.3) {
-        // First 30%: Multiple choice (easiest)
         questionType = 'multiple-choice';
       } else if (progress < 0.7) {
-        // Middle 40%: Mix of flashcard and type-in
         questionType = Math.random() > 0.5 ? 'flashcard' : 'type-in';
       } else {
-        // Final 30%: Type-in (hardest)
         questionType = 'type-in';
       }
 
@@ -160,12 +213,13 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
 
       // Generate distractors for multiple choice
       if (questionType === 'multiple-choice') {
-        const correctAnswer = card.back;
+        // When reversed: question = back (English), options = front (Japanese)
+        const correctAnswer = reversed ? card.front : card.back;
         const otherCards = set.cards.filter(c => c.id !== card.id);
         const distractors = otherCards
           .sort(() => Math.random() - 0.5)
           .slice(0, 3)
-          .map(c => c.back);
+          .map(c => reversed ? c.front : c.back);
         
         const allOptions = [correctAnswer, ...distractors]
           .sort(() => Math.random() - 0.5);
@@ -235,7 +289,8 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     if (showAnswer) return;
     
     setSelectedOption(option);
-    const correct = option === currentQuestion.card.back;
+    const correctAnswer = isReversed ? currentQuestion.card.front : currentQuestion.card.back;
+    const correct = option === correctAnswer;
     setIsCorrect(correct);
     setShowAnswer(true);
     
@@ -252,7 +307,8 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const handleTypeInSubmit = () => {
     if (showAnswer) return;
     
-    const { main: expectedAnswer } = getCardTextParts(currentQuestion.card.back);
+    const answerField = isReversed ? currentQuestion.card.front : currentQuestion.card.back;
+    const { main: expectedAnswer } = getCardTextParts(answerField);
     
     // Use the 3-tier flexible matching system
     const result = checkAnswerWithDetails(userAnswer, expectedAnswer);
@@ -377,6 +433,179 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     );
   }
 
+  // Setup screen — shown before each new session
+  if (showSetup) {
+    const now = Date.now();
+    const reviewDataMap = new Map<string, CardReviewData>(
+      getSetReviewData(set.id).map((r: CardReviewData) => [r.cardId, r])
+    );
+    const dueCount = set.cards.filter(c => {
+      const r = reviewDataMap.get(c.id);
+      return r && r.nextReview <= now;
+    }).length;
+    const newCount = set.cards.filter(c => !reviewDataMap.get(c.id)).length;
+    const sessionCount = Math.min(SESSION_SIZE, dueCount + Math.min(newCount, MAX_NEW_CARDS_PER_SESSION));
+
+    return (
+      <div style={styles.setupContainer}>
+        <div style={styles.setupCard}>
+          <div style={styles.setupTopRow}>
+            <button style={styles.exitButton} onClick={onExit}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            >← Back</button>
+            <h2 style={styles.setupTitle}>Learn Mode</h2>
+            <div style={{ width: 60 }} />
+          </div>
+
+          {/* Today's stats */}
+          <div style={styles.setupStats}>
+            <div style={styles.setupStatItem}>
+              <span style={styles.setupStatValue}>{dueCount}</span>
+              <span style={styles.setupStatLabel}>Due for review</span>
+            </div>
+            <div style={styles.setupStatItem}>
+              <span style={styles.setupStatValue}>{newCount}</span>
+              <span style={styles.setupStatLabel}>New cards</span>
+            </div>
+            <div style={styles.setupStatItem}>
+              <span style={{ ...styles.setupStatValue, color: '#3b82f6' }}>{sessionCount}</span>
+              <span style={styles.setupStatLabel}>This session</span>
+            </div>
+          </div>
+
+          {/* Direction toggle */}
+          <div style={styles.setupSection}>
+            <h3 style={styles.setupSectionTitle}>Question Direction</h3>
+            <div style={styles.directionToggle}>
+              <button
+                style={{ ...styles.directionButton, ...(isReversed ? {} : styles.directionButtonActive) }}
+                onClick={() => setIsReversed(false)}
+              >
+                🇯🇵 Front → 🇬🇧 Back
+              </button>
+              <button
+                style={{ ...styles.directionButton, ...(isReversed ? styles.directionButtonActive : {}) }}
+                onClick={() => setIsReversed(true)}
+              >
+                🇬🇧 Back → 🇯🇵 Front
+              </button>
+            </div>
+          </div>
+
+          {/* SR Guide toggle */}
+          <div style={styles.setupSection}>
+            <button
+              style={styles.srGuideToggle}
+              onClick={() => setShowSRGuide(prev => !prev)}
+            >
+              {showSRGuide ? '▲' : '▼'} How does the review system work?
+            </button>
+            {showSRGuide && (
+              <div style={styles.srGuideContent}>
+                <p style={styles.srGuideText}>
+                  This app uses <strong>Spaced Repetition</strong> — based on the Forgetting Curve. Cards are shown at increasing intervals based on how well you know them:
+                </p>
+                <div style={styles.srGuideItem}><span style={styles.srBadgeRed}>Again</span> Card resets — shown again tomorrow</div>
+                <div style={styles.srGuideItem}><span style={styles.srBadgeGreen}>Know It</span> Interval grows: 2 days → 4 days → more</div>
+                <div style={styles.srGuideItem}><span style={styles.srBadgeBlue}>Mastered</span> Long interval: 7 days → weeks → months</div>
+                <p style={styles.srGuideText}>
+                  <strong>You only see cards when you're about to forget them</strong> — so you don't waste time on cards you already know well. Each day you'll have fewer reviews as cards move to longer intervals.
+                </p>
+                <p style={styles.srGuideTip}>
+                  💡 <strong>Tips:</strong> Be honest with your ratings • Study daily to build streaks • Focus extra effort on "Again" cards
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Start buttons */}
+          <button
+            style={{ ...styles.primaryButton, width: '100%', marginBottom: '12px' }}
+            onClick={() => { setShowSetup(false); initializeSession(isReversed); }}
+            disabled={sessionCount === 0}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            {sessionCount === 0 ? '✅ Nothing due today' : `▶️ Start Session (${sessionCount} cards)`}
+          </button>
+          {sessionCount === 0 && (
+            <button
+              style={{ ...styles.secondaryButton, width: '100%' }}
+              onClick={() => { setShowSetup(false); initializeSession(isReversed, true); }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            >
+              📚 Study All Cards Anyway
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (nothingDueToday) {
+    return (
+      <div style={styles.setupContainer}>
+        <div style={styles.setupCard}>
+          <div style={styles.congratsIcon}>✅</div>
+          <h2 style={styles.congratsTitle}>You're all caught up!</h2>
+          <p style={{ color: '#64748b', marginBottom: '8px', textAlign: 'center' }}>
+            All your cards have been reviewed. Come back when cards are due again.
+          </p>
+          {nextDueDate && (
+            <p style={{ color: '#3b82f6', fontWeight: 600, marginBottom: '24px', textAlign: 'center' }}>
+              Next review: {new Date(nextDueDate).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
+            </p>
+          )}
+
+          {/* SR Guide */}
+          <div style={styles.setupSection}>
+            <button
+              style={styles.srGuideToggle}
+              onClick={() => setShowSRGuide(prev => !prev)}
+            >
+              {showSRGuide ? '▲' : '▼'} How does the review system work?
+            </button>
+            {showSRGuide && (
+              <div style={styles.srGuideContent}>
+                <p style={styles.srGuideText}>
+                  This app uses <strong>Spaced Repetition</strong> — based on the Forgetting Curve. Cards are shown at increasing intervals based on how well you know them:
+                </p>
+                <div style={styles.srGuideItem}><span style={styles.srBadgeRed}>Again</span> Card resets — shown again tomorrow</div>
+                <div style={styles.srGuideItem}><span style={styles.srBadgeGreen}>Know It</span> Interval grows: 2 days → 4 days → more</div>
+                <div style={styles.srGuideItem}><span style={styles.srBadgeBlue}>Mastered</span> Long interval: 7 days → weeks → months</div>
+                <p style={styles.srGuideText}>
+                  <strong>You only see cards when you're about to forget them</strong> — so you don't waste time on cards you already know well.
+                </p>
+                <p style={styles.srGuideTip}>
+                  💡 <strong>Tips:</strong> Be honest with your ratings • Study daily to build streaks • Focus extra effort on "Again" cards
+                </p>
+              </div>
+            )}
+          </div>
+
+          <button
+            style={{ ...styles.secondaryButton, width: '100%', marginBottom: '12px' }}
+            onClick={() => { setNothingDueToday(false); setShowSetup(false); initializeSession(isReversed, true); }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            📚 Study All Cards Anyway
+          </button>
+          <button
+            style={{ ...styles.exitButton, display: 'block', margin: '0 auto' }}
+            onClick={onExit}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            ← Go Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (questions.length === 0) {
     return (
       <div style={styles.loading}>
@@ -413,7 +642,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
                 setShowCongrats(false);
                 setCurrentIndex(0);
                 setCorrectCount(0);
-                initializeSession();
+                initializeSession(isReversed);
               }}
               onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
               onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
@@ -434,8 +663,17 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     );
   }
 
-  const frontParts = getCardTextParts(currentQuestion.card.front, currentQuestion.card.example);
-  const backParts = getCardTextParts(currentQuestion.card.back);
+  // Swap question/answer based on direction
+  const questionParts = isReversed
+    ? getCardTextParts(currentQuestion.card.back)
+    : getCardTextParts(currentQuestion.card.front, currentQuestion.card.example);
+  const answerParts = isReversed
+    ? getCardTextParts(currentQuestion.card.front, currentQuestion.card.example)
+    : getCardTextParts(currentQuestion.card.back);
+  const questionAudioField = isReversed ? currentQuestion.card.back : currentQuestion.card.front;
+  const questionAudioExample = isReversed ? undefined : currentQuestion.card.example;
+  const answerAudioField = isReversed ? currentQuestion.card.front : currentQuestion.card.back;
+  const correctAnswerField = isReversed ? currentQuestion.card.front : currentQuestion.card.back;
 
   return (
     <div style={styles.container}>
@@ -450,6 +688,9 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
           ← Exit
         </button>
         <div style={styles.progressInfo}>
+          <span style={{ fontSize: '12px', color: '#94a3b8', marginRight: '8px' }}>
+            {isReversed ? '🇬🇧→🇯🇵' : '🇯🇵→🇬🇧'}
+          </span>
           <span style={styles.progressText}>
             {currentIndex + 1} / {questions.length}
           </span>
@@ -466,10 +707,10 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
         {/* Question prompt with audio */}
         <div style={styles.questionPrompt}>
           <div style={styles.questionFrontRow}>
-            <div style={styles.questionFront}>{frontParts.main}</div>
+            <div style={styles.questionFront}>{questionParts.main}</div>
             <button
               style={styles.audioButton}
-              onClick={() => playAudio(currentQuestion.card.front, currentQuestion.card.example)}
+              onClick={() => playAudio(questionAudioField, questionAudioExample)}
               disabled={isPlayingAudio}
               title="Play audio"
               onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
@@ -478,10 +719,10 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               {isPlayingAudio ? '🔊' : '🔈'}
             </button>
           </div>
-          {frontParts.example && (
+          {questionParts.example && (
             <div style={styles.questionExampleRow}>
               <div style={styles.questionExample}>
-                例文: {frontParts.example}
+                例文: {questionParts.example}
               </div>
             </div>
           )}
@@ -492,7 +733,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
           <div style={styles.optionsContainer}>
             {currentQuestion.options?.map((option, idx) => {
               const isSelected = selectedOption === option;
-              const isCorrectOption = option === currentQuestion.card.back;
+              const isCorrectOption = option === correctAnswerField;
               const optionParts = getCardTextParts(option);
               
               let buttonStyle = styles.optionButton;
@@ -536,7 +777,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               value={userAnswer}
               onChange={(e) => setUserAnswer(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && !showAnswer && handleTypeInSubmit()}
-              placeholder="Type English meaning..."
+              placeholder={isReversed ? 'Type Japanese...' : 'Type English meaning...'}
               disabled={showAnswer}
               autoFocus
             />
@@ -559,12 +800,12 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
                       {getMatchConfidenceIndicator()}
                       {matchResult && matchResult.matchType !== 'exact' && (
                         <div style={{ fontSize: '14px', marginTop: '4px', opacity: 0.8 }}>
-                          Expected: {backParts.main}
+                          Expected: {answerParts.main}
                         </div>
                       )}
                     </>
                   ) : (
-                    `✗ Expected: ${backParts.main}`
+                    `✗ Expected: ${answerParts.main}`
                   )}
                 </div>
                 {!isCorrect && (
@@ -608,16 +849,16 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               <>
                 <div style={styles.flashcardAnswerRow}>
                   <div style={styles.flashcardAnswerContainer}>
-                    <div style={styles.flashcardAnswer}>{backParts.main}</div>
-                    {backParts.example && (
+                    <div style={styles.flashcardAnswer}>{answerParts.main}</div>
+                    {answerParts.example && (
                       <div style={styles.questionExample}>
-                        Example: {backParts.example}
+                        Example: {answerParts.example}
                       </div>
                     )}
                   </div>
                   <button
                     style={styles.audioButton}
-                    onClick={() => playAudio(currentQuestion.card.back)}
+                    onClick={() => playAudio(answerAudioField)}
                     disabled={isPlayingAudio}
                     title="Play answer audio"
                     onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
@@ -1098,6 +1339,157 @@ const styles: { [key: string]: CSSProperties } = {
     borderRadius: '12px',
     cursor: 'pointer',
     transition: 'opacity 0.2s'
+  },
+  // Setup screen styles
+  setupContainer: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+    padding: '24px'
+  },
+  setupCard: {
+    backgroundColor: '#fff',
+    borderRadius: '24px',
+    padding: '32px',
+    maxWidth: '520px',
+    width: '100%',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
+    marginTop: '24px'
+  },
+  setupTopRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '24px'
+  },
+  setupTitle: {
+    fontSize: '22px',
+    fontWeight: 700,
+    color: '#0f172a',
+    margin: 0
+  },
+  setupStats: {
+    display: 'flex',
+    gap: '0',
+    justifyContent: 'space-around',
+    backgroundColor: '#f8fafc',
+    borderRadius: '12px',
+    padding: '16px',
+    marginBottom: '24px',
+    border: '1px solid #e2e8f0'
+  },
+  setupStatItem: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    gap: '4px'
+  },
+  setupStatValue: {
+    fontSize: '26px',
+    fontWeight: 700,
+    color: '#0f172a'
+  },
+  setupStatLabel: {
+    fontSize: '12px',
+    color: '#64748b',
+    fontWeight: 500
+  },
+  setupSection: {
+    marginBottom: '20px'
+  },
+  setupSectionTitle: {
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#475569',
+    marginBottom: '10px',
+    margin: '0 0 10px 0'
+  },
+  directionToggle: {
+    display: 'flex',
+    gap: '8px'
+  },
+  directionButton: {
+    flex: 1,
+    padding: '10px 12px',
+    fontSize: '14px',
+    fontWeight: 500,
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+    border: '2px solid #e2e8f0',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'all 0.2s'
+  },
+  directionButtonActive: {
+    backgroundColor: '#dbeafe',
+    borderColor: '#3b82f6',
+    color: '#1d4ed8'
+  },
+  srGuideToggle: {
+    background: 'none',
+    border: 'none',
+    color: '#3b82f6',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    padding: '0',
+    textAlign: 'left' as const
+  },
+  srGuideContent: {
+    marginTop: '12px',
+    padding: '16px',
+    backgroundColor: '#f0f9ff',
+    borderRadius: '12px',
+    border: '1px solid #bae6fd'
+  },
+  srGuideText: {
+    fontSize: '13px',
+    color: '#0f172a',
+    lineHeight: 1.6,
+    margin: '0 0 12px 0'
+  },
+  srGuideItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontSize: '13px',
+    color: '#334155',
+    marginBottom: '6px'
+  },
+  srGuideTip: {
+    fontSize: '13px',
+    color: '#0369a1',
+    lineHeight: 1.6,
+    margin: '12px 0 0 0'
+  },
+  srBadgeRed: {
+    backgroundColor: '#ef4444',
+    color: 'white',
+    padding: '2px 8px',
+    borderRadius: '4px',
+    fontSize: '12px',
+    fontWeight: 700,
+    flexShrink: 0
+  },
+  srBadgeGreen: {
+    backgroundColor: '#10b981',
+    color: 'white',
+    padding: '2px 8px',
+    borderRadius: '4px',
+    fontSize: '12px',
+    fontWeight: 700,
+    flexShrink: 0
+  },
+  srBadgeBlue: {
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    padding: '2px 8px',
+    borderRadius: '4px',
+    fontSize: '12px',
+    fontWeight: 700,
+    flexShrink: 0
   }
 };
 

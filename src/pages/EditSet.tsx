@@ -46,7 +46,7 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
   };
 
   const handleAddCard = () => {
-    setCards([...cards, { id: crypto.randomUUID(), front: '', back: '' }]);
+    setCards([{ id: crypto.randomUUID(), front: '', back: '' }, ...cards]);
   };
 
   const handleUpdateCard = (id: string, field: 'front' | 'back', value: string) => {
@@ -145,7 +145,23 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
         </section>
 
         <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Cards</h2>
+          <div style={styles.cardsHeader}>
+            <h2 style={styles.sectionTitle}>Cards</h2>
+            <button
+              style={styles.addCardButton}
+              onClick={handleAddCard}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#f1f5f9';
+                e.currentTarget.style.borderColor = '#3b82f6';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+                e.currentTarget.style.borderColor = '#cbd5e1';
+              }}
+            >
+              + Add Card
+            </button>
+          </div>
           {cards.map((card, index) => (
             <div key={card.id} style={styles.cardEditor}>
               <div style={styles.cardEditorHeader}>
@@ -210,20 +226,6 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
               />
             </div>
           ))}
-          <button
-            style={styles.addCardButton}
-            onClick={handleAddCard}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = '#f1f5f9';
-              e.currentTarget.style.borderColor = '#3b82f6';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.borderColor = '#cbd5e1';
-            }}
-          >
-            + Add Card
-          </button>
         </section>
       </div>
     </div>
@@ -334,6 +336,12 @@ const styles: { [key: string]: CSSProperties } = {
     fontSize: '18px',
     fontWeight: 600,
     color: '#0f172a',
+    marginBottom: 0
+  },
+  cardsHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: '16px'
   },
   cardEditor: {
@@ -377,13 +385,12 @@ const styles: { [key: string]: CSSProperties } = {
     boxSizing: 'border-box'
   },
   addCardButton: {
-    width: '100%',
-    padding: '16px',
+    padding: '8px 20px',
     border: '2px dashed #cbd5e1',
-    borderRadius: '12px',
+    borderRadius: '8px',
     backgroundColor: 'transparent',
     color: '#3b82f6',
-    fontSize: '16px',
+    fontSize: '14px',
     fontWeight: 600,
     cursor: 'pointer',
     transition: 'all 0.2s'
