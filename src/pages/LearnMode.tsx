@@ -24,6 +24,7 @@ interface SavedSession {
   currentIndex: number;
   correctCount: number;
   timestamp: number;
+  /** Whether the session uses Back→Front direction (reversed) instead of the default Front→Back */
   isReversed?: boolean;
 }
 
@@ -31,6 +32,23 @@ const STORAGE_KEY = 'learn-mode-session';
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_NEW_CARDS_PER_SESSION = 10;
 const SESSION_SIZE = 20;
+
+const SRGuideContent: React.FC = () => (
+  <div style={styles.srGuideContent}>
+    <p style={styles.srGuideText}>
+      This app uses <strong>Spaced Repetition</strong> — based on the Forgetting Curve. Cards are shown at increasing intervals based on how well you know them:
+    </p>
+    <div style={styles.srGuideItem}><span style={styles.srBadgeRed}>Again</span> Card resets — shown again tomorrow</div>
+    <div style={styles.srGuideItem}><span style={styles.srBadgeGreen}>Know It</span> Interval grows: 2 days → 4 days → more</div>
+    <div style={styles.srGuideItem}><span style={styles.srBadgeBlue}>Mastered</span> Long interval: 7 days → weeks → months</div>
+    <p style={styles.srGuideText}>
+      <strong>You only see cards when you're about to forget them</strong> — so you don't waste time on cards you already know well. Each day you'll have fewer reviews as cards move to longer intervals.
+    </p>
+    <p style={styles.srGuideTip}>
+      💡 <strong>Tips:</strong> Be honest with your ratings • Study daily to build streaks • Focus extra effort on "Again" cards
+    </p>
+  </div>
+);
 
 const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -482,13 +500,13 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
                 style={{ ...styles.directionButton, ...(isReversed ? {} : styles.directionButtonActive) }}
                 onClick={() => setIsReversed(false)}
               >
-                🇯🇵 Front → 🇬🇧 Back
+                Front → Back
               </button>
               <button
                 style={{ ...styles.directionButton, ...(isReversed ? styles.directionButtonActive : {}) }}
                 onClick={() => setIsReversed(true)}
               >
-                🇬🇧 Back → 🇯🇵 Front
+                Back → Front
               </button>
             </div>
           </div>
@@ -501,22 +519,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
             >
               {showSRGuide ? '▲' : '▼'} How does the review system work?
             </button>
-            {showSRGuide && (
-              <div style={styles.srGuideContent}>
-                <p style={styles.srGuideText}>
-                  This app uses <strong>Spaced Repetition</strong> — based on the Forgetting Curve. Cards are shown at increasing intervals based on how well you know them:
-                </p>
-                <div style={styles.srGuideItem}><span style={styles.srBadgeRed}>Again</span> Card resets — shown again tomorrow</div>
-                <div style={styles.srGuideItem}><span style={styles.srBadgeGreen}>Know It</span> Interval grows: 2 days → 4 days → more</div>
-                <div style={styles.srGuideItem}><span style={styles.srBadgeBlue}>Mastered</span> Long interval: 7 days → weeks → months</div>
-                <p style={styles.srGuideText}>
-                  <strong>You only see cards when you're about to forget them</strong> — so you don't waste time on cards you already know well. Each day you'll have fewer reviews as cards move to longer intervals.
-                </p>
-                <p style={styles.srGuideTip}>
-                  💡 <strong>Tips:</strong> Be honest with your ratings • Study daily to build streaks • Focus extra effort on "Again" cards
-                </p>
-              </div>
-            )}
+            {showSRGuide && <SRGuideContent />}
           </div>
 
           {/* Start buttons */}
@@ -567,22 +570,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
             >
               {showSRGuide ? '▲' : '▼'} How does the review system work?
             </button>
-            {showSRGuide && (
-              <div style={styles.srGuideContent}>
-                <p style={styles.srGuideText}>
-                  This app uses <strong>Spaced Repetition</strong> — based on the Forgetting Curve. Cards are shown at increasing intervals based on how well you know them:
-                </p>
-                <div style={styles.srGuideItem}><span style={styles.srBadgeRed}>Again</span> Card resets — shown again tomorrow</div>
-                <div style={styles.srGuideItem}><span style={styles.srBadgeGreen}>Know It</span> Interval grows: 2 days → 4 days → more</div>
-                <div style={styles.srGuideItem}><span style={styles.srBadgeBlue}>Mastered</span> Long interval: 7 days → weeks → months</div>
-                <p style={styles.srGuideText}>
-                  <strong>You only see cards when you're about to forget them</strong> — so you don't waste time on cards you already know well.
-                </p>
-                <p style={styles.srGuideTip}>
-                  💡 <strong>Tips:</strong> Be honest with your ratings • Study daily to build streaks • Focus extra effort on "Again" cards
-                </p>
-              </div>
-            )}
+            {showSRGuide && <SRGuideContent />}
           </div>
 
           <button
