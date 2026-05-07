@@ -178,8 +178,11 @@ export function calculateNextReview(
       repetitions = 0;
       easeFactor = Math.max(MIN_EASE_FACTOR, easeFactor - 0.2);
       if (status === 'learning') {
-        // Card is still in the initial learning phase — keep it due immediately
-        // so the session UI can re-queue it within the same review session.
+        // Card is still in the initial learning phase — keep it immediately due
+        // (interval=0 → nextReview=now) so the session UI can re-queue it
+        // within the same review session.  A zero-day interval is intentional:
+        // it means the card is due right now and will only appear when the
+        // session actively surfaces it again.
         interval = 0;
       } else {
         // Card had graduated to reviewing/mastered — reset to a 1-day penalty.

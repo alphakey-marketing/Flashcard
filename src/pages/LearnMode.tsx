@@ -38,7 +38,7 @@ const SRGuideContent: React.FC = () => (
     <p style={styles.srGuideText}>
       This app uses <strong>Spaced Repetition</strong> — based on the Forgetting Curve. Cards are shown at increasing intervals based on how well you know them:
     </p>
-    <div style={styles.srGuideItem}><span style={styles.srBadgeRed}>Again</span> Card resets — shown again tomorrow</div>
+    <div style={styles.srGuideItem}><span style={styles.srBadgeRed}>Again</span> New cards: shown again in this session • Reviewing cards: reset to tomorrow</div>
     <div style={styles.srGuideItem}><span style={styles.srBadgeGreen}>Know It</span> Interval grows: 2 days → 4 days → more</div>
     <div style={styles.srGuideItem}><span style={styles.srBadgeBlue}>Mastered</span> Long interval: 7 days → weeks → months</div>
     <p style={styles.srGuideText}>
@@ -325,7 +325,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       setCorrectCount(correctCount + 1);
       // Record as "Know It" in spaced repetition
       saveCardReview(set.id, currentQuestion.card.id, 'know_it');
-      setRequeueCurrentCard(false);
+      // requeueCurrentCard is already false (or will be reset by handleNext)
     } else {
       // Check status BEFORE saving so we know whether to re-queue
       const wasLearning = getCardStatus(currentQuestion.card.id) === 'learning';

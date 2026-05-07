@@ -110,7 +110,8 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
       back: v.isGenerated ? v.back : '',
       example: v.exampleSentence || undefined,
     }));
-    // Prepend to top of card list (matches the existing add-at-top behaviour)
+    // Prepend new cards to the top of the card list, matching the add-at-top
+    // convention established for the per-card "+ Add Card" button.
     setCards(prev => [...newCards, ...prev]);
     // Reset panel
     setExtractedVocab([]);
