@@ -176,9 +176,16 @@ export function calculateNextReview(
     case 'again':
       againCount++;
       repetitions = 0;
-      interval = 1;
-      status = 'learning';
       easeFactor = Math.max(MIN_EASE_FACTOR, easeFactor - 0.2);
+      if (status === 'learning') {
+        // Card is still in the initial learning phase — keep it due immediately
+        // so the session UI can re-queue it within the same review session.
+        interval = 0;
+      } else {
+        // Card had graduated to reviewing/mastered — reset to a 1-day penalty.
+        interval = 1;
+      }
+      status = 'learning';
       break;
 
     case 'know_it':
@@ -262,8 +269,7 @@ export function getDueCards(setId: string): CardReviewData[] {
   const setData = getSetReviewData(setId);
   return setData.filter(card =>
     card.nextReview <= now ||
-    card.status === 'learning' ||
-    card.status === 'reviewing'
+    card.status === 'learning'
   );
 }
 

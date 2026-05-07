@@ -68,6 +68,9 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const [nothingDueToday, setNothingDueToday] = useState(false);
   const [nextDueDate, setNextDueDate] = useState<number | null>(null);
   const [showSRGuide, setShowSRGuide] = useState(false);
+  // When a multiple-choice card is answered wrong we defer handleNext to the
+  // explicit "Next" button click; this flag carries the re-queue decision across.
+  const [requeueCurrentCard, setRequeueCurrentCard] = useState(false);
 
   useEffect(() => {
     // Check for saved session
@@ -253,6 +256,12 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
 
   const currentQuestion = questions[currentIndex];
 
+  /** Return the card's persisted status, defaulting to 'learning' for new (unseen) cards. */
+  const getCardStatus = (cardId: string): 'learning' | 'reviewing' | 'mastered' => {
+    const found = getSetReviewData(set.id).find(d => d.cardId === cardId);
+    return (found?.status ?? 'learning') as 'learning' | 'reviewing' | 'mastered';
+  };
+
   // Helper to extract main and example text safely
   const getCardTextParts = (text: string, legacyExample?: string) => {
     if (!text) return { main: '', example: legacyExample || '' };
@@ -316,9 +325,13 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       setCorrectCount(correctCount + 1);
       // Record as "Know It" in spaced repetition
       saveCardReview(set.id, currentQuestion.card.id, 'know_it');
+      setRequeueCurrentCard(false);
     } else {
+      // Check status BEFORE saving so we know whether to re-queue
+      const wasLearning = getCardStatus(currentQuestion.card.id) === 'learning';
       // Record as "Again" in spaced repetition
       saveCardReview(set.id, currentQuestion.card.id, 'again');
+      setRequeueCurrentCard(wasLearning);
     }
   };
 
@@ -353,23 +366,38 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
 
   const handleTypeInConfirmWrong = () => {
     // User confirms their answer was wrong
+    const wasLearning = getCardStatus(currentQuestion.card.id) === 'learning';
     saveCardReview(set.id, currentQuestion.card.id, 'again');
-    handleNext();
+    handleNext(wasLearning);
   };
 
   const handleFlashcardRate = (rating: ReviewRating) => {
+    const wasLearning = rating === 'again' && getCardStatus(currentQuestion.card.id) === 'learning';
     saveCardReview(set.id, currentQuestion.card.id, rating);
     
     if (rating === 'know_it' || rating === 'mastered') {
       setCorrectCount(correctCount + 1);
     }
     
-    handleNext();
+    handleNext(wasLearning);
   };
 
-  const handleNext = () => {
+  const handleNext = (requeueCurrent = false) => {
     audioService.stop(); // Stop any playing audio before proceeding
-    if (currentIndex < questions.length - 1) {
+
+    // Re-queue learning cards that were answered 'again' by appending them to
+    // the end of the question list. The effective length grows by 1 so we
+    // must account for that when deciding whether the session is complete.
+    let extraLen = 0;
+    if (requeueCurrent && currentQuestion) {
+      extraLen = 1;
+      setQuestions(prev => [...prev, { ...currentQuestion }]);
+    }
+    setRequeueCurrentCard(false);
+
+    const effectiveLength = questions.length + extraLen;
+
+    if (currentIndex < effectiveLength - 1) {
       setCurrentIndex(currentIndex + 1);
       setShowAnswer(false);
       setIsCorrect(null);
@@ -890,11 +918,11 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
         {shouldShowNextButton() && (
           <button
             style={styles.nextButton}
-            onClick={handleNext}
+            onClick={() => handleNext(requeueCurrentCard)}
             onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
             onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
           >
-            {currentIndex < questions.length - 1 ? 'Next →' : 'Finish'}
+            {currentIndex < questions.length - 1 || requeueCurrentCard ? 'Next →' : 'Finish'}
           </button>
         )}
       </div>
