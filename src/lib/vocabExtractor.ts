@@ -50,15 +50,36 @@ const COMMON_WORDS = new Set([
   // Common greetings / exclamations
   'こんにちは', 'ありがとう', 'すみません', 'おはよう', 'こんばんは', 'さようなら',
   'ごめんなさい',
+  // Verb conjugation endings that appear as standalone hiragana runs
+  'ます', 'ました', 'ません', 'ませんでした',
+  'です', 'でした', 'ではない', 'ではありません',
+  'ている', 'ていた', 'ていない', 'ています', 'ていました', 'いています', 'いていた',
+  'します', 'しました', 'している', 'していた', 'していない',
+  'います', 'いました', 'ありました', 'なりました',
+  'てから', 'てもいい', 'てください', 'てみる', 'てみた',
+  'だった', 'だろう', 'でしょう', 'らしい', 'らしかった',
+  'ながら', 'みながら', 'けれども', 'それから', 'それでは', 'ところが',
+  // Adjective conjugations
+  'かった', 'かったです', 'くない', 'くなかった',
+  // Common adverbs / intensifiers (hiragana-only, not vocab targets)
+  'とても', 'もっと', 'すごく', 'ちょっと', 'ちゃんと', 'きっと', 'やはり',
+  'もちろん', 'たぶん', 'ほんとう', 'ほんとうに', 'やっぱり', 'なんとなく',
+  // Common connective / trailing hiragana phrases
+  'はとても', 'はとても', 'ように', 'ために', 'について', 'とおり', 'みたい',
+  'らしく', 'だから', 'ところ', 'ながらも', 'かもしれない', 'かもしれません',
 ]);
 
 // ---------------------------------------------------------------------------
 // Regex for extracting meaningful Japanese tokens.
-//   1. Kanji-led words with optional kana suffix  (食べる, 勉強する, 日本語)
-//   2. Pure katakana words  2+ chars              (コーヒー, テレビ)
-//   3. Pure hiragana words  3+ chars              (ありがとう, もちろん)
+//   1. Pure kanji runs  (今日, 図書館, 勉強, 日本語, 帰宅)
+//      Using only kanji avoids the pitfall of absorbing trailing hiragana
+//      particles (は、が、を、で…) which would merge whole sentences into one token.
+//      The AI generate step handles verb/adjective inflection naturally.
+//   2. Pure katakana words  2+ chars  (コーヒー, テレビ)
+//   3. Pure hiragana words  3+ chars  (ありがとう, もちろん)
+//      Common conjugation endings are filtered via COMMON_WORDS above.
 // ---------------------------------------------------------------------------
-const WORD_RE = /[\u4e00-\u9faf\u3400-\u4dbf][\u3040-\u30ff\u4e00-\u9faf\u3400-\u4dbf]*|[\u30a0-\u30ff]{2,}|[\u3040-\u309f]{3,}/g;
+const WORD_RE = /[\u4e00-\u9faf\u3400-\u4dbf]+|[\u30a0-\u30ff]{2,}|[\u3040-\u309f]{3,}/g;
 
 /** Split a block of text into individual sentences on Japanese punctuation / newlines. */
 function splitSentences(text: string): string[] {

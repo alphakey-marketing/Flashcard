@@ -29,6 +29,7 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
   const [selectedVocabIds, setSelectedVocabIds] = useState<Set<string>>(new Set());
   const [generatingVocabId, setGeneratingVocabId] = useState<string | null>(null);
   const [vocabError, setVocabError] = useState<string | null>(null);
+  const [generateAllProgress, setGenerateAllProgress] = useState<{ current: number; total: number } | null>(null);
 
   const handleAddCard = () => {
     setCards([...cards, { id: crypto.randomUUID(), front: '', back: '' }]);
@@ -78,7 +79,7 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
 
   const handleGenerateForVocab = async (vocabId: string) => {
     const item = extractedVocab.find(v => v.id === vocabId);
-    if (!item || isGenerating) return;
+    if (!item || isGenerating || generateAllProgress !== null) return;
     setGeneratingVocabId(vocabId);
     setVocabError(null);
     const result = await generate(item.word);
@@ -100,6 +101,61 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
       );
     } else if (generateError) {
       setVocabError(generateError);
+    }
+  };
+
+  /** Generate AI flashcards for all selected words then add them to the set. */
+  const handleGenerateAllAndAdd = async () => {
+    const selected = extractedVocab.filter(v => selectedVocabIds.has(v.id));
+    if (selected.length === 0 || generateAllProgress !== null) return;
+    setGenerateAllProgress({ current: 0, total: selected.length });
+    setVocabError(null);
+
+    const resultsMap = new Map<string, { front: string; back: string; reading: string; meaning: string }>();
+    let failCount = 0;
+
+    for (let i = 0; i < selected.length; i++) {
+      const item = selected[i];
+      setGenerateAllProgress({ current: i + 1, total: selected.length });
+      const result = await generate(item.word);
+      if (result) {
+        const generated = {
+          front: result.front,
+          back: result.back,
+          reading: result.reading ?? '',
+          meaning: result.meaning ?? '',
+        };
+        resultsMap.set(item.id, generated);
+        setExtractedVocab(prev =>
+          prev.map(v =>
+            v.id === item.id
+              ? { ...v, ...generated, isGenerated: true }
+              : v
+          )
+        );
+      } else {
+        failCount++;
+      }
+    }
+
+    const newCards: CardDraft[] = selected.map(v => {
+      const fresh = resultsMap.get(v.id);
+      if (fresh) {
+        return { id: crypto.randomUUID(), front: fresh.front, back: fresh.back, example: v.exampleSentence || undefined };
+      }
+      if (v.isGenerated) {
+        return { id: crypto.randomUUID(), front: v.front, back: v.back, example: v.exampleSentence || undefined };
+      }
+      return { id: crypto.randomUUID(), front: v.word, back: '', example: v.exampleSentence || undefined };
+    });
+
+    setCards(prev => [...newCards, ...prev]);
+    setExtractedVocab([]);
+    setSelectedVocabIds(new Set());
+    setExtractText('');
+    setGenerateAllProgress(null);
+    if (failCount > 0) {
+      setVocabError(`${failCount} word${failCount > 1 ? 's' : ''} could not be generated — added with blank back side.`);
     }
   };
 
@@ -260,11 +316,11 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
                             style={{
                               ...styles.extractGenerateBtn,
                               ...(item.isGenerated ? styles.extractGenerateBtnDone : {}),
-                              opacity: isGenerating && generatingVocabId !== item.id ? 0.5 : 1,
-                              cursor: isGenerating && generatingVocabId !== item.id ? 'not-allowed' : 'pointer',
+                              opacity: (isGenerating || generateAllProgress !== null) && generatingVocabId !== item.id ? 0.5 : 1,
+                              cursor: (isGenerating || generateAllProgress !== null) && generatingVocabId !== item.id ? 'not-allowed' : 'pointer',
                             }}
                             onClick={() => handleGenerateForVocab(item.id)}
-                            disabled={isGenerating}
+                            disabled={isGenerating || generateAllProgress !== null}
                             title={item.isGenerated ? 'Re-generate' : 'Generate reading & meaning'}
                           >
                             {generatingVocabId === item.id ? '⏳' : item.isGenerated ? '✓' : '✨'}
@@ -276,15 +332,30 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
                     <button
                       style={{
                         ...styles.extractAddButton,
-                        opacity: selCount === 0 ? 0.5 : 1,
-                        cursor: selCount === 0 ? 'not-allowed' : 'pointer',
+                        opacity: selCount === 0 || generateAllProgress !== null ? 0.5 : 1,
+                        cursor: selCount === 0 || generateAllProgress !== null ? 'not-allowed' : 'pointer',
+                      }}
+                      onClick={handleGenerateAllAndAdd}
+                      disabled={selCount === 0 || generateAllProgress !== null}
+                      onMouseEnter={e => selCount > 0 && generateAllProgress === null && (e.currentTarget.style.opacity = '0.9')}
+                      onMouseLeave={e => selCount > 0 && generateAllProgress === null && (e.currentTarget.style.opacity = '1')}
+                    >
+                      {generateAllProgress !== null
+                        ? `⏳ Generating ${generateAllProgress.current}/${generateAllProgress.total}…`
+                        : `✨ Auto-generate & Add ${selCount} card${selCount !== 1 ? 's' : ''} to set`}
+                    </button>
+                    <button
+                      style={{
+                        ...styles.extractAddSecondary,
+                        opacity: selCount === 0 || generateAllProgress !== null ? 0.4 : 0.7,
+                        cursor: selCount === 0 || generateAllProgress !== null ? 'not-allowed' : 'pointer',
                       }}
                       onClick={handleAddSelectedToSet}
-                      disabled={selCount === 0}
-                      onMouseEnter={e => selCount > 0 && (e.currentTarget.style.opacity = '0.9')}
-                      onMouseLeave={e => selCount > 0 && (e.currentTarget.style.opacity = '1')}
+                      disabled={selCount === 0 || generateAllProgress !== null}
+                      onMouseEnter={e => selCount > 0 && generateAllProgress === null && (e.currentTarget.style.opacity = '1')}
+                      onMouseLeave={e => selCount > 0 && generateAllProgress === null && (e.currentTarget.style.opacity = '0.7')}
                     >
-                      ＋ Add {selCount} selected card{selCount !== 1 ? 's' : ''} to set
+                      Add selected without AI →
                     </button>
                   </>
                 );
@@ -776,6 +847,19 @@ const styles: { [key: string]: CSSProperties } = {
     borderRadius: '8px',
     fontSize: '14px',
     fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'opacity 0.2s',
+    marginBottom: '8px'
+  },
+  extractAddSecondary: {
+    width: '100%',
+    padding: '8px',
+    backgroundColor: 'transparent',
+    color: '#64748b',
+    border: '1px solid #e2e8f0',
+    borderRadius: '8px',
+    fontSize: '13px',
+    fontWeight: 500,
     cursor: 'pointer',
     transition: 'opacity 0.2s'
   }
