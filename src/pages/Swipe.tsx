@@ -459,8 +459,8 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       } else if (swipeDeltaX < -SWIPE_THRESHOLD) {
         handleReview('again');
       }
-    } else if (!isSwiping) {
-      // It was a tap — flip the card
+    } else if (!isSwiping && swipeDeltaX === 0) {
+      // Only flip if there was no lateral movement at all (pure tap)
       handleFlipCard();
     }
     setSwipeDeltaX(0);

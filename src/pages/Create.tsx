@@ -191,7 +191,7 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
               <input
                 type="text"
                 placeholder="Source (optional, e.g. Podcast – Luke's English Ep.3)"
-                value={(card as any).source ?? ''}
+                value={card.source ?? ''}
                 onChange={(e) => handleUpdateCard(card.id, 'source', e.target.value)}
                 style={{ ...styles.cardInput, fontSize: '13px', color: '#64748b', padding: '8px 12px' } as CSSProperties}
               />

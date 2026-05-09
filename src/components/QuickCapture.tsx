@@ -57,12 +57,12 @@ const QuickCapture: React.FC = () => {
     if (!deck) return;
 
     const cardId = crypto.randomUUID();
-    const newCard = {
+    const newCard: import('../lib/storage').Card = {
       id: cardId,
       front: trimmedWord,
       back: meaning.trim() || trimmedWord,
       ...(source.trim() ? { source: source.trim() } : {}),
-    } as any;
+    };
 
     const updatedDeck = {
       ...deck,

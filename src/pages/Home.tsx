@@ -246,7 +246,7 @@ const Home: React.FC<HomeProps> = ({
 
   const filteredSets = sourceFilter.trim()
     ? sets.filter(set =>
-        set.cards.some(c => (c as any).source?.toLowerCase().includes(sourceFilter.toLowerCase()))
+        set.cards.some(c => c.source?.toLowerCase().includes(sourceFilter.toLowerCase()))
       )
     : sets;
 
@@ -449,7 +449,7 @@ const Home: React.FC<HomeProps> = ({
             </h3>
             <p style={styles.startReviewSub}>
               {todayStats.totalCards > 0
-                ? `${todayStats.totalCards} / ${todayStats.totalCards + totalDueCards} done today`
+                ? `${todayStats.totalCards} card${todayStats.totalCards === 1 ? '' : 's'} reviewed today`
                 : totalDueCards > 0
                 ? 'Start your daily review session'
                 : 'No cards due right now — great work!'}
