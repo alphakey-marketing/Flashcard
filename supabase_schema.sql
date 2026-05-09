@@ -128,3 +128,14 @@ CREATE POLICY "Users can view their own study sessions"
 
 CREATE POLICY "Users can insert their own study sessions"
   ON public.study_sessions FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- ─── Migration: Add SRS fields to cards table ──────────────────────────────────
+-- Run this migration in the Supabase SQL editor if upgrading an existing database.
+-- These fields mirror the SM-2 review data stored in the reviews table,
+-- allowing per-card SRS state to be read directly from the cards table.
+--
+-- ALTER TABLE public.cards ADD COLUMN IF NOT EXISTS srs_interval INTEGER DEFAULT 0;
+-- ALTER TABLE public.cards ADD COLUMN IF NOT EXISTS srs_ease REAL DEFAULT 2.5;
+-- ALTER TABLE public.cards ADD COLUMN IF NOT EXISTS srs_due_date TIMESTAMPTZ DEFAULT now();
+-- ALTER TABLE public.cards ADD COLUMN IF NOT EXISTS srs_reps INTEGER DEFAULT 0;
+-- ALTER TABLE public.cards ADD COLUMN IF NOT EXISTS source TEXT;

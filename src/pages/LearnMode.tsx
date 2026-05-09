@@ -632,24 +632,27 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
                     onClick={() => handleFlashcardRate('again')}
                     onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
                     onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                    title="See again soon"
                   >
-                    Again
+                    ❌ Forgot
                   </button>
                   <button
                     style={{ ...styles.ratingButton, ...styles.ratingGood }}
                     onClick={() => handleFlashcardRate('know_it')}
                     onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
                     onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                    title="See again in a few days"
                   >
-                    Know It
+                    🤔 Not sure yet
                   </button>
                   <button
                     style={{ ...styles.ratingButton, ...styles.ratingEasy }}
                     onClick={() => handleFlashcardRate('mastered')}
                     onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
                     onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                    title="Space it out further"
                   >
-                    Mastered
+                    ✅ Got it!
                   </button>
                 </div>
               </>

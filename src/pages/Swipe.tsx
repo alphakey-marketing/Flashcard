@@ -1,4 +1,4 @@
-import React, { useState, useEffect, CSSProperties, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, CSSProperties, useCallback, useMemo } from 'react';
 import { getSet, getAllSets, FlashcardSet, Card } from '../lib/storage';
 import { audioService } from '../lib/audioService';
 import { recordSession } from '../lib/studyStats';
@@ -36,6 +36,12 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [savedSession, setSavedSession] = useState<SavedSwipeSession | null>(null);
+
+  // Touch swipe state
+  const touchStartX = useRef<number>(0);
+  const touchStartY = useRef<number>(0);
+  const [swipeDeltaX, setSwipeDeltaX] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
 
   const loadSavedSession = (): SavedSwipeSession | null => {
     try {
@@ -273,7 +279,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     return reverseMode ? currentCard.front : currentCard.back;
   }, [currentCard, reverseMode]);
 
-  const renderCardText = (text: string) => {
+  const renderCardText = (text: string, showSource?: boolean) => {
     if (!text) return null;
     const parts = text.split('\n');
     const mainText = parts[0];
@@ -287,6 +293,9 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
             <div style={styles.exampleLabel}>例文 (Example)</div>
             <div style={styles.exampleText}>{extraText}</div>
           </div>
+        )}
+        {showSource && currentCard?.source && (
+          <div style={styles.sourceTag}>📎 {currentCard.source}</div>
         )}
       </div>
     );
@@ -423,6 +432,41 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     setIsFlipped(prev => !prev);
   }, [hasUserInteracted]);
 
+  const SWIPE_THRESHOLD = 80;
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+    setSwipeDeltaX(0);
+    setIsSwiping(false);
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    const dx = e.touches[0].clientX - touchStartX.current;
+    const dy = e.touches[0].clientY - touchStartY.current;
+    // Only track as horizontal swipe if horizontal movement dominates
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
+      setIsSwiping(true);
+      setSwipeDeltaX(dx);
+      e.preventDefault(); // prevent page scroll
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    if (isSwiping && isFlipped) {
+      if (swipeDeltaX > SWIPE_THRESHOLD) {
+        handleReview('know_it');
+      } else if (swipeDeltaX < -SWIPE_THRESHOLD) {
+        handleReview('again');
+      }
+    } else if (!isSwiping) {
+      // It was a tap — flip the card
+      handleFlipCard();
+    }
+    setSwipeDeltaX(0);
+    setIsSwiping(false);
+  }, [isSwiping, isFlipped, swipeDeltaX, handleReview, handleFlipCard]);
+
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (isFinished) return;
@@ -435,7 +479,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           break;
         case '1':
           e.preventDefault();
-          if (isFlipped) handleReview('mastered');
+          if (isFlipped) handleReview('again');
           break;
         case '2':
           e.preventDefault();
@@ -443,7 +487,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           break;
         case '3':
           e.preventDefault();
-          if (isFlipped) handleReview('again');
+          if (isFlipped) handleReview('mastered');
           break;
         case 'a':
         case 'A':
@@ -672,7 +716,30 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       </div>
 
       <div style={styles.cardContainer}>
-        <div style={styles.flashcard} onClick={handleFlipCard}>
+        <div
+          style={{
+            ...styles.flashcard,
+            position: 'relative',
+            transform: isSwiping ? `translateX(${swipeDeltaX}px) rotate(${swipeDeltaX * 0.05}deg)` : 'none',
+            borderColor: isSwiping && isFlipped
+              ? swipeDeltaX > SWIPE_THRESHOLD ? '#22c55e'
+                : swipeDeltaX < -SWIPE_THRESHOLD ? '#ef4444'
+                : '#e2e8f0'
+              : '#e2e8f0',
+            transition: isSwiping ? 'none' : 'transform 0.2s, border-color 0.2s',
+          }}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onClick={isSwiping ? undefined : handleFlipCard}
+        >
+          {/* Swipe overlays */}
+          {isSwiping && isFlipped && swipeDeltaX > SWIPE_THRESHOLD && (
+            <div style={styles.swipeOverlayRight}>✅</div>
+          )}
+          {isSwiping && isFlipped && swipeDeltaX < -SWIPE_THRESHOLD && (
+            <div style={styles.swipeOverlayLeft}>❌</div>
+          )}
           <div style={styles.cardContent}>
             {!isFlipped ? (
               <>
@@ -684,8 +751,9 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
             ) : (
               <>
                 <div style={styles.cardLabel}>BACK</div>
-                {renderCardText(getCurrentBack())}
+                {renderCardText(getCurrentBack(), true)}
                 <button style={styles.speakerButton} onClick={handlePlayAudio}>🔊 Listen</button>
+                <div style={styles.tapHint}>👈 Swipe left = Forgot · Swipe right = Got it!</div>
               </>
             )}
           </div>
@@ -698,40 +766,43 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <div style={styles.keyboardHints}>
           <span style={styles.hint}><kbd style={styles.kbd}>Space</kbd> Flip</span>
           <span style={styles.hint}><kbd style={styles.kbd}>R</kbd> Reverse</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> Mastered</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> Know It</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>3</kbd> Again</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> Got it!</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> Not sure</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>3</kbd> Forgot</span>
           <span style={styles.hint}><kbd style={styles.kbd}>A</kbd> Audio</span>
         </div>
       </div>
 
       <div style={styles.actions}>
         <button
-          style={{ ...styles.reviewBtn, ...styles.btnMastered, opacity: !isFlipped ? 0.5 : 1 }}
-          onClick={() => { if (isFlipped) handleReview('mastered'); }}
+          style={{ ...styles.reviewBtn, ...styles.btnAgain, opacity: !isFlipped ? 0.5 : 1 }}
+          onClick={() => { if (isFlipped) handleReview('again'); }}
           disabled={!isFlipped}
+          title="See again soon"
         >
-          <span style={styles.emoji}>🎯</span>
-          <span>Mastered</span>
-          <span style={styles.buttonShortcut}>1</span>
+          <span style={styles.emoji}>❌</span>
+          <span>Forgot</span>
+          <span style={styles.buttonSubLabel}>see again soon</span>
         </button>
         <button
           style={{ ...styles.reviewBtn, ...styles.btnKnowIt, opacity: !isFlipped ? 0.5 : 1 }}
           onClick={() => { if (isFlipped) handleReview('know_it'); }}
           disabled={!isFlipped}
+          title="See again in a few days"
         >
-          <span style={styles.emoji}>😊</span>
-          <span>Know It</span>
-          <span style={styles.buttonShortcut}>2</span>
+          <span style={styles.emoji}>🤔</span>
+          <span>Not sure yet</span>
+          <span style={styles.buttonSubLabel}>in a few days</span>
         </button>
         <button
-          style={{ ...styles.reviewBtn, ...styles.btnAgain, opacity: !isFlipped ? 0.5 : 1 }}
-          onClick={() => { if (isFlipped) handleReview('again'); }}
+          style={{ ...styles.reviewBtn, ...styles.btnMastered, opacity: !isFlipped ? 0.5 : 1 }}
+          onClick={() => { if (isFlipped) handleReview('mastered'); }}
           disabled={!isFlipped}
+          title="Space it out further"
         >
-          <span style={styles.emoji}>😰</span>
-          <span>Again</span>
-          <span style={styles.buttonShortcut}>3</span>
+          <span style={styles.emoji}>✅</span>
+          <span>Got it!</span>
+          <span style={styles.buttonSubLabel}>space it out</span>
         </button>
       </div>
     </div>
@@ -774,6 +845,7 @@ const styles: { [key: string]: CSSProperties } = {
   exampleBox: { backgroundColor: '#f8fafc', borderLeft: '3px solid #3b82f6', borderRadius: '0 8px 8px 0', padding: '12px', width: '100%', maxWidth: '380px', textAlign: 'left' },
   exampleLabel: { fontSize: '10px', fontWeight: 700, color: '#64748b', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' },
   exampleText: { fontSize: '14px', color: '#334155', lineHeight: '1.5', fontWeight: 500 },
+  sourceTag: { fontSize: '11px', color: '#94a3b8', backgroundColor: '#f1f5f9', borderRadius: '6px', padding: '3px 8px', marginTop: '4px', alignSelf: 'flex-start' },
   tapHint: { fontSize: '12px', color: '#94a3b8', marginTop: '16px' },
   speakerButton: { marginTop: '16px', padding: '8px 16px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' },
   queueInfo: { fontSize: '12px', color: '#64748b', textAlign: 'center', padding: '6px 12px', backgroundColor: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0' },
@@ -787,6 +859,9 @@ const styles: { [key: string]: CSSProperties } = {
   btnKnowIt: { backgroundColor: '#22c55e' },
   btnMastered: { backgroundColor: '#3b82f6' },
   buttonShortcut: { fontSize: '10px', opacity: 0.8, fontWeight: 400 },
+  buttonSubLabel: { fontSize: '9px', opacity: 0.8, fontWeight: 400 },
+  swipeOverlayRight: { position: 'absolute', top: '50%', left: '16px', transform: 'translateY(-50%)', fontSize: '48px', pointerEvents: 'none' as const },
+  swipeOverlayLeft: { position: 'absolute', top: '50%', right: '16px', transform: 'translateY(-50%)', fontSize: '48px', pointerEvents: 'none' as const },
   resumeContainer: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' },
   resumeCard: { backgroundColor: '#fff', borderRadius: '24px', padding: '48px', maxWidth: '500px', textAlign: 'center', boxShadow: '0 8px 24px rgba(0,0,0,0.1)' },
   resumeIcon: { fontSize: '64px', marginBottom: '24px' },

@@ -10,6 +10,7 @@ import SentenceBuilder from './pages/SentenceBuilder';
 import SpeechPractice from './pages/SpeechPractice';
 import DailyWriting from './pages/DailyWriting';
 import ErrorBoundary from './components/ErrorBoundary';
+import QuickCapture from './components/QuickCapture';
 import { supabase } from './lib/supabaseClient';
 import { SyncManager, type SyncProgress } from './lib/sync/syncManager';
 import { getSet, setStorageAuthState } from './lib/storage';
@@ -231,6 +232,7 @@ const App: React.FC = () => {
     <ErrorBoundary>
       <div>
         {syncErrorModal}
+        <QuickCapture />
         {currentPage === 'home' && (
           <Home
             key={syncGeneration}

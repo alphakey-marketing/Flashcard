@@ -49,6 +49,7 @@ const Home: React.FC<HomeProps> = ({
   const [isSyncing, setIsSyncing] = useState(false);
   const [unsyncedDeckIds, setUnsyncedDeckIds] = useState<Set<string>>(new Set());
   const [userId, setUserId] = useState<string | null>(null);
+  const [sourceFilter, setSourceFilter] = useState('');
 
   useEffect(() => {
     loadSets();
@@ -243,7 +244,13 @@ const Home: React.FC<HomeProps> = ({
     (sum, set) => sum + getSetStudyStats(set.id, set.cards.length).dueCards, 0
   );
 
-  const groupedSets = sets.reduce((acc, set) => {
+  const filteredSets = sourceFilter.trim()
+    ? sets.filter(set =>
+        set.cards.some(c => (c as any).source?.toLowerCase().includes(sourceFilter.toLowerCase()))
+      )
+    : sets;
+
+  const groupedSets = filteredSets.reduce((acc, set) => {
     const level = set.jlptLevel || 'Custom';
     if (!acc[level]) acc[level] = [];
     acc[level].push(set);
@@ -430,6 +437,35 @@ const Home: React.FC<HomeProps> = ({
         </div>
       )}
 
+      {/* Start Today's Review — prominent CTA at the top */}
+      <div style={styles.startReviewBanner}>
+        <div style={styles.startReviewInfo}>
+          <span style={styles.startReviewIcon}>📖</span>
+          <div>
+            <h3 style={styles.startReviewTitle}>
+              {totalDueCards > 0
+                ? `${totalDueCards} cards ready to review`
+                : "You're all caught up!"}
+            </h3>
+            <p style={styles.startReviewSub}>
+              {todayStats.totalCards > 0
+                ? `${todayStats.totalCards} / ${todayStats.totalCards + totalDueCards} done today`
+                : totalDueCards > 0
+                ? 'Start your daily review session'
+                : 'No cards due right now — great work!'}
+            </p>
+          </div>
+        </div>
+        {totalDueCards > 0 && (
+          <button
+            style={styles.startReviewButton}
+            onClick={() => onNavigateToSwipe('due-today')}
+          >
+            ▶ Start Today's Review
+          </button>
+        )}
+      </div>
+
       {totalDueCards > 0 && (
         <div style={styles.dueTodayBanner}>
           <div style={styles.dueTodayInfo}>
@@ -506,7 +542,21 @@ const Home: React.FC<HomeProps> = ({
           </div>
         </div>
       ) : (
-        <div style={styles.categoriesContainer}>
+        <>
+          {/* Source filter */}
+          <div style={styles.sourceFilterContainer}>
+            <input
+              type="text"
+              placeholder="🔍 Filter by source (e.g. Podcast, textbook...)"
+              value={sourceFilter}
+              onChange={e => setSourceFilter(e.target.value)}
+              style={styles.sourceFilterInput}
+            />
+            {sourceFilter && (
+              <button style={styles.sourceFilterClear} onClick={() => setSourceFilter('')}>✕</button>
+            )}
+          </div>
+          <div style={styles.categoriesContainer}>
           {categories.map(category => {
             const isCollapsed = collapsedCategories.has(category);
             const catStats = groupedSets[category].reduce(
@@ -542,7 +592,8 @@ const Home: React.FC<HomeProps> = ({
               </div>
             );
           })}
-        </div>
+          </div>
+        </>
       )}
 
       {showImportModal && (
@@ -573,6 +624,12 @@ const styles: { [key: string]: CSSProperties } = {
   streakIcon: { fontSize: '24px' },
   streakText: { fontSize: '16px', fontWeight: 600, color: '#92400e', flex: 1 },
   todayBadge: { backgroundColor: '#fff', padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600, color: '#16a34a' },
+  startReviewBanner: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#f0fdf4', borderRadius: '16px', padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', border: '2px solid #86efac', flexWrap: 'wrap' },
+  startReviewInfo: { display: 'flex', alignItems: 'center', gap: '16px' },
+  startReviewIcon: { fontSize: '36px' },
+  startReviewTitle: { margin: '0 0 4px 0', color: '#14532d', fontSize: '18px', fontWeight: 700 },
+  startReviewSub: { margin: 0, color: '#16a34a', fontSize: '14px' },
+  startReviewButton: { backgroundColor: '#16a34a', color: 'white', border: 'none', borderRadius: '12px', padding: '14px 28px', fontSize: '16px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' as const },
   dueTodayBanner: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#eff6ff', borderRadius: '12px', padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', border: '2px solid #bfdbfe', flexWrap: 'wrap' },
   dueTodayInfo: { display: 'flex', alignItems: 'center', gap: '16px' },
   dueTodayIcon: { fontSize: '32px' },
@@ -605,6 +662,9 @@ const styles: { [key: string]: CSSProperties } = {
   createButton: { backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', padding: '12px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
   importButtonLarge: { backgroundColor: '#fff', color: '#3b82f6', border: '2px solid #3b82f6', borderRadius: '12px', padding: '12px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
   categoriesContainer: { maxWidth: '1000px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' },
+  sourceFilterContainer: { maxWidth: '1000px', margin: '0 auto 16px', display: 'flex', alignItems: 'center', gap: '8px' },
+  sourceFilterInput: { flex: 1, padding: '10px 14px', fontSize: '14px', border: '2px solid #e2e8f0', borderRadius: '10px', outline: 'none', color: '#0f172a' },
+  sourceFilterClear: { background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#94a3b8', padding: '4px' },
   categorySection: { display: 'flex', flexDirection: 'column', gap: '16px' },
   categoryHeaderContainer: { cursor: 'pointer', userSelect: 'none', backgroundColor: '#fff', borderRadius: '12px', padding: '16px 20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', border: '2px solid #e2e8f0' },
   categoryHeader: { margin: 0, fontSize: '20px', fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '12px' },

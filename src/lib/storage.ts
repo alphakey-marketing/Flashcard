@@ -14,6 +14,7 @@ export interface Card {
   front: string;
   back: string;
   example?: string;
+  source?: string;
 }
 
 export type Flashcard = Card;
@@ -34,6 +35,7 @@ export interface CardDraft {
   front: string;
   back: string;
   example?: string;
+  source?: string;
 }
 
 const INIT_FLAG_KEY = 'flashmind-initialized';
@@ -138,7 +140,8 @@ export function createNewSet(
       id: card.id || crypto.randomUUID(),
       front: card.front,
       back: card.back,
-      example: card.example
+      example: card.example,
+      ...(card.source ? { source: card.source } : {})
     })),
     tags: tags || [],
     jlptLevel,
