@@ -6,6 +6,7 @@ import Swipe from './pages/Swipe';
 import Stats from './pages/Stats';
 import Auth from './pages/Auth';
 import LearnMode from './pages/LearnMode';
+import MatchGame from './pages/MatchGame';
 import SentenceBuilder from './pages/SentenceBuilder';
 import SpeechPractice from './pages/SpeechPractice';
 import DailyWriting from './pages/DailyWriting';
@@ -16,7 +17,7 @@ import { SyncManager, type SyncProgress } from './lib/sync/syncManager';
 import { getSet, setStorageAuthState } from './lib/storage';
 import { setReviewUserId } from './lib/spacedRepetition';
 
-type Page = 'home' | 'create' | 'edit-set' | 'swipe' | 'stats' | 'learn' | 'sentence-builder' | 'speech-practice' | 'daily-writing';
+type Page = 'home' | 'create' | 'edit-set' | 'swipe' | 'stats' | 'learn' | 'match-game' | 'sentence-builder' | 'speech-practice' | 'daily-writing';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -135,6 +136,7 @@ const App: React.FC = () => {
   const navigateToStats = () => setCurrentPage('stats');
   const navigateToSwipe = (setId: string) => { setSelectedSetId(setId); setCurrentPage('swipe'); };
   const navigateToLearn = (setId: string) => { setSelectedSetId(setId); setCurrentPage('learn'); };
+  const navigateToMatch = (setId: string) => { setSelectedSetId(setId); setCurrentPage('match-game'); };
   const navigateToSentenceBuilder = (setId: string) => { setSelectedSetId(setId); setCurrentPage('sentence-builder'); };
   const navigateToSpeechPractice = (setId: string) => { setSelectedSetId(setId); setCurrentPage('speech-practice'); };
   const navigateToDailyWriting = (setId: string) => { setSelectedSetId(setId); setCurrentPage('daily-writing'); };
@@ -240,6 +242,7 @@ const App: React.FC = () => {
             onNavigateToEditSet={navigateToEditSet}
             onNavigateToSwipe={navigateToSwipe}
             onNavigateToLearn={navigateToLearn}
+            onNavigateToMatch={navigateToMatch}
             onNavigateToStats={navigateToStats}
             onNavigateToSentenceBuilder={navigateToSentenceBuilder}
             onNavigateToSpeechPractice={navigateToSpeechPractice}
@@ -260,6 +263,12 @@ const App: React.FC = () => {
           <LearnMode
             set={getSet(selectedSetId)!}
             onComplete={navigateToHome}
+            onExit={navigateToHome}
+          />
+        )}
+        {currentPage === 'match-game' && selectedSetId && (
+          <MatchGame
+            set={getSet(selectedSetId)!}
             onExit={navigateToHome}
           />
         )}

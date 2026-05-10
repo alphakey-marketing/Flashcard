@@ -98,7 +98,8 @@ function initializeTemplates(): void {
 // READ operations
 export function getAllSets(): FlashcardSet[] {
   initializeTemplates();
-  return LocalStorageSync.loadDecks();
+  // Filter out the synthetic 'due-today' pseudo-deck if it was ever accidentally persisted
+  return LocalStorageSync.loadDecks().filter(s => s.id !== 'due-today');
 }
 
 export function getSet(id: string): FlashcardSet | undefined {

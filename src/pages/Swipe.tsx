@@ -42,6 +42,10 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const touchStartY = useRef<number>(0);
   const [swipeDeltaX, setSwipeDeltaX] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
+  // Tracks whether a swipe was completed on touchend so the subsequent click doesn't flip the card
+  const swipeOccurredRef = useRef(false);
+  // Ref to the card element for attaching non-passive touchmove listener
+  const cardRef = useRef<HTMLDivElement>(null);
 
   const loadSavedSession = (): SavedSwipeSession | null => {
     try {
@@ -389,13 +393,23 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     const reviewedCard = activeQueue[0];
 
     if (rating === 'again') {
+      // Loop back 2–3 cards ahead
       if (newQueue.length === 0) {
         newQueue.push(reviewedCard);
       } else {
         const insertIndex = Math.min(newQueue.length, Math.floor(Math.random() * 3) + 2);
         newQueue.splice(insertIndex, 0, reviewedCard);
       }
+    } else if (rating === 'know_it') {
+      // "Not sure yet" — loop back 3–5 cards ahead (further than 'again')
+      if (newQueue.length === 0) {
+        newQueue.push(reviewedCard);
+      } else {
+        const insertIndex = Math.min(newQueue.length, Math.floor(Math.random() * 3) + 3);
+        newQueue.splice(insertIndex, 0, reviewedCard);
+      }
     }
+    // rating === 'mastered' → card is not re-inserted; it's permanently cleared this session
 
     if (newQueue.length === 0) {
       setSessionStats(latestStats => {
@@ -437,6 +451,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
+    swipeOccurredRef.current = false;
     setSwipeDeltaX(0);
     setIsSwiping(false);
   }, []);
@@ -448,24 +463,42 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
       setIsSwiping(true);
       setSwipeDeltaX(dx);
-      e.preventDefault(); // prevent page scroll
+      // Note: e.preventDefault() must be called from the native listener (see useEffect below)
     }
+  }, []);
+
+  // Attach a non-passive touchmove listener so we can call preventDefault() to block
+  // page scroll while the user is performing a horizontal card swipe.
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const handleNativeTouchMove = (e: TouchEvent) => {
+      const dx = e.touches[0].clientX - touchStartX.current;
+      const dy = e.touches[0].clientY - touchStartY.current;
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
+        e.preventDefault();
+      }
+    };
+    el.addEventListener('touchmove', handleNativeTouchMove, { passive: false });
+    return () => el.removeEventListener('touchmove', handleNativeTouchMove);
   }, []);
 
   const handleTouchEnd = useCallback(() => {
     if (isSwiping && isFlipped) {
       if (swipeDeltaX > SWIPE_THRESHOLD) {
-        handleReview('know_it');
+        swipeOccurredRef.current = true;
+        handleReview('mastered');
       } else if (swipeDeltaX < -SWIPE_THRESHOLD) {
+        swipeOccurredRef.current = true;
         handleReview('again');
       }
-    } else if (!isSwiping && swipeDeltaX === 0) {
-      // Only flip if there was no lateral movement at all (pure tap)
-      handleFlipCard();
+    } else if (isSwiping && !isFlipped && Math.abs(swipeDeltaX) > SWIPE_THRESHOLD) {
+      // Mark swipe as occurred so the click handler doesn't also flip
+      swipeOccurredRef.current = true;
     }
     setSwipeDeltaX(0);
     setIsSwiping(false);
-  }, [isSwiping, isFlipped, swipeDeltaX, handleReview, handleFlipCard]);
+  }, [isSwiping, isFlipped, swipeDeltaX, handleReview]);
 
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
@@ -717,6 +750,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
       <div style={styles.cardContainer}>
         <div
+          ref={cardRef}
           style={{
             ...styles.flashcard,
             position: 'relative',
@@ -731,7 +765,13 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          onClick={isSwiping ? undefined : handleFlipCard}
+          onClick={() => {
+            if (swipeOccurredRef.current) {
+              swipeOccurredRef.current = false;
+              return;
+            }
+            handleFlipCard();
+          }}
         >
           {/* Swipe overlays */}
           {isSwiping && isFlipped && swipeDeltaX > SWIPE_THRESHOLD && (
@@ -760,8 +800,15 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         </div>
 
         <div style={styles.queueInfo}>
-          💡 Cards remaining: {activeQueue.length}
+          {activeQueue.length} remaining · {sessionStats.mastered} ✅ got it
         </div>
+
+        {/* Mini mastered progress bar */}
+        {totalCards > 0 && (
+          <div style={styles.masteredBarContainer}>
+            <div style={{ ...styles.masteredBar, width: `${Math.round((sessionStats.mastered / totalCards) * 100)}%` }} />
+          </div>
+        )}
 
         <div style={styles.keyboardHints}>
           <span style={styles.hint}><kbd style={styles.kbd}>Space</kbd> Flip</span>
@@ -849,6 +896,8 @@ const styles: { [key: string]: CSSProperties } = {
   tapHint: { fontSize: '12px', color: '#94a3b8', marginTop: '16px' },
   speakerButton: { marginTop: '16px', padding: '8px 16px', backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' },
   queueInfo: { fontSize: '12px', color: '#64748b', textAlign: 'center', padding: '6px 12px', backgroundColor: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0' },
+  masteredBarContainer: { width: '100%', maxWidth: '500px', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' },
+  masteredBar: { height: '100%', backgroundColor: '#22c55e', borderRadius: '3px', transition: 'width 0.4s ease' },
   keyboardHints: { display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center', fontSize: '10px', color: '#94a3b8' },
   hint: { display: 'flex', alignItems: 'center', gap: '4px' },
   kbd: { backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '3px', padding: '2px 4px', fontFamily: 'monospace', fontSize: '9px', color: '#475569' },

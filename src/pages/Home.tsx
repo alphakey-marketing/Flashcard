@@ -15,6 +15,7 @@ interface HomeProps {
   onNavigateToEditSet: (setId: string) => void;
   onNavigateToSwipe: (setId: string) => void;
   onNavigateToLearn: (setId: string) => void;
+  onNavigateToMatch: (setId: string) => void;
   onNavigateToStats: () => void;
   onNavigateToSentenceBuilder: (setId: string) => void;
   onNavigateToSpeechPractice: (setId: string) => void;
@@ -31,6 +32,7 @@ const Home: React.FC<HomeProps> = ({
   onNavigateToEditSet,
   onNavigateToSwipe,
   onNavigateToLearn,
+  onNavigateToMatch,
   onNavigateToStats,
   onNavigateToSentenceBuilder,
   onNavigateToSpeechPractice,
@@ -240,9 +242,11 @@ const Home: React.FC<HomeProps> = ({
 
   const hasUnsyncedDecks = unsyncedDeckIds.size > 0;
 
-  const totalDueCards = sets.reduce(
-    (sum, set) => sum + getSetStudyStats(set.id, set.cards.length).dueCards, 0
-  );
+  const totalDueCards = sets
+    .filter(set => set.id !== 'due-today')
+    .reduce(
+      (sum, set) => sum + getSetStudyStats(set.id, set.cards.length).dueCards, 0
+    );
 
   const filteredSets = sourceFilter.trim()
     ? sets.filter(set =>
@@ -350,8 +354,9 @@ const Home: React.FC<HomeProps> = ({
             </div>
 
             <div style={styles.studyButtons}>
-              <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn Mode</button>
-              <button style={styles.reviewButton} onClick={() => onNavigateToSwipe(set.id)}>💬 Review</button>
+              <button style={styles.flashcardsButton} onClick={() => onNavigateToSwipe(set.id)}>📖 Flashcards</button>
+              <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn</button>
+              <button style={styles.matchButton} onClick={() => onNavigateToMatch(set.id)}>🎮 Match</button>
             </div>
 
             <div style={styles.activeLearningSection}>
@@ -465,19 +470,6 @@ const Home: React.FC<HomeProps> = ({
           </button>
         )}
       </div>
-
-      {totalDueCards > 0 && (
-        <div style={styles.dueTodayBanner}>
-          <div style={styles.dueTodayInfo}>
-            <span style={styles.dueTodayIcon}>⏰</span>
-            <div>
-              <h3 style={styles.dueTodayTitle}>{totalDueCards} Cards Due Today</h3>
-              <p style={styles.dueTodayDesc}>Review cards across all your sets to maintain your progress.</p>
-            </div>
-          </div>
-          <button style={styles.dueTodayButton} onClick={() => onNavigateToSwipe('due-today')}>Review All Due Now</button>
-        </div>
-      )}
 
       {selectionMode && (
         <div style={styles.selectionToolbar}>
@@ -630,12 +622,6 @@ const styles: { [key: string]: CSSProperties } = {
   startReviewTitle: { margin: '0 0 4px 0', color: '#14532d', fontSize: '18px', fontWeight: 700 },
   startReviewSub: { margin: 0, color: '#16a34a', fontSize: '14px' },
   startReviewButton: { backgroundColor: '#16a34a', color: 'white', border: 'none', borderRadius: '12px', padding: '14px 28px', fontSize: '16px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' as const },
-  dueTodayBanner: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#eff6ff', borderRadius: '12px', padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', border: '2px solid #bfdbfe', flexWrap: 'wrap' },
-  dueTodayInfo: { display: 'flex', alignItems: 'center', gap: '16px' },
-  dueTodayIcon: { fontSize: '32px' },
-  dueTodayTitle: { margin: '0 0 4px 0', color: '#1e3a8a', fontSize: '18px', fontWeight: 700 },
-  dueTodayDesc: { margin: 0, color: '#3b82f6', fontSize: '14px' },
-  dueTodayButton: { backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '15px', fontWeight: 600, cursor: 'pointer' },
   selectionToolbar: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#3b82f6', borderRadius: '12px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' },
   selectionInfo: { display: 'flex', alignItems: 'center', gap: '12px' },
   selectionIcon: { fontSize: '24px', color: 'white' },
@@ -696,9 +682,10 @@ const styles: { [key: string]: CSSProperties } = {
   progressText: { fontSize: '14px', color: '#22c55e', fontWeight: 600 },
   progressBarContainer: { width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden', marginBottom: '16px' },
   progressBar: { height: '100%', backgroundColor: '#22c55e', transition: 'width 0.3s' },
-  studyButtons: { display: 'flex', gap: '8px', marginBottom: '12px' },
-  learnButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
-  reviewButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  studyButtons: { display: 'flex', gap: '6px', marginBottom: '12px' },
+  flashcardsButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  learnButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  matchButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#8b5cf6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
   activeLearningSection: { borderTop: '1px solid #e2e8f0', paddingTop: '12px' },
   expandButton: { width: '100%', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569' },
   expandIcon: { fontSize: '16px' },
