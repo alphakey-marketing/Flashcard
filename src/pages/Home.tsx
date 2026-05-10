@@ -242,11 +242,9 @@ const Home: React.FC<HomeProps> = ({
 
   const hasUnsyncedDecks = unsyncedDeckIds.size > 0;
 
-  const totalDueCards = sets
-    .filter(set => set.id !== 'due-today')
-    .reduce(
-      (sum, set) => sum + getSetStudyStats(set.id, set.cards.length).dueCards, 0
-    );
+  const totalDueCards = sets.reduce(
+    (sum, set) => sum + getSetStudyStats(set.id, set.cards.length).dueCards, 0
+  );
 
   const filteredSets = sourceFilter.trim()
     ? sets.filter(set =>

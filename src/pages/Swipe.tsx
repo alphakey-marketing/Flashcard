@@ -793,7 +793,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
                 <div style={styles.cardLabel}>BACK</div>
                 {renderCardText(getCurrentBack(), true)}
                 <button style={styles.speakerButton} onClick={handlePlayAudio}>🔊 Listen</button>
-                <div style={styles.tapHint}>👈 Swipe left = Forgot · Swipe right = Got it!</div>
+                <div style={styles.tapHint}>← Swipe left = Forgot · Swipe right → = Got it!</div>
               </>
             )}
           </div>
@@ -813,9 +813,9 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <div style={styles.keyboardHints}>
           <span style={styles.hint}><kbd style={styles.kbd}>Space</kbd> Flip</span>
           <span style={styles.hint}><kbd style={styles.kbd}>R</kbd> Reverse</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> Got it!</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>1</kbd> Forgot</span>
           <span style={styles.hint}><kbd style={styles.kbd}>2</kbd> Not sure</span>
-          <span style={styles.hint}><kbd style={styles.kbd}>3</kbd> Forgot</span>
+          <span style={styles.hint}><kbd style={styles.kbd}>3</kbd> Got it!</span>
           <span style={styles.hint}><kbd style={styles.kbd}>A</kbd> Audio</span>
         </div>
       </div>

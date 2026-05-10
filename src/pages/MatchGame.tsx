@@ -46,9 +46,17 @@ const MatchGame: React.FC<MatchGameProps> = ({ set, onExit }) => {
     if (running) {
       timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
     } else {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [running]);
 
   useEffect(() => {

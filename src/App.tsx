@@ -259,14 +259,14 @@ const App: React.FC = () => {
         {currentPage === 'swipe' && selectedSetId && (
           <Swipe setId={selectedSetId} onNavigateToHome={navigateToHome} />
         )}
-        {currentPage === 'learn' && selectedSetId && (
+        {currentPage === 'learn' && selectedSetId && getSet(selectedSetId) && (
           <LearnMode
             set={getSet(selectedSetId)!}
             onComplete={navigateToHome}
             onExit={navigateToHome}
           />
         )}
-        {currentPage === 'match-game' && selectedSetId && (
+        {currentPage === 'match-game' && selectedSetId && getSet(selectedSetId) && (
           <MatchGame
             set={getSet(selectedSetId)!}
             onExit={navigateToHome}
