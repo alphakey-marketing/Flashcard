@@ -15,6 +15,7 @@ interface HomeProps {
   onNavigateToEditSet: (setId: string) => void;
   onNavigateToSwipe: (setId: string) => void;
   onNavigateToLearn: (setId: string) => void;
+  onNavigateToMatch: (setId: string) => void;
   onNavigateToStats: () => void;
   onNavigateToSentenceBuilder: (setId: string) => void;
   onNavigateToSpeechPractice: (setId: string) => void;
@@ -31,6 +32,7 @@ const Home: React.FC<HomeProps> = ({
   onNavigateToEditSet,
   onNavigateToSwipe,
   onNavigateToLearn,
+  onNavigateToMatch,
   onNavigateToStats,
   onNavigateToSentenceBuilder,
   onNavigateToSpeechPractice,
@@ -49,6 +51,7 @@ const Home: React.FC<HomeProps> = ({
   const [isSyncing, setIsSyncing] = useState(false);
   const [unsyncedDeckIds, setUnsyncedDeckIds] = useState<Set<string>>(new Set());
   const [userId, setUserId] = useState<string | null>(null);
+  const [sourceFilter, setSourceFilter] = useState('');
 
   useEffect(() => {
     loadSets();
@@ -243,7 +246,13 @@ const Home: React.FC<HomeProps> = ({
     (sum, set) => sum + getSetStudyStats(set.id, set.cards.length).dueCards, 0
   );
 
-  const groupedSets = sets.reduce((acc, set) => {
+  const filteredSets = sourceFilter.trim()
+    ? sets.filter(set =>
+        set.cards.some(c => c.source?.toLowerCase().includes(sourceFilter.toLowerCase()))
+      )
+    : sets;
+
+  const groupedSets = filteredSets.reduce((acc, set) => {
     const level = set.jlptLevel || 'Custom';
     if (!acc[level]) acc[level] = [];
     acc[level].push(set);
@@ -343,8 +352,9 @@ const Home: React.FC<HomeProps> = ({
             </div>
 
             <div style={styles.studyButtons}>
-              <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn Mode</button>
-              <button style={styles.reviewButton} onClick={() => onNavigateToSwipe(set.id)}>💬 Review</button>
+              <button style={styles.flashcardsButton} onClick={() => onNavigateToSwipe(set.id)}>📖 Flashcards</button>
+              <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn</button>
+              <button style={styles.matchButton} onClick={() => onNavigateToMatch(set.id)}>🎮 Match</button>
             </div>
 
             <div style={styles.activeLearningSection}>
@@ -430,18 +440,34 @@ const Home: React.FC<HomeProps> = ({
         </div>
       )}
 
-      {totalDueCards > 0 && (
-        <div style={styles.dueTodayBanner}>
-          <div style={styles.dueTodayInfo}>
-            <span style={styles.dueTodayIcon}>⏰</span>
-            <div>
-              <h3 style={styles.dueTodayTitle}>{totalDueCards} Cards Due Today</h3>
-              <p style={styles.dueTodayDesc}>Review cards across all your sets to maintain your progress.</p>
-            </div>
+      {/* Start Today's Review — prominent CTA at the top */}
+      <div style={styles.startReviewBanner}>
+        <div style={styles.startReviewInfo}>
+          <span style={styles.startReviewIcon}>📖</span>
+          <div>
+            <h3 style={styles.startReviewTitle}>
+              {totalDueCards > 0
+                ? `${totalDueCards} cards ready to review`
+                : "You're all caught up!"}
+            </h3>
+            <p style={styles.startReviewSub}>
+              {todayStats.totalCards > 0
+                ? `${todayStats.totalCards} card${todayStats.totalCards === 1 ? '' : 's'} reviewed today`
+                : totalDueCards > 0
+                ? 'Start your daily review session'
+                : 'No cards due right now — great work!'}
+            </p>
           </div>
-          <button style={styles.dueTodayButton} onClick={() => onNavigateToSwipe('due-today')}>Review All Due Now</button>
         </div>
-      )}
+        {totalDueCards > 0 && (
+          <button
+            style={styles.startReviewButton}
+            onClick={() => onNavigateToSwipe('due-today')}
+          >
+            ▶ Start Today's Review
+          </button>
+        )}
+      </div>
 
       {selectionMode && (
         <div style={styles.selectionToolbar}>
@@ -506,7 +532,21 @@ const Home: React.FC<HomeProps> = ({
           </div>
         </div>
       ) : (
-        <div style={styles.categoriesContainer}>
+        <>
+          {/* Source filter */}
+          <div style={styles.sourceFilterContainer}>
+            <input
+              type="text"
+              placeholder="🔍 Filter by source (e.g. Podcast, textbook...)"
+              value={sourceFilter}
+              onChange={e => setSourceFilter(e.target.value)}
+              style={styles.sourceFilterInput}
+            />
+            {sourceFilter && (
+              <button style={styles.sourceFilterClear} onClick={() => setSourceFilter('')}>✕</button>
+            )}
+          </div>
+          <div style={styles.categoriesContainer}>
           {categories.map(category => {
             const isCollapsed = collapsedCategories.has(category);
             const catStats = groupedSets[category].reduce(
@@ -542,7 +582,8 @@ const Home: React.FC<HomeProps> = ({
               </div>
             );
           })}
-        </div>
+          </div>
+        </>
       )}
 
       {showImportModal && (
@@ -573,12 +614,12 @@ const styles: { [key: string]: CSSProperties } = {
   streakIcon: { fontSize: '24px' },
   streakText: { fontSize: '16px', fontWeight: 600, color: '#92400e', flex: 1 },
   todayBadge: { backgroundColor: '#fff', padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600, color: '#16a34a' },
-  dueTodayBanner: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#eff6ff', borderRadius: '12px', padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', border: '2px solid #bfdbfe', flexWrap: 'wrap' },
-  dueTodayInfo: { display: 'flex', alignItems: 'center', gap: '16px' },
-  dueTodayIcon: { fontSize: '32px' },
-  dueTodayTitle: { margin: '0 0 4px 0', color: '#1e3a8a', fontSize: '18px', fontWeight: 700 },
-  dueTodayDesc: { margin: 0, color: '#3b82f6', fontSize: '14px' },
-  dueTodayButton: { backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', padding: '12px 24px', fontSize: '15px', fontWeight: 600, cursor: 'pointer' },
+  startReviewBanner: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#f0fdf4', borderRadius: '16px', padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', border: '2px solid #86efac', flexWrap: 'wrap' },
+  startReviewInfo: { display: 'flex', alignItems: 'center', gap: '16px' },
+  startReviewIcon: { fontSize: '36px' },
+  startReviewTitle: { margin: '0 0 4px 0', color: '#14532d', fontSize: '18px', fontWeight: 700 },
+  startReviewSub: { margin: 0, color: '#16a34a', fontSize: '14px' },
+  startReviewButton: { backgroundColor: '#16a34a', color: 'white', border: 'none', borderRadius: '12px', padding: '14px 28px', fontSize: '16px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' as const },
   selectionToolbar: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#3b82f6', borderRadius: '12px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' },
   selectionInfo: { display: 'flex', alignItems: 'center', gap: '12px' },
   selectionIcon: { fontSize: '24px', color: 'white' },
@@ -605,6 +646,9 @@ const styles: { [key: string]: CSSProperties } = {
   createButton: { backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', padding: '12px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
   importButtonLarge: { backgroundColor: '#fff', color: '#3b82f6', border: '2px solid #3b82f6', borderRadius: '12px', padding: '12px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
   categoriesContainer: { maxWidth: '1000px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' },
+  sourceFilterContainer: { maxWidth: '1000px', margin: '0 auto 16px', display: 'flex', alignItems: 'center', gap: '8px' },
+  sourceFilterInput: { flex: 1, padding: '10px 14px', fontSize: '14px', border: '2px solid #e2e8f0', borderRadius: '10px', outline: 'none', color: '#0f172a' },
+  sourceFilterClear: { background: 'none', border: 'none', fontSize: '18px', cursor: 'pointer', color: '#94a3b8', padding: '4px' },
   categorySection: { display: 'flex', flexDirection: 'column', gap: '16px' },
   categoryHeaderContainer: { cursor: 'pointer', userSelect: 'none', backgroundColor: '#fff', borderRadius: '12px', padding: '16px 20px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', border: '2px solid #e2e8f0' },
   categoryHeader: { margin: 0, fontSize: '20px', fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '12px' },
@@ -636,9 +680,10 @@ const styles: { [key: string]: CSSProperties } = {
   progressText: { fontSize: '14px', color: '#22c55e', fontWeight: 600 },
   progressBarContainer: { width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden', marginBottom: '16px' },
   progressBar: { height: '100%', backgroundColor: '#22c55e', transition: 'width 0.3s' },
-  studyButtons: { display: 'flex', gap: '8px', marginBottom: '12px' },
-  learnButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
-  reviewButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  studyButtons: { display: 'flex', gap: '6px', marginBottom: '12px' },
+  flashcardsButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  learnButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  matchButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#8b5cf6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
   activeLearningSection: { borderTop: '1px solid #e2e8f0', paddingTop: '12px' },
   expandButton: { width: '100%', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569' },
   expandIcon: { fontSize: '16px' },

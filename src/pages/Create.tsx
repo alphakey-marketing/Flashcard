@@ -24,7 +24,7 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
     setCards([...cards, { id: crypto.randomUUID(), front: '', back: '' }]);
   };
 
-  const handleUpdateCard = (id: string, field: 'front' | 'back', value: string) => {
+  const handleUpdateCard = (id: string, field: 'front' | 'back' | 'source', value: string) => {
     setCards(cards.map(card => 
       card.id === id ? { ...card, [field]: value } : card
     ));
@@ -187,6 +187,13 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
                 onChange={(e) => handleUpdateCard(card.id, 'back', e.target.value)}
                 style={styles.cardInput}
                 rows={2}
+              />
+              <input
+                type="text"
+                placeholder="Source (optional, e.g. Podcast – Luke's English Ep.3)"
+                value={card.source ?? ''}
+                onChange={(e) => handleUpdateCard(card.id, 'source', e.target.value)}
+                style={{ ...styles.cardInput, fontSize: '13px', color: '#64748b', padding: '8px 12px' } as CSSProperties}
               />
             </div>
           ))}
