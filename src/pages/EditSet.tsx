@@ -179,7 +179,7 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
   };
 
   const handleAddCard = () => {
-    setCards([{ id: crypto.randomUUID(), front: '', back: '' }, ...cards]);
+    setCards(prev => [{ id: crypto.randomUUID(), front: '', back: '' }, ...prev]);
   };
 
   const handleUpdateCard = (id: string, field: 'front' | 'back', value: string) => {
