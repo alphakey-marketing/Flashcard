@@ -80,25 +80,31 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
     if (!item || isGenerating || generateAllProgress !== null) return;
     setGeneratingVocabId(vocabId);
     setVocabError(null);
-    const result = await generate(item.word);
-    setGeneratingVocabId(null);
-    if (result) {
-      setExtractedVocab(prev =>
-        prev.map(v =>
-          v.id === vocabId
-            ? {
-                ...v,
-                front: result.front,
-                back: result.back,
-                reading: result.reading ?? '',
-                meaning: result.meaning ?? '',
-                isGenerated: true,
-              }
-            : v
-        )
-      );
-    } else if (generateError) {
-      setVocabError(generateError);
+
+    try {
+      const result = await generate(item.word);
+      if (result) {
+        setExtractedVocab(prev =>
+          prev.map(v =>
+            v.id === vocabId
+              ? {
+                  ...v,
+                  front: result.front,
+                  back: result.back,
+                  reading: result.reading ?? '',
+                  meaning: result.meaning ?? '',
+                  isGenerated: true,
+                }
+              : v
+          )
+        );
+      } else {
+        setVocabError('Could not generate a flashcard for this word.');
+      }
+    } catch (error) {
+      setVocabError(error instanceof Error ? error.message : 'Could not generate a flashcard for this word.');
+    } finally {
+      setGeneratingVocabId(null);
     }
   };
 
