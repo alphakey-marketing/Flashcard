@@ -1,5 +1,6 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
 import { FlashcardSet, Flashcard } from '../lib/storage';
+import { CardReviewData, saveCardReview, ReviewRating, getSetReviewData } from '../lib/spacedRepetition';
 import { saveCardReview, ReviewRating } from '../lib/spacedRepetition';
 import { audioService } from '../lib/audioService';
 import { checkAnswerWithDetails, MatchResult } from '../lib/answerMatcher';
@@ -35,9 +36,31 @@ interface SavedSession {
   perCardProgress: Record<string, PerCardProgress>;
   sessionCardIds: string[];
   timestamp: number;
+  /** Whether the session uses Back→Front direction (reversed) instead of the default Front→Back */
+  isReversed?: boolean;
 }
 
 const STORAGE_KEY = 'learn-mode-session';
+const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_NEW_CARDS_PER_SESSION = 10;
+const SESSION_SIZE = 20;
+
+const SRGuideContent: React.FC = () => (
+  <div style={styles.srGuideContent}>
+    <p style={styles.srGuideText}>
+      This app uses <strong>Spaced Repetition</strong> — based on the Forgetting Curve. Cards are shown at increasing intervals based on how well you know them:
+    </p>
+    <div style={styles.srGuideItem}><span style={styles.srBadgeRed}>Again</span> New cards: shown again in this session • Reviewing cards: reset to tomorrow</div>
+    <div style={styles.srGuideItem}><span style={styles.srBadgeGreen}>Know It</span> Interval grows: 2 days → 4 days → more</div>
+    <div style={styles.srGuideItem}><span style={styles.srBadgeBlue}>Mastered</span> Long interval: 7 days → weeks → months</div>
+    <p style={styles.srGuideText}>
+      <strong>You only see cards when you're about to forget them</strong> — so you don't waste time on cards you already know well. Each day you'll have fewer reviews as cards move to longer intervals.
+    </p>
+    <p style={styles.srGuideTip}>
+      💡 <strong>Tips:</strong> Be honest with your ratings • Study daily to build streaks • Focus extra effort on "Again" cards
+    </p>
+  </div>
+);
 const SCHEMA_VERSION = 2;
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
@@ -53,6 +76,14 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [savedSession, setSavedSession] = useState<SavedSession | null>(null);
+  const [showSetup, setShowSetup] = useState(false);
+  const [isReversed, setIsReversed] = useState(false);
+  const [nothingDueToday, setNothingDueToday] = useState(false);
+  const [nextDueDate, setNextDueDate] = useState<number | null>(null);
+  const [showSRGuide, setShowSRGuide] = useState(false);
+  // When a multiple-choice card is answered wrong we defer handleNext to the
+  // explicit "Next" button click; this flag carries the re-queue decision across.
+  const [requeueCurrentCard, setRequeueCurrentCard] = useState(false);
   const [perCardProgress, setPerCardProgress] = useState<Record<string, PerCardProgress>>({});
   const [clearedCount, setClearedCount] = useState(0);
   const [sessionCardIds, setSessionCardIds] = useState<string[]>([]);
@@ -63,7 +94,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       setSavedSession(saved);
       setShowResumePrompt(true);
     } else {
-      initializeSession();
+      setShowSetup(true);
     }
     return () => {
       saveCurrentSession();
@@ -109,6 +140,9 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
         schemaVersion: SCHEMA_VERSION,
         questions,
         currentIndex,
+        correctCount,
+        timestamp: Date.now(),
+        isReversed
         clearedCount,
         perCardProgress,
         sessionCardIds,
@@ -126,6 +160,8 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     if (savedSession) {
       setQuestions(savedSession.questions);
       setCurrentIndex(savedSession.currentIndex);
+      setCorrectCount(savedSession.correctCount);
+      setIsReversed(savedSession.isReversed ?? false);
       setClearedCount(savedSession.clearedCount);
       setPerCardProgress(savedSession.perCardProgress);
       setSessionCardIds(savedSession.sessionCardIds);
@@ -136,9 +172,100 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const handleStartNewSession = () => {
     clearSavedSession();
     setShowResumePrompt(false);
-    initializeSession();
+    setShowSetup(true);
   };
 
+  const initializeSession = (reversed: boolean = false, studyAll: boolean = false) => {
+    const now = Date.now();
+    const reviewDataMap = new Map<string, CardReviewData>(
+      getSetReviewData(set.id).map((r: CardReviewData) => [r.cardId, r])
+    );
+
+    let selectedCards: Flashcard[];
+
+    if (studyAll) {
+      // Bypass spaced repetition — show all cards shuffled
+      selectedCards = [...set.cards].sort(() => Math.random() - 0.5).slice(0, SESSION_SIZE);
+      setNothingDueToday(false);
+    } else {
+      // Spaced repetition: only show due and new cards
+      const dueCards: Flashcard[] = [];
+      const newCards: Flashcard[] = [];
+
+      for (const card of set.cards) {
+        const reviewData = reviewDataMap.get(card.id);
+        if (!reviewData) {
+          newCards.push(card);
+        } else if (reviewData.nextReview <= now) {
+          dueCards.push(card);
+        }
+        // Cards not due are intentionally skipped
+      }
+
+      const shuffledDue = [...dueCards].sort(() => Math.random() - 0.5);
+      const shuffledNew = [...newCards]
+        .sort(() => Math.random() - 0.5)
+        .slice(0, MAX_NEW_CARDS_PER_SESSION);
+
+      selectedCards = [...shuffledDue, ...shuffledNew].slice(0, SESSION_SIZE);
+
+      if (selectedCards.length === 0) {
+        // Find the next due date so we can tell the user when to return
+        let earliest: number | null = null;
+        for (const reviewData of reviewDataMap.values()) {
+          if (reviewData.nextReview > now) {
+            if (earliest === null || reviewData.nextReview < earliest) {
+              earliest = reviewData.nextReview;
+            }
+          }
+        }
+        setNextDueDate(earliest);
+        setNothingDueToday(true);
+        return;
+      }
+    }
+
+    setNothingDueToday(false);
+
+    // Select up to SESSION_SIZE cards
+    const sessionSize = selectedCards.length;
+
+    // Generate questions with mixed types
+    const generatedQuestions: Question[] = selectedCards.map((card, index) => {
+      // Adaptive difficulty: easier questions first
+      let questionType: QuestionType;
+      const progress = index / sessionSize;
+      
+      if (progress < 0.3) {
+        questionType = 'multiple-choice';
+      } else if (progress < 0.7) {
+        questionType = Math.random() > 0.5 ? 'flashcard' : 'type-in';
+      } else {
+        questionType = 'type-in';
+      }
+
+      const question: Question = {
+        card,
+        type: questionType
+      };
+
+      // Generate distractors for multiple choice
+      if (questionType === 'multiple-choice') {
+        // When reversed: question = back (English), options = front (Japanese)
+        const correctAnswer = reversed ? card.front : card.back;
+        const otherCards = set.cards.filter(c => c.id !== card.id);
+        const distractors = otherCards
+          .sort(() => Math.random() - 0.5)
+          .slice(0, 3)
+          .map(c => reversed ? c.front : c.back);
+        
+        const allOptions = [correctAnswer, ...distractors]
+          .sort(() => Math.random() - 0.5);
+        
+        question.options = allOptions;
+      }
+
+      return question;
   const generateQuestion = (card: Flashcard, round: Round): Question => {
     const type: QuestionType = round === 1 ? 'multiple-choice' : 'type-in';
     const question: Question = { card, type, round };
@@ -178,6 +305,13 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
 
   const currentQuestion = questions[currentIndex];
 
+  /** Return the card's persisted status, defaulting to 'learning' for new (unseen) cards. */
+  const getCardStatus = (cardId: string): 'learning' | 'reviewing' | 'mastered' => {
+    const found = getSetReviewData(set.id).find(d => d.cardId === cardId);
+    return (found?.status ?? 'learning') as 'learning' | 'reviewing' | 'mastered';
+  };
+
+  // Helper to extract main and example text safely
   const getCardTextParts = (text: string, legacyExample?: string) => {
     if (!text) return { main: '', example: legacyExample || '' };
     const parts = text.split('\n');
@@ -241,9 +375,33 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const handleMultipleChoiceSelect = (option: string) => {
     if (showAnswer) return;
     setSelectedOption(option);
-    const correct = option === currentQuestion.card.back;
+    const correctAnswer = isReversed ? currentQuestion.card.front : currentQuestion.card.back;
+    const correct = option === correctAnswer;
     setIsCorrect(correct);
     setShowAnswer(true);
+    
+    if (correct) {
+      setCorrectCount(correctCount + 1);
+      // Record as "Know It" in spaced repetition
+      saveCardReview(set.id, currentQuestion.card.id, 'know_it');
+      // requeueCurrentCard is already false (or will be reset by handleNext)
+    } else {
+      // Check status BEFORE saving so we know whether to re-queue
+      const wasLearning = getCardStatus(currentQuestion.card.id) === 'learning';
+      // Record as "Again" in spaced repetition
+      saveCardReview(set.id, currentQuestion.card.id, 'again');
+      setRequeueCurrentCard(wasLearning);
+    }
+  };
+
+  const handleTypeInSubmit = () => {
+    if (showAnswer) return;
+    
+    const answerField = isReversed ? currentQuestion.card.front : currentQuestion.card.back;
+    const { main: expectedAnswer } = getCardTextParts(answerField);
+    
+    // Use the 3-tier flexible matching system
+    const result = checkAnswerWithDetails(userAnswer, expectedAnswer);
   };
 
   const handleTypeInSubmit = () => {
@@ -258,6 +416,49 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
   const handleTypeInOverride = () => advanceSession(true);
   const handleTypeInConfirmWrong = () => advanceSession(false);
 
+  const handleTypeInConfirmWrong = () => {
+    // User confirms their answer was wrong
+    const wasLearning = getCardStatus(currentQuestion.card.id) === 'learning';
+    saveCardReview(set.id, currentQuestion.card.id, 'again');
+    handleNext(wasLearning);
+  };
+
+  const handleFlashcardRate = (rating: ReviewRating) => {
+    const wasLearning = rating === 'again' && getCardStatus(currentQuestion.card.id) === 'learning';
+    saveCardReview(set.id, currentQuestion.card.id, rating);
+    
+    if (rating === 'know_it' || rating === 'mastered') {
+      setCorrectCount(correctCount + 1);
+    }
+    
+    handleNext(wasLearning);
+  };
+
+  const handleNext = (requeueCurrent = false) => {
+    audioService.stop(); // Stop any playing audio before proceeding
+
+    // Re-queue learning cards that were answered 'again' by appending them to
+    // the end of the question list. The effective length grows by 1 so we
+    // must account for that when deciding whether the session is complete.
+    let extraLen = 0;
+    if (requeueCurrent && currentQuestion) {
+      extraLen = 1;
+      setQuestions(prev => [...prev, { ...currentQuestion }]);
+    }
+    setRequeueCurrentCard(false);
+
+    const effectiveLength = questions.length + extraLen;
+
+    if (currentIndex < effectiveLength - 1) {
+      setCurrentIndex(currentIndex + 1);
+      setShowAnswer(false);
+      setIsCorrect(null);
+      setMatchResult(null);
+      setUserAnswer('');
+      setSelectedOption(null);
+    } else {
+      setShowCongrats(true);
+      clearSavedSession(); // Clear saved session on completion
   const handleNext = () => {
     if (isCorrect !== null) advanceSession(isCorrect);
   };
@@ -335,6 +536,149 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     );
   }
 
+  // Setup screen — shown before each new session
+  if (showSetup) {
+    const now = Date.now();
+    const reviewDataMap = new Map<string, CardReviewData>(
+      getSetReviewData(set.id).map((r: CardReviewData) => [r.cardId, r])
+    );
+    const dueCount = set.cards.filter(c => {
+      const r = reviewDataMap.get(c.id);
+      return r && r.nextReview <= now;
+    }).length;
+    const newCount = set.cards.filter(c => !reviewDataMap.get(c.id)).length;
+    const sessionCount = Math.min(SESSION_SIZE, dueCount + Math.min(newCount, MAX_NEW_CARDS_PER_SESSION));
+
+    return (
+      <div style={styles.setupContainer}>
+        <div style={styles.setupCard}>
+          <div style={styles.setupTopRow}>
+            <button style={styles.exitButton} onClick={onExit}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            >← Back</button>
+            <h2 style={styles.setupTitle}>Learn Mode</h2>
+            <div style={{ width: 60 }} />
+          </div>
+
+          {/* Today's stats */}
+          <div style={styles.setupStats}>
+            <div style={styles.setupStatItem}>
+              <span style={styles.setupStatValue}>{dueCount}</span>
+              <span style={styles.setupStatLabel}>Due for review</span>
+            </div>
+            <div style={styles.setupStatItem}>
+              <span style={styles.setupStatValue}>{newCount}</span>
+              <span style={styles.setupStatLabel}>New cards</span>
+            </div>
+            <div style={styles.setupStatItem}>
+              <span style={{ ...styles.setupStatValue, color: '#3b82f6' }}>{sessionCount}</span>
+              <span style={styles.setupStatLabel}>This session</span>
+            </div>
+          </div>
+
+          {/* Direction toggle */}
+          <div style={styles.setupSection}>
+            <h3 style={styles.setupSectionTitle}>Question Direction</h3>
+            <div style={styles.directionToggle}>
+              <button
+                style={{ ...styles.directionButton, ...(isReversed ? {} : styles.directionButtonActive) }}
+                onClick={() => setIsReversed(false)}
+              >
+                Front → Back
+              </button>
+              <button
+                style={{ ...styles.directionButton, ...(isReversed ? styles.directionButtonActive : {}) }}
+                onClick={() => setIsReversed(true)}
+              >
+                Back → Front
+              </button>
+            </div>
+          </div>
+
+          {/* SR Guide toggle */}
+          <div style={styles.setupSection}>
+            <button
+              style={styles.srGuideToggle}
+              onClick={() => setShowSRGuide(prev => !prev)}
+            >
+              {showSRGuide ? '▲' : '▼'} How does the review system work?
+            </button>
+            {showSRGuide && <SRGuideContent />}
+          </div>
+
+          {/* Start buttons */}
+          <button
+            style={{ ...styles.primaryButton, width: '100%', marginBottom: '12px' }}
+            onClick={() => { setShowSetup(false); initializeSession(isReversed); }}
+            disabled={sessionCount === 0}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            {sessionCount === 0 ? '✅ Nothing due today' : `▶️ Start Session (${sessionCount} cards)`}
+          </button>
+          {sessionCount === 0 && (
+            <button
+              style={{ ...styles.secondaryButton, width: '100%' }}
+              onClick={() => { setShowSetup(false); initializeSession(isReversed, true); }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+            >
+              📚 Study All Cards Anyway
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (nothingDueToday) {
+    return (
+      <div style={styles.setupContainer}>
+        <div style={styles.setupCard}>
+          <div style={styles.congratsIcon}>✅</div>
+          <h2 style={styles.congratsTitle}>You're all caught up!</h2>
+          <p style={{ color: '#64748b', marginBottom: '8px', textAlign: 'center' }}>
+            All your cards have been reviewed. Come back when cards are due again.
+          </p>
+          {nextDueDate && (
+            <p style={{ color: '#3b82f6', fontWeight: 600, marginBottom: '24px', textAlign: 'center' }}>
+              Next review: {new Date(nextDueDate).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
+            </p>
+          )}
+
+          {/* SR Guide */}
+          <div style={styles.setupSection}>
+            <button
+              style={styles.srGuideToggle}
+              onClick={() => setShowSRGuide(prev => !prev)}
+            >
+              {showSRGuide ? '▲' : '▼'} How does the review system work?
+            </button>
+            {showSRGuide && <SRGuideContent />}
+          </div>
+
+          <button
+            style={{ ...styles.secondaryButton, width: '100%', marginBottom: '12px' }}
+            onClick={() => { setNothingDueToday(false); setShowSetup(false); initializeSession(isReversed, true); }}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            📚 Study All Cards Anyway
+          </button>
+          <button
+            style={{ ...styles.exitButton, display: 'block', margin: '0 auto' }}
+            onClick={onExit}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.7')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            ← Go Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ── Empty deck guard ──────────────────────────────────────────────────────
   if (questions.length === 0) {
     return (
@@ -398,6 +742,14 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
           <div style={styles.congratsButtons}>
             <button
               style={styles.primaryButton}
+              onClick={() => {
+                setShowCongrats(false);
+                setCurrentIndex(0);
+                setCorrectCount(0);
+                initializeSession(isReversed);
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
               onClick={() => { setShowCongrats(false); initializeSession(); }}
             >
               🔄 Start New Session
@@ -409,6 +761,17 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     );
   }
 
+  // Swap question/answer based on direction
+  const questionParts = isReversed
+    ? getCardTextParts(currentQuestion.card.back)
+    : getCardTextParts(currentQuestion.card.front, currentQuestion.card.example);
+  const answerParts = isReversed
+    ? getCardTextParts(currentQuestion.card.front, currentQuestion.card.example)
+    : getCardTextParts(currentQuestion.card.back);
+  const questionAudioField = isReversed ? currentQuestion.card.back : currentQuestion.card.front;
+  const questionAudioExample = isReversed ? undefined : currentQuestion.card.example;
+  const answerAudioField = isReversed ? currentQuestion.card.front : currentQuestion.card.back;
+  const correctAnswerField = isReversed ? currentQuestion.card.front : currentQuestion.card.back;
   // ── Main question screen ──────────────────────────────────────────────────
   if (!currentQuestion) return null;
 
@@ -424,10 +787,18 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       <div style={styles.header}>
         <button style={styles.exitButton} onClick={onExit}>← Exit</button>
         <div style={styles.progressInfo}>
+          <span style={{ fontSize: '12px', color: '#94a3b8', marginRight: '8px' }}>
+            {isReversed ? '🇬🇧→🇯🇵' : '🇯🇵→🇬🇧'}
+          </span>
+          <span style={styles.progressText}>
+            {currentIndex + 1} / {questions.length}
           <span style={styles.roundBadge} data-round={currentRound}>
             {roundLabel}
           </span>
           <span style={styles.clearedBadge}>{clearedCount}/{sessionCardIds.length} cleared</span>
+        </div>
+        <div style={styles.scoreChip}>
+          ✓ {correctCount}
         </div>
       </div>
 
@@ -441,18 +812,21 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
         {/* Prompt with audio */}
         <div style={styles.questionPrompt}>
           <div style={styles.questionFrontRow}>
-            <div style={styles.questionFront}>{frontParts.main}</div>
+            <div style={styles.questionFront}>{questionParts.main}</div>
             <button
               style={styles.audioButton}
-              onClick={() => playAudio(currentQuestion.card.front, currentQuestion.card.example)}
+              onClick={() => playAudio(questionAudioField, questionAudioExample)}
               disabled={isPlayingAudio}
               title="Play audio"
             >
               {isPlayingAudio ? '🔊' : '🔈'}
             </button>
           </div>
-          {frontParts.example && (
+          {questionParts.example && (
             <div style={styles.questionExampleRow}>
+              <div style={styles.questionExample}>
+                例文: {questionParts.example}
+              </div>
               <div style={styles.questionExample}>例文: {frontParts.example}</div>
             </div>
           )}
@@ -463,7 +837,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
           <div style={styles.optionsContainer}>
             {currentQuestion.options?.map((option, idx) => {
               const isSelected = selectedOption === option;
-              const isCorrectOption = option === currentQuestion.card.back;
+              const isCorrectOption = option === correctAnswerField;
               const optionParts = getCardTextParts(option);
               let buttonStyle = styles.optionButton;
               if (showAnswer) {
@@ -501,6 +875,9 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               type="text"
               style={styles.typeInInput}
               value={userAnswer}
+              onChange={(e) => setUserAnswer(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && !showAnswer && handleTypeInSubmit()}
+              placeholder={isReversed ? 'Type Japanese...' : 'Type English meaning...'}
               onChange={e => setUserAnswer(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !showAnswer && handleTypeInSubmit()}
               placeholder="Type the English meaning..."
@@ -524,12 +901,12 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
                       {getMatchConfidenceIndicator()}
                       {matchResult && matchResult.matchType !== 'exact' && (
                         <div style={{ fontSize: '14px', marginTop: '4px', opacity: 0.8 }}>
-                          Expected: {backParts.main}
+                          Expected: {answerParts.main}
                         </div>
                       )}
                     </>
                   ) : (
-                    `✗ Expected: ${backParts.main}`
+                    `✗ Expected: ${answerParts.main}`
                   )}
                 </div>
                 {!isCorrect && (
@@ -547,6 +924,80 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
           </div>
         )}
 
+        {/* Flashcard */}
+        {currentQuestion.type === 'flashcard' && (
+          <div style={styles.flashcardContainer}>
+            {!showAnswer ? (
+              <button
+                style={styles.showAnswerButton}
+                onClick={() => setShowAnswer(true)}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+              >
+                Show Answer
+              </button>
+            ) : (
+              <>
+                <div style={styles.flashcardAnswerRow}>
+                  <div style={styles.flashcardAnswerContainer}>
+                    <div style={styles.flashcardAnswer}>{answerParts.main}</div>
+                    {answerParts.example && (
+                      <div style={styles.questionExample}>
+                        Example: {answerParts.example}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    style={styles.audioButton}
+                    onClick={() => playAudio(answerAudioField)}
+                    disabled={isPlayingAudio}
+                    title="Play answer audio"
+                    onMouseEnter={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1.1)')}
+                    onMouseLeave={(e) => !isPlayingAudio && (e.currentTarget.style.transform = 'scale(1)')}
+                  >
+                    {isPlayingAudio ? '🔊' : '🔈'}
+                  </button>
+                </div>
+                <div style={styles.ratingButtons}>
+                  <button
+                    style={{ ...styles.ratingButton, ...styles.ratingAgain }}
+                    onClick={() => handleFlashcardRate('again')}
+                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                  >
+                    Again
+                  </button>
+                  <button
+                    style={{ ...styles.ratingButton, ...styles.ratingGood }}
+                    onClick={() => handleFlashcardRate('know_it')}
+                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                  >
+                    Know It
+                  </button>
+                  <button
+                    style={{ ...styles.ratingButton, ...styles.ratingEasy }}
+                    onClick={() => handleFlashcardRate('mastered')}
+                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                  >
+                    Mastered
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Next button */}
+        {shouldShowNextButton() && (
+          <button
+            style={styles.nextButton}
+            onClick={() => handleNext(requeueCurrentCard)}
+            onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+            onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+          >
+            {currentIndex < questions.length - 1 || requeueCurrentCard ? 'Next →' : 'Finish'}
         {/* Next button */}
         {shouldShowNextButton() && (
           <button style={styles.nextButton} onClick={handleNext}>
@@ -581,6 +1032,24 @@ const styles: { [key: string]: CSSProperties } = {
     backgroundColor: '#dbeafe', color: '#1e40af', borderRadius: '20px',
     padding: '4px 14px', fontSize: '13px', fontWeight: 700
   },
+  progressText: {},
+  scoreChip: {
+    fontSize: '14px',
+    fontWeight: 700,
+    color: '#10b981',
+    backgroundColor: '#d1fae5',
+    padding: '4px 12px',
+    borderRadius: '20px',
+    minWidth: '60px',
+    textAlign: 'center' as const
+  },
+  progressBarContainer: {
+    maxWidth: '800px',
+    margin: '0 auto 32px',
+    height: '8px',
+    backgroundColor: '#e2e8f0',
+    borderRadius: '4px',
+    overflow: 'hidden'
   clearedBadge: {
     backgroundColor: '#d1fae5', color: '#065f46', borderRadius: '20px',
     padding: '4px 12px', fontSize: '13px', fontWeight: 600
@@ -692,6 +1161,166 @@ const styles: { [key: string]: CSSProperties } = {
     backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer'
   },
   secondaryButton: {
+    padding: '16px 32px',
+    fontSize: '16px',
+    fontWeight: 600,
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+    border: 'none',
+    borderRadius: '12px',
+    cursor: 'pointer',
+    transition: 'opacity 0.2s'
+  },
+  // Setup screen styles
+  setupContainer: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+    padding: '24px'
+  },
+  setupCard: {
+    backgroundColor: '#fff',
+    borderRadius: '24px',
+    padding: '32px',
+    maxWidth: '520px',
+    width: '100%',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.1)',
+    marginTop: '24px'
+  },
+  setupTopRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '24px'
+  },
+  setupTitle: {
+    fontSize: '22px',
+    fontWeight: 700,
+    color: '#0f172a',
+    margin: 0
+  },
+  setupStats: {
+    display: 'flex',
+    gap: '0',
+    justifyContent: 'space-around',
+    backgroundColor: '#f8fafc',
+    borderRadius: '12px',
+    padding: '16px',
+    marginBottom: '24px',
+    border: '1px solid #e2e8f0'
+  },
+  setupStatItem: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    gap: '4px'
+  },
+  setupStatValue: {
+    fontSize: '26px',
+    fontWeight: 700,
+    color: '#0f172a'
+  },
+  setupStatLabel: {
+    fontSize: '12px',
+    color: '#64748b',
+    fontWeight: 500
+  },
+  setupSection: {
+    marginBottom: '20px'
+  },
+  setupSectionTitle: {
+    fontSize: '14px',
+    fontWeight: 600,
+    color: '#475569',
+    marginBottom: '10px',
+    margin: '0 0 10px 0'
+  },
+  directionToggle: {
+    display: 'flex',
+    gap: '8px'
+  },
+  directionButton: {
+    flex: 1,
+    padding: '10px 12px',
+    fontSize: '14px',
+    fontWeight: 500,
+    backgroundColor: '#f1f5f9',
+    color: '#475569',
+    border: '2px solid #e2e8f0',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'all 0.2s'
+  },
+  directionButtonActive: {
+    backgroundColor: '#dbeafe',
+    borderColor: '#3b82f6',
+    color: '#1d4ed8'
+  },
+  srGuideToggle: {
+    background: 'none',
+    border: 'none',
+    color: '#3b82f6',
+    fontSize: '14px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    padding: '0',
+    textAlign: 'left' as const
+  },
+  srGuideContent: {
+    marginTop: '12px',
+    padding: '16px',
+    backgroundColor: '#f0f9ff',
+    borderRadius: '12px',
+    border: '1px solid #bae6fd'
+  },
+  srGuideText: {
+    fontSize: '13px',
+    color: '#0f172a',
+    lineHeight: 1.6,
+    margin: '0 0 12px 0'
+  },
+  srGuideItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontSize: '13px',
+    color: '#334155',
+    marginBottom: '6px'
+  },
+  srGuideTip: {
+    fontSize: '13px',
+    color: '#0369a1',
+    lineHeight: 1.6,
+    margin: '12px 0 0 0'
+  },
+  srBadgeRed: {
+    backgroundColor: '#ef4444',
+    color: 'white',
+    padding: '2px 8px',
+    borderRadius: '4px',
+    fontSize: '12px',
+    fontWeight: 700,
+    flexShrink: 0
+  },
+  srBadgeGreen: {
+    backgroundColor: '#10b981',
+    color: 'white',
+    padding: '2px 8px',
+    borderRadius: '4px',
+    fontSize: '12px',
+    fontWeight: 700,
+    flexShrink: 0
+  },
+  srBadgeBlue: {
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    padding: '2px 8px',
+    borderRadius: '4px',
+    fontSize: '12px',
+    fontWeight: 700,
+    flexShrink: 0
     padding: '16px 32px', fontSize: '16px', fontWeight: 600,
     backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '12px', cursor: 'pointer'
   }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
-import { FlashcardSet } from '../lib/storage';
+import { FlashcardSet, Card } from '../lib/storage';
 import { getSetReviewData } from '../lib/spacedRepetition';
 import {
   generateChallenge,
@@ -15,6 +15,65 @@ interface SentenceBuilderProps {
   set: FlashcardSet;
   onExit: () => void;
 }
+
+// ─── Block-game helpers ─────────────────────────────────────────────────────
+
+/** Extract the example sentence from a card (second line of front, or legacy example field). */
+function getCardExample(card: Card): string {
+  const lines = card.front.split('\n');
+  if (lines.length > 1 && lines[1].trim()) return lines[1].trim();
+  return (card.example || '').trim();
+}
+
+/** Segment a Japanese sentence into blocks for the block game. */
+function segmentForBlockGame(text: string): string[] {
+  const s = text.replace(/[。！？.!?、,]+$/g, '').trim();
+  if (!s) return [text];
+
+  // First pass: split at clearly standalone case particles
+  const SPLIT_PARTICLES = new Set(['は', 'を', 'も', 'へ']);
+  const tokens: string[] = [];
+  let current = '';
+
+  for (const ch of s) {
+    if (SPLIT_PARTICLES.has(ch)) {
+      if (current) { tokens.push(current); current = ''; }
+      tokens.push(ch);
+    } else {
+      current += ch;
+    }
+  }
+  if (current) tokens.push(current);
+
+  // Second pass: split at te-form conjunctions (〜して, 〜いて, 〜って, 〜んで, etc.)
+  const result: string[] = [];
+  for (const token of tokens) {
+    if (token.length <= 1) { result.push(token); continue; }
+    const teFormMatch = token.match(/^(.+[しいっん][てで])(.+)$/);
+    if (teFormMatch) {
+      result.push(teFormMatch[1]);
+      result.push(teFormMatch[2]);
+    } else {
+      result.push(token);
+    }
+  }
+
+  return result.filter(t => t.length > 0);
+}
+
+/** Shuffle array (Fisher-Yates). */
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+interface BlockToken { id: number; text: string; }
+
+// ─── Diff helper (used by free-form mode) ────────────────────────────────────
 
 // Helper to compute differences between original and corrected text
 function computeDiff(original: string, corrected: string): Array<{text: string; isError: boolean}> {
@@ -42,6 +101,19 @@ function computeDiff(original: string, corrected: string): Array<{text: string; 
 }
 
 const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
+  // ── Mode ──────────────────────────────────────────────────────────────────
+  // 'block' = Duolingo-style block clicking; 'freeform' = existing textarea mode
+  const [gameMode, setGameMode] = useState<'block' | 'freeform'>('block');
+
+  // ── Block-game state ───────────────────────────────────────────────────────
+  const [blockSourceCard, setBlockSourceCard] = useState<Card | null>(null);
+  const [blockTarget, setBlockTarget] = useState(''); // correct sentence
+  const [availableBlocks, setAvailableBlocks] = useState<BlockToken[]>([]);
+  const [placedBlocks, setPlacedBlocks] = useState<BlockToken[]>([]);
+  const [blockResult, setBlockResult] = useState<'correct' | 'wrong' | null>(null);
+  const [blockStreak, setBlockStreak] = useState(0);
+
+  // ── Free-form state ────────────────────────────────────────────────────────
   const [currentChallenge, setCurrentChallenge] = useState<SentenceChallenge | null>(null);
   const [userAnswer, setUserAnswer] = useState('');
   const [feedback, setFeedback] = useState<{
@@ -69,10 +141,71 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
   );
   const masteredCards = set.cards.filter(card => masteredCardIds.has(card.id));
 
+  // Cards with example sentences (used for block game — no mastered requirement)
+  const cardsWithExamples = set.cards.filter(card => getCardExample(card).length > 0);
+
+  // ── Block game initialisation ──────────────────────────────────────────────
+
+  const loadBlockChallenge = (cards: Card[] = cardsWithExamples) => {
+    if (cards.length === 0) return;
+    const card = cards[Math.floor(Math.random() * cards.length)];
+    const example = getCardExample(card);
+    const segments = segmentForBlockGame(example);
+    if (segments.length < 2) {
+      // sentence too short / not segmentable — try another
+      const rest = cards.filter(c => c.id !== card.id);
+      if (rest.length > 0) { loadBlockChallenge(rest); return; }
+    }
+    const tokens: BlockToken[] = segments.map((text, i) => ({ id: i, text }));
+    setBlockSourceCard(card);
+    setBlockTarget(example);
+    setAvailableBlocks(shuffle(tokens));
+    setPlacedBlocks([]);
+    setBlockResult(null);
+  };
+
   useEffect(() => {
-    checkForExistingChallenge();
-    loadHistory();
-  }, []);
+    if (gameMode === 'block') {
+      loadBlockChallenge();
+    } else {
+      checkForExistingChallenge();
+      loadHistory();
+    }
+  // `set.id` included so challenges reload when the active set changes.
+  // `loadBlockChallenge` / `checkForExistingChallenge` / `loadHistory` are
+  // inline helpers that close over the current set; they are stable for a given set.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameMode, set.id]);
+
+  // ── Block-game handlers ────────────────────────────────────────────────────
+
+  const handleBlockPlace = (token: BlockToken) => {
+    if (blockResult) return; // game over, waiting for next
+    setAvailableBlocks(prev => prev.filter(b => b.id !== token.id));
+    setPlacedBlocks(prev => [...prev, token]);
+  };
+
+  const handleBlockRemove = (token: BlockToken) => {
+    if (blockResult) return;
+    setPlacedBlocks(prev => prev.filter(b => b.id !== token.id));
+    setAvailableBlocks(prev => [...prev, token]);
+  };
+
+  const handleBlockCheck = () => {
+    const assembled = placedBlocks.map(b => b.text).join('');
+    const correct =
+      assembled.replace(/[。！？.!?、,\s]/g, '') ===
+      blockTarget.replace(/[。！？.!?、,\s]/g, '');
+    setBlockResult(correct ? 'correct' : 'wrong');
+    if (correct) setBlockStreak(s => s + 1);
+    else setBlockStreak(0);
+  };
+
+  const handleBlockNext = () => {
+    loadBlockChallenge();
+  };
+
+  // ── Free-form handlers ─────────────────────────────────────────────────────
   
   const checkForExistingChallenge = () => {
     const existing = getCurrentChallenge(set.id);
@@ -168,7 +301,7 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
     }
   };
 
-  if (masteredCards.length < 3) {
+  if (masteredCards.length < 3 && cardsWithExamples.length === 0) {
     return (
       <div style={styles.container}>
         <div style={styles.header}>
@@ -179,9 +312,9 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
         <div style={styles.emptyState}>
           <div style={styles.emptyIcon}>🏗️</div>
           <p style={styles.emptyText}>
-            Master at least 3 cards to start building sentences!
+            Add example sentences to your cards or master at least 3 cards to start!
           </p>
-          <p style={styles.emptyHint}>Use Learn Mode and mark cards as "Mastered" to unlock this feature.</p>
+          <p style={styles.emptyHint}>Edit a card and add an example sentence on the second line of the "Front" field.</p>
         </div>
       </div>
     );
@@ -292,16 +425,173 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
     );
   }
 
-  if (!currentChallenge) return null;
+  if (!currentChallenge && gameMode === 'freeform') return null;
+
+  // ── Block game render ─────────────────────────────────────────────────────
+  if (gameMode === 'block') {
+    const frontParts = blockSourceCard ? blockSourceCard.front.split('\n') : [];
+    const frontMain = frontParts[0]?.replace(/\[.*?\]/g, '').trim() || '';
+    const backMain = blockSourceCard?.back.split('\n')[0] || '';
+
+    return (
+      <div style={styles.container}>
+        <div style={styles.header}>
+          <button style={styles.backButton} onClick={onExit}>← Exit</button>
+          <h2 style={styles.headerTitle}>Sentence Builder</h2>
+          <div style={styles.modeToggleWrap}>
+            <button
+              style={{ ...styles.modeTab, ...styles.modeTabActive }}
+              onClick={() => setGameMode('block')}
+            >🧩 Block</button>
+            <button
+              style={{ ...styles.modeTab }}
+              onClick={() => setGameMode('freeform')}
+            >✍️ Free Write</button>
+          </div>
+        </div>
+
+        <div style={styles.content}>
+          {cardsWithExamples.length === 0 ? (
+            <div style={styles.emptyState}>
+              <div style={styles.emptyIcon}>📝</div>
+              <p style={styles.emptyText}>No example sentences found in this set.</p>
+              <p style={styles.emptyHint}>Add an example sentence on the second line of a card's "Front" field:<br/>e.g. <code>落ち込む[おちこむ]</code><br/><code>彼は失敗して落ち込む</code></p>
+              <button style={styles.switchModeButton} onClick={() => setGameMode('freeform')}>
+                Switch to Free Write Mode
+              </button>
+            </div>
+          ) : (
+            <div style={styles.blockGameCard}>
+              {/* Streak */}
+              {blockStreak > 0 && (
+                <div style={styles.streakBadge}>🔥 {blockStreak} in a row!</div>
+              )}
+
+              {/* Prompt: English meaning */}
+              <div style={styles.blockPromptSection}>
+                <div style={styles.blockPromptLabel}>Arrange the Japanese sentence:</div>
+                {blockSourceCard && (
+                  <div style={styles.blockHintBox}>
+                    <span style={styles.blockHintWord}>{frontMain}</span>
+                    <span style={styles.blockHintSep}> — </span>
+                    <span style={styles.blockHintMeaning}>{backMain}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Answer construction zone */}
+              <div style={styles.constructZone}>
+                {placedBlocks.length === 0 ? (
+                  <div style={styles.constructPlaceholder}>Tap blocks below to build the sentence ↓</div>
+                ) : (
+                  placedBlocks.map(token => (
+                    <button
+                      key={token.id}
+                      style={{
+                        ...styles.blockToken,
+                        ...styles.blockTokenPlaced,
+                        ...(blockResult === 'correct' ? styles.blockTokenCorrect : {}),
+                        ...(blockResult === 'wrong' ? styles.blockTokenWrong : {})
+                      }}
+                      onClick={() => handleBlockRemove(token)}
+                      disabled={blockResult !== null}
+                    >
+                      {token.text}
+                    </button>
+                  ))
+                )}
+              </div>
+
+              {/* Divider */}
+              <div style={styles.blockDivider} />
+
+              {/* Available blocks (scrambled) */}
+              <div style={styles.availableBlocks}>
+                {availableBlocks.map(token => (
+                  <button
+                    key={token.id}
+                    style={{
+                      ...styles.blockToken,
+                      ...styles.blockTokenAvailable
+                    }}
+                    onClick={() => handleBlockPlace(token)}
+                    disabled={blockResult !== null}
+                  >
+                    {token.text}
+                  </button>
+                ))}
+              </div>
+
+              {/* Feedback */}
+              {blockResult && (
+                <div style={{
+                  ...styles.blockFeedback,
+                  backgroundColor: blockResult === 'correct' ? '#d1fae5' : '#fee2e2',
+                  borderColor: blockResult === 'correct' ? '#10b981' : '#ef4444',
+                  color: blockResult === 'correct' ? '#065f46' : '#7f1d1d'
+                }}>
+                  {blockResult === 'correct' ? (
+                    <>✅ Correct! <strong>{blockTarget}</strong></>
+                  ) : (
+                    <>
+                      ❌ Not quite. The correct sentence is:<br />
+                      <strong style={{ fontSize: 18 }}>{blockTarget}</strong>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div style={styles.blockActions}>
+                {!blockResult ? (
+                  <button
+                    style={{
+                      ...styles.checkButton,
+                      opacity: placedBlocks.length === 0 || availableBlocks.length > 0 ? 0.5 : 1
+                    }}
+                    disabled={placedBlocks.length === 0 || availableBlocks.length > 0}
+                    onClick={handleBlockCheck}
+                  >
+                    ✓ Check
+                  </button>
+                ) : (
+                  <button style={styles.nextButton} onClick={handleBlockNext}>
+                    Next →
+                  </button>
+                )}
+                {!blockResult && (
+                  <button style={styles.skipButton} onClick={handleBlockNext}>
+                    Skip
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={styles.container}>
       <div style={styles.header}>
         <button style={styles.backButton} onClick={onExit}>← Exit</button>
         <h2 style={styles.headerTitle}>Sentence Builder</h2>
-        <button style={styles.historyButton} onClick={() => setShowHistory(true)}>
-          📜 History ({history.length})
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={styles.modeToggleWrap}>
+            <button
+              style={{ ...styles.modeTab }}
+              onClick={() => setGameMode('block')}
+            >🧩 Block</button>
+            <button
+              style={{ ...styles.modeTab, ...styles.modeTabActive }}
+              onClick={() => setGameMode('freeform')}
+            >✍️ Free Write</button>
+          </div>
+          <button style={styles.historyButton} onClick={() => setShowHistory(true)}>
+            📜 ({history.length})
+          </button>
+        </div>
       </div>
 
       <div style={styles.content}>
@@ -321,13 +611,13 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
 
           <div style={styles.promptSection}>
             <div style={styles.promptLabel}>Prompt:</div>
-            <div style={styles.promptText}>{currentChallenge.prompt}</div>
+            <div style={styles.promptText}>{currentChallenge?.prompt}</div>
           </div>
 
           <div style={styles.wordsSection}>
             <div style={styles.wordsLabel}>Use these words:</div>
             <div style={styles.wordsGrid}>
-              {currentChallenge.words.map((word, idx) => (
+              {currentChallenge?.words.map((word, idx) => (
                 <div key={idx} style={styles.wordBadge}>
                   <div style={styles.wordFront}>{word.front}</div>
                   <div style={styles.wordBack}>{word.back}</div>
@@ -495,12 +785,11 @@ const styles: { [key: string]: CSSProperties } = {
     backgroundColor: '#f1f5f9',
     border: '1px solid #e2e8f0',
     borderRadius: '8px',
-    padding: '8px 16px',
-    fontSize: '14px',
+    padding: '8px 12px',
+    fontSize: '13px',
     fontWeight: 600,
     cursor: 'pointer',
-    color: '#475569',
-    minWidth: '120px'
+    color: '#475569'
   },
   resumePromptContainer: {
     flex: 1,
@@ -973,7 +1262,186 @@ const styles: { [key: string]: CSSProperties } = {
   },
   emptyHint: {
     fontSize: '14px',
+    color: '#94a3b8',
+    marginBottom: '16px'
+  },
+  switchModeButton: {
+    marginTop: '16px',
+    padding: '12px 24px',
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '10px',
+    fontSize: '15px',
+    fontWeight: 600,
+    cursor: 'pointer'
+  },
+
+  // ── Mode toggle ──────────────────────────────────────────────────────────
+  modeToggleWrap: {
+    display: 'flex',
+    backgroundColor: '#f1f5f9',
+    borderRadius: '8px',
+    padding: '2px',
+    gap: '2px'
+  },
+  modeTab: {
+    border: 'none',
+    borderRadius: '6px',
+    padding: '6px 12px',
+    fontSize: '13px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    backgroundColor: 'transparent',
+    color: '#64748b'
+  },
+  modeTabActive: {
+    backgroundColor: '#fff',
+    color: '#0f172a',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.12)'
+  },
+
+  // ── Block game ─────────────────────────────────────────────────────────────
+  blockGameCard: {
+    backgroundColor: '#fff',
+    borderRadius: '20px',
+    padding: '28px 24px',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px'
+  },
+  streakBadge: {
+    display: 'inline-flex',
+    alignSelf: 'flex-start',
+    backgroundColor: '#fef3c7',
+    color: '#92400e',
+    fontSize: '13px',
+    fontWeight: 700,
+    padding: '4px 12px',
+    borderRadius: '20px'
+  },
+  blockPromptSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px'
+  },
+  blockPromptLabel: {
+    fontSize: '14px',
+    color: '#64748b',
+    fontWeight: 600,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px'
+  },
+  blockHintBox: {
+    backgroundColor: '#eff6ff',
+    borderRadius: '10px',
+    padding: '12px 16px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap' as const
+  },
+  blockHintWord: {
+    fontSize: '22px',
+    fontWeight: 700,
+    color: '#1e40af'
+  },
+  blockHintSep: {
     color: '#94a3b8'
+  },
+  blockHintMeaning: {
+    fontSize: '16px',
+    color: '#3b82f6'
+  },
+  constructZone: {
+    minHeight: '60px',
+    backgroundColor: '#f8fafc',
+    border: '2px dashed #cbd5e1',
+    borderRadius: '12px',
+    padding: '12px',
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: '8px',
+    alignItems: 'center'
+  },
+  constructPlaceholder: {
+    color: '#94a3b8',
+    fontSize: '14px',
+    fontStyle: 'italic' as const
+  },
+  blockDivider: {
+    height: '1px',
+    backgroundColor: '#e2e8f0'
+  },
+  availableBlocks: {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: '8px',
+    minHeight: '48px'
+  },
+  blockToken: {
+    border: 'none',
+    borderRadius: '8px',
+    padding: '10px 16px',
+    fontSize: '16px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'transform 0.1s, opacity 0.1s',
+    lineHeight: 1.2
+  },
+  blockTokenAvailable: {
+    backgroundColor: '#fff',
+    color: '#0f172a',
+    boxShadow: '0 2px 6px rgba(0,0,0,0.12)',
+    border: '2px solid #e2e8f0'
+  },
+  blockTokenPlaced: {
+    backgroundColor: '#dbeafe',
+    color: '#1e40af',
+    border: '2px solid #3b82f6'
+  },
+  blockTokenCorrect: {
+    backgroundColor: '#d1fae5',
+    color: '#065f46',
+    border: '2px solid #10b981'
+  },
+  blockTokenWrong: {
+    backgroundColor: '#fee2e2',
+    color: '#7f1d1d',
+    border: '2px solid #ef4444'
+  },
+  blockFeedback: {
+    padding: '14px 16px',
+    borderRadius: '10px',
+    border: '2px solid',
+    fontSize: '15px',
+    lineHeight: 1.6
+  },
+  blockActions: {
+    display: 'flex',
+    gap: '10px'
+  },
+  checkButton: {
+    flex: 1,
+    backgroundColor: '#3b82f6',
+    color: 'white',
+    border: 'none',
+    borderRadius: '10px',
+    padding: '14px',
+    fontSize: '16px',
+    fontWeight: 700,
+    cursor: 'pointer'
+  },
+  skipButton: {
+    backgroundColor: '#f1f5f9',
+    color: '#64748b',
+    border: 'none',
+    borderRadius: '10px',
+    padding: '14px 20px',
+    fontSize: '15px',
+    fontWeight: 600,
+    cursor: 'pointer'
   }
 };
 

@@ -20,6 +20,7 @@ interface HomeProps {
   onNavigateToSentenceBuilder: (setId: string) => void;
   onNavigateToSpeechPractice: (setId: string) => void;
   onNavigateToDailyWriting: (setId: string) => void;
+  onNavigateToBrowseCards: (setId: string) => void;
   onLogout: () => void;
 }
 
@@ -37,6 +38,7 @@ const Home: React.FC<HomeProps> = ({
   onNavigateToSentenceBuilder,
   onNavigateToSpeechPractice,
   onNavigateToDailyWriting,
+  onNavigateToBrowseCards,
   onLogout
 }) => {
   const [sets, setSets] = useState<FlashcardSet[]>([]);
@@ -352,6 +354,9 @@ const Home: React.FC<HomeProps> = ({
             </div>
 
             <div style={styles.studyButtons}>
+              <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn Mode</button>
+              <button style={styles.reviewButton} onClick={() => onNavigateToSwipe(set.id)}>💬 Review</button>
+              <button style={styles.browseButton} onClick={() => onNavigateToBrowseCards(set.id)}>📖 Browse</button>
               <button style={styles.flashcardsButton} onClick={() => onNavigateToSwipe(set.id)}>📖 Flashcards</button>
               <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn</button>
               <button style={styles.matchButton} onClick={() => onNavigateToMatch(set.id)}>🎮 Match</button>
@@ -680,9 +685,11 @@ const styles: { [key: string]: CSSProperties } = {
   progressText: { fontSize: '14px', color: '#22c55e', fontWeight: 600 },
   progressBarContainer: { width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden', marginBottom: '16px' },
   progressBar: { height: '100%', backgroundColor: '#22c55e', transition: 'width 0.3s' },
-  studyButtons: { display: 'flex', gap: '6px', marginBottom: '12px' },
+  studyButtons: { display: 'flex', gap: '8px', marginBottom: '12px' },
+  learnButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  reviewButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  browseButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', borderRadius: '8px', cursor: 'pointer' },
   flashcardsButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer' },
-  learnButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
   matchButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#8b5cf6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
   activeLearningSection: { borderTop: '1px solid #e2e8f0', paddingTop: '12px' },
   expandButton: { width: '100%', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569' },

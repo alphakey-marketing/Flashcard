@@ -1,3 +1,4 @@
+import React, { useState, useEffect, CSSProperties, useCallback, useMemo, useRef } from 'react';
 import React, { useState, useRef, useEffect, CSSProperties, useCallback, useMemo } from 'react';
 import { getSet, getAllSets, FlashcardSet, Card } from '../lib/storage';
 import { audioService } from '../lib/audioService';
@@ -37,15 +38,20 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [savedSession, setSavedSession] = useState<SavedSwipeSession | null>(null);
 
-  // Touch swipe state
-  const touchStartX = useRef<number>(0);
-  const touchStartY = useRef<number>(0);
+  // Touch / swipe state
+  const cardRef = useRef<HTMLDivElement>(null);
+  const touchStartX = useRef(0);
+  const touchStartY = useRef(0);
+  const swipeDeltaXRef = useRef(0);
   const [swipeDeltaX, setSwipeDeltaX] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
-  // Tracks whether a swipe was completed on touchend so the subsequent click doesn't flip the card
-  const swipeOccurredRef = useRef(false);
-  // Ref to the card element for attaching non-passive touchmove listener
-  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Stable refs to avoid stale closures in touch handlers
+  const isFlippedRef = useRef(isFlipped);
+  const handleReviewRef = useRef<(r: ReviewRating) => void>(() => {});
+  const handleFlipCardRef = useRef<() => void>(() => {});
+
+  useEffect(() => { isFlippedRef.current = isFlipped; }, [isFlipped]);
 
   const loadSavedSession = (): SavedSwipeSession | null => {
     try {
@@ -552,6 +558,73 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     setSessionStats({ reviewed: 0, knowIt: 0, mastered: 0 });
   }, [set, studyMode, loadQueue]);
 
+  // Keep stable refs up-to-date every render (avoids stale closures in touch handlers)
+  useEffect(() => {
+    handleReviewRef.current = handleReview;
+    handleFlipCardRef.current = handleFlipCard;
+  });
+
+  // Non-passive touch handlers on the card element to stop page-level scrolling during horizontal swipe
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      touchStartX.current = e.touches[0].clientX;
+      touchStartY.current = e.touches[0].clientY;
+      swipeDeltaXRef.current = 0;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      const dx = e.touches[0].clientX - touchStartX.current;
+      const dy = e.touches[0].clientY - touchStartY.current;
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+        e.preventDefault(); // stop page scroll
+        swipeDeltaXRef.current = dx;
+        setSwipeDeltaX(dx);
+        setIsSwiping(true);
+      }
+    };
+
+    const onTouchEnd = () => {
+      const delta = swipeDeltaXRef.current;
+      const THRESHOLD = 80;
+      if (Math.abs(delta) > THRESHOLD) {
+        if (delta > 0) {
+          // Swipe right → Got it (Know It when flipped, flip when not)
+          if (isFlippedRef.current) {
+            handleReviewRef.current('know_it');
+          } else {
+            handleFlipCardRef.current();
+          }
+        } else {
+          // Swipe left → Forgot (Again when flipped, flip when not)
+          if (isFlippedRef.current) {
+            handleReviewRef.current('again');
+          } else {
+            handleFlipCardRef.current();
+          }
+        }
+      }
+      swipeDeltaXRef.current = 0;
+      setSwipeDeltaX(0);
+      setIsSwiping(false);
+    };
+
+    card.addEventListener('touchstart', onTouchStart, { passive: true });
+    card.addEventListener('touchmove', onTouchMove, { passive: false });
+    card.addEventListener('touchend', onTouchEnd, { passive: true });
+    return () => {
+      card.removeEventListener('touchstart', onTouchStart);
+      card.removeEventListener('touchmove', onTouchMove);
+      card.removeEventListener('touchend', onTouchEnd);
+    };
+  // cardRef.current is the card DOM node, which stays stable for the lifetime of the
+  // session view (the card div is always rendered in the main return path).
+  // All handler values are accessed through stable refs that are kept current each render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const dueModeButtonStyle = useMemo(() => ({
     ...styles.modeButton,
     backgroundColor: studyMode === 'due' ? '#3b82f6' : '#f1f5f9',
@@ -749,37 +822,34 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       </div>
 
       <div style={styles.cardContainer}>
+        {/* Swipe direction hints */}
+        <div style={styles.swipeHints}>
+          <span style={{
+            ...styles.swipeHintLeft,
+            opacity: swipeDeltaX < -20 ? Math.min(1, Math.abs(swipeDeltaX) / 100) : 0.25
+          }}>
+            👈 Forgot
+          </span>
+          <span style={{
+            ...styles.swipeHintRight,
+            opacity: swipeDeltaX > 20 ? Math.min(1, swipeDeltaX / 100) : 0.25
+          }}>
+            Got it 👉
+          </span>
+        </div>
+
         <div
           ref={cardRef}
           style={{
             ...styles.flashcard,
-            position: 'relative',
-            transform: isSwiping ? `translateX(${swipeDeltaX}px) rotate(${swipeDeltaX * 0.05}deg)` : 'none',
-            borderColor: isSwiping && isFlipped
-              ? swipeDeltaX > SWIPE_THRESHOLD ? '#22c55e'
-                : swipeDeltaX < -SWIPE_THRESHOLD ? '#ef4444'
-                : '#e2e8f0'
-              : '#e2e8f0',
-            transition: isSwiping ? 'none' : 'transform 0.2s, border-color 0.2s',
+            transform: isSwiping
+              ? `translateX(${swipeDeltaX}px) rotate(${swipeDeltaX * 0.04}deg)`
+              : 'none',
+            transition: isSwiping ? 'none' : 'transform 0.3s ease',
+            borderColor: swipeDeltaX > 40 ? '#22c55e' : swipeDeltaX < -40 ? '#ef4444' : '#e2e8f0',
           }}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-          onClick={() => {
-            if (swipeOccurredRef.current) {
-              swipeOccurredRef.current = false;
-              return;
-            }
-            handleFlipCard();
-          }}
+          onClick={handleFlipCard}
         >
-          {/* Swipe overlays */}
-          {isSwiping && isFlipped && swipeDeltaX > SWIPE_THRESHOLD && (
-            <div style={styles.swipeOverlayRight}>✅</div>
-          )}
-          {isSwiping && isFlipped && swipeDeltaX < -SWIPE_THRESHOLD && (
-            <div style={styles.swipeOverlayLeft}>❌</div>
-          )}
           <div style={styles.cardContent}>
             {!isFlipped ? (
               <>
@@ -883,6 +953,26 @@ const styles: { [key: string]: CSSProperties } = {
   reverseModeText: { fontSize: '11px' },
   progressBarContainer: { height: '3px', backgroundColor: '#e2e8f0', width: '100%' },
   progressBar: { height: '100%', backgroundColor: '#3b82f6', transition: 'width 0.3s' },
+  swipeHints: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    width: '100%',
+    maxWidth: '500px',
+    padding: '0 8px',
+    marginBottom: '4px'
+  },
+  swipeHintLeft: {
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#ef4444',
+    transition: 'opacity 0.1s'
+  },
+  swipeHintRight: {
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#22c55e',
+    transition: 'opacity 0.1s'
+  },
   cardContainer: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '12px 16px', gap: '12px' },
   flashcard: { width: '100%', maxWidth: '500px', minHeight: '200px', backgroundColor: '#fff', borderRadius: '16px', boxShadow: '0 4px 16px rgba(0,0,0,0.08)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', transition: 'transform 0.2s', border: '2px solid #e2e8f0', userSelect: 'none' },
   cardContent: { textAlign: 'center', width: '100%' },

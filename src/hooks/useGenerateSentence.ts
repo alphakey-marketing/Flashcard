@@ -4,6 +4,8 @@ import { useState } from 'react';
 export interface GeneratedCard {
   front: string;  // reading + "\n\n" + japaneseSentence
   back: string;   // meaning + "\n\n" + englishTranslation
+  reading?: string; // raw reading string returned by Jisho (e.g. "食べる[たべる]")
+  meaning?: string; // raw meaning string returned by Jisho (e.g. "to eat, to consume")
 }
 
 export function useGenerateSentence() {
@@ -38,7 +40,7 @@ export function useGenerateSentence() {
         return null;
       }
 
-      return { front: data.front, back: data.back };
+      return { front: data.front, back: data.back, reading: data.reading, meaning: data.meaning };
 
     } catch (err) {
       // fetch() itself throws only for true network-level failures (offline,
