@@ -711,6 +711,9 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
             {currentIndex + 1} / {questions.length}
           </span>
         </div>
+        <div style={styles.scoreChip}>
+          ✓ {correctCount}
+        </div>
       </div>
 
       {/* Progress bar */}
@@ -979,6 +982,16 @@ const styles: { [key: string]: CSSProperties } = {
     color: '#0f172a'
   },
   progressText: {},
+  scoreChip: {
+    fontSize: '14px',
+    fontWeight: 700,
+    color: '#10b981',
+    backgroundColor: '#d1fae5',
+    padding: '4px 12px',
+    borderRadius: '20px',
+    minWidth: '60px',
+    textAlign: 'center' as const
+  },
   progressBarContainer: {
     maxWidth: '800px',
     margin: '0 auto 32px',

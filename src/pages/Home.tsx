@@ -19,6 +19,7 @@ interface HomeProps {
   onNavigateToSentenceBuilder: (setId: string) => void;
   onNavigateToSpeechPractice: (setId: string) => void;
   onNavigateToDailyWriting: (setId: string) => void;
+  onNavigateToBrowseCards: (setId: string) => void;
   onLogout: () => void;
 }
 
@@ -35,6 +36,7 @@ const Home: React.FC<HomeProps> = ({
   onNavigateToSentenceBuilder,
   onNavigateToSpeechPractice,
   onNavigateToDailyWriting,
+  onNavigateToBrowseCards,
   onLogout
 }) => {
   const [sets, setSets] = useState<FlashcardSet[]>([]);
@@ -345,6 +347,7 @@ const Home: React.FC<HomeProps> = ({
             <div style={styles.studyButtons}>
               <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn Mode</button>
               <button style={styles.reviewButton} onClick={() => onNavigateToSwipe(set.id)}>💬 Review</button>
+              <button style={styles.browseButton} onClick={() => onNavigateToBrowseCards(set.id)}>📖 Browse</button>
             </div>
 
             <div style={styles.activeLearningSection}>
@@ -639,6 +642,7 @@ const styles: { [key: string]: CSSProperties } = {
   studyButtons: { display: 'flex', gap: '8px', marginBottom: '12px' },
   learnButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
   reviewButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  browseButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', borderRadius: '8px', cursor: 'pointer' },
   activeLearningSection: { borderTop: '1px solid #e2e8f0', paddingTop: '12px' },
   expandButton: { width: '100%', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569' },
   expandIcon: { fontSize: '16px' },

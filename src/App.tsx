@@ -9,13 +9,14 @@ import LearnMode from './pages/LearnMode';
 import SentenceBuilder from './pages/SentenceBuilder';
 import SpeechPractice from './pages/SpeechPractice';
 import DailyWriting from './pages/DailyWriting';
+import BrowseCards from './pages/BrowseCards';
 import ErrorBoundary from './components/ErrorBoundary';
 import { supabase } from './lib/supabaseClient';
 import { SyncManager, type SyncProgress } from './lib/sync/syncManager';
 import { getSet, setStorageAuthState } from './lib/storage';
 import { setReviewUserId } from './lib/spacedRepetition';
 
-type Page = 'home' | 'create' | 'edit-set' | 'swipe' | 'stats' | 'learn' | 'sentence-builder' | 'speech-practice' | 'daily-writing';
+type Page = 'home' | 'create' | 'edit-set' | 'swipe' | 'stats' | 'learn' | 'sentence-builder' | 'speech-practice' | 'daily-writing' | 'browse-cards';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -137,6 +138,7 @@ const App: React.FC = () => {
   const navigateToSentenceBuilder = (setId: string) => { setSelectedSetId(setId); setCurrentPage('sentence-builder'); };
   const navigateToSpeechPractice = (setId: string) => { setSelectedSetId(setId); setCurrentPage('speech-practice'); };
   const navigateToDailyWriting = (setId: string) => { setSelectedSetId(setId); setCurrentPage('daily-writing'); };
+  const navigateToBrowseCards = (setId: string) => { setSelectedSetId(setId); setCurrentPage('browse-cards'); };
 
   if (isLoadingSession) {
     return (
@@ -242,6 +244,7 @@ const App: React.FC = () => {
             onNavigateToSentenceBuilder={navigateToSentenceBuilder}
             onNavigateToSpeechPractice={navigateToSpeechPractice}
             onNavigateToDailyWriting={navigateToDailyWriting}
+            onNavigateToBrowseCards={navigateToBrowseCards}
             onLogout={handleLogout}
           />
         )}
@@ -281,6 +284,9 @@ const App: React.FC = () => {
         )}
         {currentPage === 'stats' && (
           <Stats onNavigateToHome={navigateToHome} />
+        )}
+        {currentPage === 'browse-cards' && selectedSetId && (
+          <BrowseCards set={getSet(selectedSetId)!} onExit={navigateToHome} />
         )}
       </div>
     </ErrorBoundary>
