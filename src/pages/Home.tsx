@@ -96,21 +96,14 @@ const Home: React.FC<HomeProps> = ({
     }
   };
 
-  /**
-   * Compare local deck IDs against cloud deck IDs.
-   * Both sides now use raw local IDs, so comparison is a direct string match.
-   * A deck is "unsynced" if its ID does not appear in the cloud.
-   */
   const checkUnsyncedDecks = async () => {
     try {
       const localDecks = getAllSets();
       const cloudDecks = await CloudSync.pullDecks();
       const cloudIds = new Set(cloudDecks.map(d => d.id));
-
       const unsynced = new Set(
         localDecks.filter(d => !cloudIds.has(d.id)).map(d => d.id)
       );
-
       console.log(`🔍 Unsynced: ${unsynced.size} / ${localDecks.length} decks`);
       setUnsyncedDeckIds(unsynced);
     } catch (err) {
@@ -126,34 +119,26 @@ const Home: React.FC<HomeProps> = ({
     setTodayStats({ totalCards: today.totalCards, totalDuration: today.totalDuration });
   };
 
-  /**
-   * Manual sync: push all unsynced local decks to cloud, then re-check.
-   */
   const handleManualSync = async () => {
     if (!userId) {
       alert('Please log in to sync your data');
       return;
     }
-
     setIsSyncing(true);
     try {
       const localDecks = getAllSets();
       const cloudDecks = await CloudSync.pullDecks();
       const cloudIds = new Set(cloudDecks.map(d => d.id));
       const toSync = localDecks.filter(d => !cloudIds.has(d.id));
-
       if (toSync.length === 0) {
         alert('✅ All decks are already synced!');
         setUnsyncedDeckIds(new Set());
         return;
       }
-
       console.log(`📤 Syncing ${toSync.length} deck(s)...`);
       const results = await Promise.allSettled(toSync.map(d => CloudSync.pushDeck(d)));
-
       const succeeded = results.filter(r => r.status === 'fulfilled').length;
       const failed = results.filter(r => r.status === 'rejected') as PromiseRejectedResult[];
-
       if (failed.length > 0) {
         alert(`⚠️ Partially synced: ${succeeded}/${toSync.length} succeeded.\n\n${failed.map(f => f.reason?.message).join('\n')}`);
       } else {
@@ -163,12 +148,10 @@ const Home: React.FC<HomeProps> = ({
       alert(`❌ Sync failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsSyncing(false);
-      // Always re-check after sync attempt so the banner state is accurate
       await checkUnsyncedDecks();
     }
   };
 
-  // ✅ FIXED: now async and uses SyncManager.deleteDeck for cloud soft-delete
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     if (window.confirm('Are you sure you want to delete this flashcard set?')) {
@@ -354,11 +337,9 @@ const Home: React.FC<HomeProps> = ({
             </div>
 
             <div style={styles.studyButtons}>
-              <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn Mode</button>
+              <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn</button>
               <button style={styles.reviewButton} onClick={() => onNavigateToSwipe(set.id)}>💬 Review</button>
               <button style={styles.browseButton} onClick={() => onNavigateToBrowseCards(set.id)}>📖 Browse</button>
-              <button style={styles.flashcardsButton} onClick={() => onNavigateToSwipe(set.id)}>📖 Flashcards</button>
-              <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn</button>
               <button style={styles.matchButton} onClick={() => onNavigateToMatch(set.id)}>🎮 Match</button>
             </div>
 
@@ -445,7 +426,6 @@ const Home: React.FC<HomeProps> = ({
         </div>
       )}
 
-      {/* Start Today's Review — prominent CTA at the top */}
       <div style={styles.startReviewBanner}>
         <div style={styles.startReviewInfo}>
           <span style={styles.startReviewIcon}>📖</span>
@@ -538,7 +518,6 @@ const Home: React.FC<HomeProps> = ({
         </div>
       ) : (
         <>
-          {/* Source filter */}
           <div style={styles.sourceFilterContainer}>
             <input
               type="text"
@@ -561,7 +540,6 @@ const Home: React.FC<HomeProps> = ({
               },
               { totalCards: 0, dueCards: 0, masteredCards: 0 }
             );
-
             return (
               <div key={category} style={styles.categorySection}>
                 <div style={styles.categoryHeaderContainer} onClick={() => !selectionMode && toggleCategoryCollapse(category)}>
@@ -578,7 +556,6 @@ const Home: React.FC<HomeProps> = ({
                     </div>
                   )}
                 </div>
-
                 {(!isCollapsed || selectionMode) && (
                   <div style={styles.grid}>
                     {groupedSets[category].map(set => renderSetCard(set))}
@@ -689,7 +666,6 @@ const styles: { [key: string]: CSSProperties } = {
   learnButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
   reviewButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer' },
   browseButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 600, backgroundColor: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', borderRadius: '8px', cursor: 'pointer' },
-  flashcardsButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer' },
   matchButton: { flex: 1, padding: '10px 8px', fontSize: '12px', fontWeight: 600, backgroundColor: '#8b5cf6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' },
   activeLearningSection: { borderTop: '1px solid #e2e8f0', paddingTop: '12px' },
   expandButton: { width: '100%', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569' },
