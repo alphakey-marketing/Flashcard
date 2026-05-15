@@ -1,5 +1,4 @@
 import React, { useState, useEffect, CSSProperties, useCallback, useMemo, useRef } from 'react';
-import React, { useState, useRef, useEffect, CSSProperties, useCallback, useMemo } from 'react';
 import { getSet, getAllSets, FlashcardSet, Card } from '../lib/storage';
 import { audioService } from '../lib/audioService';
 import { recordSession } from '../lib/studyStats';
@@ -43,6 +42,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
   const swipeDeltaXRef = useRef(0);
+  const swipeOccurredRef = useRef(false);
   const [swipeDeltaX, setSwipeDeltaX] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
 
