@@ -236,7 +236,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     setSelectedOption(null);
   };
 
-  const generateQuestion = (card: Flashcard, round: Round, reversed: boolean = isReversed): Question => {
+  const generateQuestion = (card: Flashcard, round: Round, reversed: boolean): Question => {
     const type: QuestionType = round === 1 ? 'multiple-choice' : 'type-in';
     const question: Question = { card, type, round };
     if (type === 'multiple-choice') {
@@ -284,7 +284,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
 
     if (correct && current.round < 3) {
       const nextRound = (current.round + 1) as Round;
-      const nextQ = generateQuestion(currentQuestion.card, nextRound);
+      const nextQ = generateQuestion(currentQuestion.card, nextRound, isReversed);
       const insertAt = 3 + Math.floor(Math.random() * 3);
       setQuestions(qs => {
         const rest = [...qs.slice(currentIndex + 1)];
@@ -299,7 +299,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       setClearedCount(c => c + 1);
     } else {
       saveCardReview(set.id, cardId, 'again');
-      const resetQ = generateQuestion(currentQuestion.card, 1);
+      const resetQ = generateQuestion(currentQuestion.card, 1, isReversed);
       const insertAt = 2 + Math.floor(Math.random() * 2);
       setQuestions(qs => {
         const rest = [...qs.slice(currentIndex + 1)];
@@ -750,7 +750,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
               style={styles.typeInInput}
               value={userAnswer}
               onChange={(e) => setUserAnswer(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !showAnswer && handleTypeInSubmit()}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !showAnswer) handleTypeInSubmit(); }}
               placeholder={isReversed ? 'Type Japanese...' : 'Type English meaning...'}
               disabled={showAnswer}
               autoFocus
