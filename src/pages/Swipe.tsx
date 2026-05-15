@@ -551,7 +551,11 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       card.removeEventListener('touchmove', onTouchMove);
       card.removeEventListener('touchend', onTouchEnd);
     };
-  }, []); // empty deps — refs keep values current
+  // cardRef.current is the card DOM node, which stays stable for the lifetime of the
+  // session view (the card div is always rendered in the main return path).
+  // All handler values are accessed through stable refs that are kept current each render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const dueModeButtonStyle = useMemo(() => ({
     ...styles.modeButton,

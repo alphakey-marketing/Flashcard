@@ -171,8 +171,11 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
       checkForExistingChallenge();
       loadHistory();
     }
+  // `set.id` included so challenges reload when the active set changes.
+  // `loadBlockChallenge` / `checkForExistingChallenge` / `loadHistory` are
+  // inline helpers that close over the current set; they are stable for a given set.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameMode]);
+  }, [gameMode, set.id]);
 
   // ── Block-game handlers ────────────────────────────────────────────────────
 
@@ -452,7 +455,7 @@ const SentenceBuilder: React.FC<SentenceBuilderProps> = ({ set, onExit }) => {
             <div style={styles.emptyState}>
               <div style={styles.emptyIcon}>📝</div>
               <p style={styles.emptyText}>No example sentences found in this set.</p>
-              <p style={styles.emptyHint}>Add an example sentence on the second line of a card's "Front" field, e.g. 落ち込む[おちこむ]{"\n"}彼は失敗して落ち込む</p>
+              <p style={styles.emptyHint}>Add an example sentence on the second line of a card's "Front" field:<br/>e.g. <code>落ち込む[おちこむ]</code><br/><code>彼は失敗して落ち込む</code></p>
               <button style={styles.switchModeButton} onClick={() => setGameMode('freeform')}>
                 Switch to Free Write Mode
               </button>
