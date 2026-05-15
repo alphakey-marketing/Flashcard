@@ -14,6 +14,7 @@ export interface Card {
   front: string;
   back: string;
   example?: string;
+  source?: string;
 }
 
 export type Flashcard = Card;
@@ -34,6 +35,7 @@ export interface CardDraft {
   front: string;
   back: string;
   example?: string;
+  source?: string;
 }
 
 const INIT_FLAG_KEY = 'flashmind-initialized';
@@ -96,7 +98,8 @@ function initializeTemplates(): void {
 // READ operations
 export function getAllSets(): FlashcardSet[] {
   initializeTemplates();
-  return LocalStorageSync.loadDecks();
+  // Filter out the synthetic 'due-today' pseudo-deck if it was ever accidentally persisted
+  return LocalStorageSync.loadDecks().filter(s => s.id !== 'due-today');
 }
 
 export function getSet(id: string): FlashcardSet | undefined {
@@ -138,7 +141,8 @@ export function createNewSet(
       id: card.id || crypto.randomUUID(),
       front: card.front,
       back: card.back,
-      example: card.example
+      example: card.example,
+      ...(card.source ? { source: card.source } : {})
     })),
     tags: tags || [],
     jlptLevel,
