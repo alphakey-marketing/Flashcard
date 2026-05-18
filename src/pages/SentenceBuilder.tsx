@@ -18,10 +18,13 @@ interface SentenceBuilderProps {
 
 // ─── Block-game helpers ─────────────────────────────────────────────────────
 
-/** Extract the example sentence from a card (second line of front, or legacy example field). */
+/** Extract the example sentence from a card (second non-empty line of front, or legacy example field). */
 function getCardExample(card: Card): string {
   const lines = card.front.split('\n');
-  if (lines.length > 1 && lines[1].trim()) return lines[1].trim();
+  // Skip blank lines after the first word line (e.g. "word\n\nexample" format)
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim()) return lines[i].trim();
+  }
   return (card.example || '').trim();
 }
 

@@ -50,6 +50,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const isFlippedRef = useRef(isFlipped);
   const handleReviewRef = useRef<(r: ReviewRating) => void>(() => {});
   const handleFlipCardRef = useRef<() => void>(() => {});
+  const lastSwipeTimeRef = useRef(0); // tracks when last swipe/drag occurred to suppress post-swipe click
 
   useEffect(() => { isFlippedRef.current = isFlipped; }, [isFlipped]);
 
@@ -446,6 +447,8 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   }, [currentCard, set, activeQueue, sessionStartTime, totalCards, hasUserInteracted]);
 
   const handleFlipCard = useCallback(() => {
+    // Suppress click that fires after a touch drag/swipe
+    if (Date.now() - lastSwipeTimeRef.current < 400) return;
     if (!hasUserInteracted) {
       setHasUserInteracted(true);
     }
@@ -590,21 +593,18 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       const delta = swipeDeltaXRef.current;
       const THRESHOLD = 80;
       if (Math.abs(delta) > THRESHOLD) {
+        // Swipe always rates the card regardless of flip state
+        lastSwipeTimeRef.current = Date.now();
         if (delta > 0) {
-          // Swipe right → Got it (Know It when flipped, flip when not)
-          if (isFlippedRef.current) {
-            handleReviewRef.current('know_it');
-          } else {
-            handleFlipCardRef.current();
-          }
+          // Swipe right → Got it
+          handleReviewRef.current('know_it');
         } else {
-          // Swipe left → Forgot (Again when flipped, flip when not)
-          if (isFlippedRef.current) {
-            handleReviewRef.current('again');
-          } else {
-            handleFlipCardRef.current();
-          }
+          // Swipe left → Forgot
+          handleReviewRef.current('again');
         }
+      } else if (Math.abs(delta) > 15) {
+        // Partial drag — suppress the post-touch click so card doesn't accidentally flip
+        lastSwipeTimeRef.current = Date.now();
       }
       swipeDeltaXRef.current = 0;
       setSwipeDeltaX(0);
@@ -826,13 +826,13 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
         <div style={styles.swipeHints}>
           <span style={{
             ...styles.swipeHintLeft,
-            opacity: swipeDeltaX < -20 ? Math.min(1, Math.abs(swipeDeltaX) / 100) : 0.25
+            opacity: swipeDeltaX < -20 ? Math.min(1, Math.abs(swipeDeltaX) / 100) : 0.3
           }}>
             👈 Forgot
           </span>
           <span style={{
             ...styles.swipeHintRight,
-            opacity: swipeDeltaX > 20 ? Math.min(1, swipeDeltaX / 100) : 0.25
+            opacity: swipeDeltaX > 20 ? Math.min(1, swipeDeltaX / 100) : 0.3
           }}>
             Got it 👉
           </span>
@@ -856,14 +856,14 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
                 <div style={styles.cardLabel}>FRONT</div>
                 {renderCardText(getCurrentFront())}
                 <button style={styles.speakerButton} onClick={handlePlayAudio}>🔊 Listen</button>
-                <div style={styles.tapHint}>👆 Tap to flip (or press Space)</div>
+                <div style={styles.tapHint}>👆 Tap to see answer · Swipe left/right to rate</div>
               </>
             ) : (
               <>
                 <div style={styles.cardLabel}>BACK</div>
                 {renderCardText(getCurrentBack(), true)}
                 <button style={styles.speakerButton} onClick={handlePlayAudio}>🔊 Listen</button>
-                <div style={styles.tapHint}>← Swipe left = Forgot · Swipe right → = Got it!</div>
+                <div style={styles.tapHint}>👆 Tap to flip · ← Forgot | Got it →</div>
               </>
             )}
           </div>
