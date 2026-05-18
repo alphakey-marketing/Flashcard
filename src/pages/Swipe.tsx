@@ -448,7 +448,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
   const handleFlipCard = useCallback(() => {
     // Suppress click that fires after a touch drag/swipe
-    if (Date.now() - lastSwipeTimeRef.current < 400) return;
+    if (Date.now() - lastSwipeTimeRef.current < SWIPE_DEBOUNCE_MS) return;
     if (!hasUserInteracted) {
       setHasUserInteracted(true);
     }
@@ -456,6 +456,8 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   }, [hasUserInteracted]);
 
   const SWIPE_THRESHOLD = 80;
+  const PARTIAL_DRAG_THRESHOLD = 15; // minimum movement to suppress post-touch click
+  const SWIPE_DEBOUNCE_MS = 400;     // suppress click for this long after a swipe/drag
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
@@ -591,8 +593,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
     const onTouchEnd = () => {
       const delta = swipeDeltaXRef.current;
-      const THRESHOLD = 80;
-      if (Math.abs(delta) > THRESHOLD) {
+      if (Math.abs(delta) > SWIPE_THRESHOLD) {
         // Swipe always rates the card regardless of flip state
         lastSwipeTimeRef.current = Date.now();
         if (delta > 0) {
@@ -602,7 +603,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           // Swipe left → Forgot
           handleReviewRef.current('again');
         }
-      } else if (Math.abs(delta) > 15) {
+      } else if (Math.abs(delta) > PARTIAL_DRAG_THRESHOLD) {
         // Partial drag — suppress the post-touch click so card doesn't accidentally flip
         lastSwipeTimeRef.current = Date.now();
       }
