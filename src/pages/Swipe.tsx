@@ -42,7 +42,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
   const swipeDeltaXRef = useRef(0);
-  const swipeOccurredRef = useRef(false);
   const [swipeDeltaX, setSwipeDeltaX] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
 
@@ -459,57 +458,6 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
   const PARTIAL_DRAG_THRESHOLD = 15; // minimum movement to suppress post-touch click
   const SWIPE_DEBOUNCE_MS = 400;     // suppress click for this long after a swipe/drag
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX;
-    touchStartY.current = e.touches[0].clientY;
-    swipeOccurredRef.current = false;
-    setSwipeDeltaX(0);
-    setIsSwiping(false);
-  }, []);
-
-  const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    const dx = e.touches[0].clientX - touchStartX.current;
-    const dy = e.touches[0].clientY - touchStartY.current;
-    // Only track as horizontal swipe if horizontal movement dominates
-    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
-      setIsSwiping(true);
-      setSwipeDeltaX(dx);
-      // Note: e.preventDefault() must be called from the native listener (see useEffect below)
-    }
-  }, []);
-
-  // Attach a non-passive touchmove listener so we can call preventDefault() to block
-  // page scroll while the user is performing a horizontal card swipe.
-  useEffect(() => {
-    const el = cardRef.current;
-    if (!el) return;
-    const handleNativeTouchMove = (e: TouchEvent) => {
-      const dx = e.touches[0].clientX - touchStartX.current;
-      const dy = e.touches[0].clientY - touchStartY.current;
-      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
-        e.preventDefault();
-      }
-    };
-    el.addEventListener('touchmove', handleNativeTouchMove, { passive: false });
-    return () => el.removeEventListener('touchmove', handleNativeTouchMove);
-  }, []);
-
-  const handleTouchEnd = useCallback(() => {
-    if (isSwiping && isFlipped) {
-      if (swipeDeltaX > SWIPE_THRESHOLD) {
-        swipeOccurredRef.current = true;
-        handleReview('mastered');
-      } else if (swipeDeltaX < -SWIPE_THRESHOLD) {
-        swipeOccurredRef.current = true;
-        handleReview('again');
-      }
-    } else if (isSwiping && !isFlipped && Math.abs(swipeDeltaX) > SWIPE_THRESHOLD) {
-      // Mark swipe as occurred so the click handler doesn't also flip
-      swipeOccurredRef.current = true;
-    }
-    setSwipeDeltaX(0);
-    setIsSwiping(false);
-  }, [isSwiping, isFlipped, swipeDeltaX, handleReview]);
 
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
@@ -620,11 +568,10 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       card.removeEventListener('touchmove', onTouchMove);
       card.removeEventListener('touchend', onTouchEnd);
     };
-  // cardRef.current is the card DOM node, which stays stable for the lifetime of the
-  // session view (the card div is always rendered in the main return path).
+  // Re-run when currentCard changes so listeners are attached after data loads.
   // All handler values are accessed through stable refs that are kept current each render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currentCard?.id]);
 
   const dueModeButtonStyle = useMemo(() => ({
     ...styles.modeButton,
