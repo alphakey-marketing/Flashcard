@@ -62,8 +62,8 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
     if (!text) return;
     const vocab = extractVocab(text);
     setExtractedVocab(vocab);
-    // Pre-select all non-common words
-    setSelectedVocabIds(new Set(vocab.filter(v => !v.isCommon).map(v => v.id)));
+    // Start with empty selection so the user can choose which words to add
+    setSelectedVocabIds(new Set());
     setVocabError(null);
   };
 

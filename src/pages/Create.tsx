@@ -65,7 +65,8 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
     if (!text) return;
     const vocab = extractVocab(text);
     setExtractedVocab(vocab);
-    setSelectedVocabIds(new Set(vocab.filter(v => !v.isCommon).map(v => v.id)));
+    // Start with empty selection so the user can choose which words to add
+    setSelectedVocabIds(new Set());
     setVocabError(null);
   };
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, CSSProperties } from 'react';
+import React, { useState, useEffect, useRef, CSSProperties } from 'react';
 import { Flashcard, FlashcardSet } from '../lib/storage';
 import { getCardReview, recordReview } from '../lib/spacedRepetition';
 import { QuestionType, LearnQuestion, LearnSessionProgress, LearnSessionResult } from '../types/learnSession';
@@ -23,8 +23,104 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
   });
   const [showTips, setShowTips] = useState(false);
 
+  // ── Swipe state (FR-02) ───────────────────────────────────────────────────
+  const [dragX, setDragX] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const [touchStartX, setTouchStartX] = useState(0);
+
+  // Refs for touch tracking (used inside non-passive listener)
+  const cardRef = useRef<HTMLDivElement>(null);
+  const touchStartXRef = useRef(0);
+  const touchStartYRef = useRef(0);
+  const dragXRef = useRef(0);
+  const lastSwipeTimeRef = useRef(0);
+
+  // Stable ref to handleFlashcardAnswer so the touch handler never goes stale
+  const handleFlashcardAnswerRef = useRef<(q: 'again' | 'hard' | 'good' | 'easy') => void>(() => {});
+
+  // Refs to current question/showAnswer for use inside the non-passive listener
+  const currentQuestionRef = useRef(questions[currentIndex]);
+  const showAnswerRef = useRef(showAnswer);
+
+  const SWIPE_THRESHOLD = 80;
+  const PARTIAL_DRAG_THRESHOLD = 10;
+  const SWIPE_DEBOUNCE_MS = 400;
+
   useEffect(() => {
     initializeSession();
+  }, []);
+
+  // Keep swipe-related refs current every render.
+  // This is the standard "stable event listener with fresh closure" pattern:
+  // the effect below uses refs so it never needs to re-register; this effect
+  // ensures those refs always point to the latest function/state values.
+  useEffect(() => {
+    handleFlashcardAnswerRef.current = handleFlashcardAnswer;
+    currentQuestionRef.current = questions[currentIndex];
+    showAnswerRef.current = showAnswer;
+  });
+
+  // Reset drag state whenever the question changes
+  useEffect(() => {
+    setDragX(0);
+    setIsDragging(false);
+    dragXRef.current = 0;
+  }, [currentIndex]);
+
+  // Attach non-passive touchstart/touchmove/touchend so we can call preventDefault on
+  // horizontal drags and keep all three events coordinated in one place.
+  // touchstart is always captured (not gated on showAnswer) so that if the user
+  // touches the card and then the answer is revealed mid-gesture the move/end
+  // handlers always have a valid start position.
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      touchStartXRef.current = e.touches[0].clientX;
+      touchStartYRef.current = e.touches[0].clientY;
+      dragXRef.current = 0;
+      setTouchStartX(e.touches[0].clientX);
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (currentQuestionRef.current?.type !== 'flashcard' || !showAnswerRef.current) return;
+      const dx = e.touches[0].clientX - touchStartXRef.current;
+      const dy = e.touches[0].clientY - touchStartYRef.current;
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > PARTIAL_DRAG_THRESHOLD) {
+        e.preventDefault();
+        dragXRef.current = dx;
+        setDragX(dx);
+        setIsDragging(true);
+      }
+    };
+
+    const onTouchEnd = () => {
+      const dx = dragXRef.current;
+      if (Math.abs(dx) > SWIPE_THRESHOLD) {
+        lastSwipeTimeRef.current = Date.now();
+        if (dx > 0) {
+          handleFlashcardAnswerRef.current('good');
+        } else {
+          handleFlashcardAnswerRef.current('again');
+        }
+      } else if (Math.abs(dx) > PARTIAL_DRAG_THRESHOLD) {
+        lastSwipeTimeRef.current = Date.now();
+      }
+      dragXRef.current = 0;
+      setDragX(0);
+      setIsDragging(false);
+    };
+
+    card.addEventListener('touchstart', onTouchStart, { passive: true });
+    card.addEventListener('touchmove', onTouchMove, { passive: false });
+    card.addEventListener('touchend', onTouchEnd, { passive: true });
+    return () => {
+      card.removeEventListener('touchstart', onTouchStart);
+      card.removeEventListener('touchmove', onTouchMove);
+      card.removeEventListener('touchend', onTouchEnd);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const initializeSession = () => {
@@ -314,8 +410,39 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
         </div>
       )}
 
+      {/* Swipe hints — visible only on flashcard with answer shown */}
+      {currentQuestion.type === 'flashcard' && showAnswer && (
+        <div style={styles.swipeHints}>
+          <span style={{
+            ...styles.swipeHintLeft,
+            opacity: dragX < -20 ? Math.min(1, Math.abs(dragX) / 100) : 0.3
+          }}>
+            👈 Forgot
+          </span>
+          <span style={{
+            ...styles.swipeHintRight,
+            opacity: dragX > 20 ? Math.min(1, dragX / 100) : 0.3
+          }}>
+            Got it 👉
+          </span>
+        </div>
+      )}
+
       {/* Question Card */}
-      <div style={styles.questionCard}>
+      <div
+        ref={cardRef}
+        style={{
+          ...styles.questionCard,
+          transform: isDragging && currentQuestion.type === 'flashcard' && showAnswer
+            ? `translateX(${dragX}px) rotate(${dragX * 0.03}deg)`
+            : 'none',
+          transition: isDragging ? 'none' : 'transform 0.3s ease',
+          border: isDragging && currentQuestion.type === 'flashcard' && showAnswer
+            ? `2px solid ${dragX > 40 ? '#22c55e' : dragX < -40 ? '#ef4444' : '#e2e8f0'}`
+            : undefined,
+          userSelect: 'none',
+        }}
+      >
         <div style={styles.questionType}>
           {currentQuestion.type === 'multiple-choice' && '🎯 Multiple Choice'}
           {currentQuestion.type === 'type-in' && '⌨️ Type In'}
@@ -711,6 +838,25 @@ const styles: { [key: string]: CSSProperties } = {
     justifyContent: 'center',
     fontSize: '18px',
     color: '#64748b'
+  },
+  swipeHints: {
+    maxWidth: '800px',
+    margin: '0 auto 8px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '0 8px'
+  },
+  swipeHintLeft: {
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#ef4444',
+    transition: 'opacity 0.1s'
+  },
+  swipeHintRight: {
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#22c55e',
+    transition: 'opacity 0.1s'
   }
 };
 
