@@ -168,6 +168,9 @@ app.post('/api/extract-vocab', generateLimiter, async (req, res) => {
     return res.json({ words: extractCache.get(cacheKey), cached: true });
   }
 
+  // NOTE: callOpenRouter enforces response_format: json_object, which requires
+  // the model to return a JSON *object* — not a bare array. We therefore ask
+  // for { "words": [...] } and extract result.words below.
   const systemPrompt = `
 You are a Japanese language teacher building vocabulary flashcard lists for learners.
 
@@ -187,34 +190,32 @@ EXCLUDE:
 - Words a learner would see in their first 100 hours of study
 - Greetings and set phrases (ありがとう、すみません…)
 
-OUTPUT FORMAT — return ONLY valid JSON array, no markdown, no explanation:
-[
-  {
-    "word": "dictionary form",
-    "reading": "hiragana reading",
-    "meaning": "concise English meaning",
-    "jlptLevel": "N1" or "N2" or "N3" or "N4" or "unknown"
-  }
-]
+OUTPUT FORMAT — return ONLY this exact JSON object, no markdown, no explanation:
+{
+  "words": [
+    {
+      "word": "dictionary form",
+      "reading": "hiragana reading",
+      "meaning": "concise English meaning",
+      "jlptLevel": "N1" or "N2" or "N3" or "N4" or "unknown"
+    }
+  ]
+}
 
 Maximum 20 words. Order by first appearance in the text.
 `.trim();
 
   try {
-    // Note: callOpenRouter uses response_format: json_object which expects a JSON object,
-    // not an array. We pass the array prompt and extract it robustly from the raw string.
     const aiResponse = await callOpenRouter(systemPrompt, text.trim(), {
       temperature: 0.2,
-      max_tokens: 512,
+      max_tokens: 1024,
     });
 
-    // Robust JSON extraction — handles both raw array and object-wrapped responses
-    const jsonMatch = aiResponse.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) throw new Error('No JSON array in AI response');
+    // safeParseJSON handles markdown fences and extracts the outer { } object
+    const parsed = safeParseJSON(aiResponse, {});
 
-    const words = JSON.parse(jsonMatch[0]);
-
-    if (!Array.isArray(words)) throw new Error('Parsed result is not an array');
+    const words = parsed.words;
+    if (!Array.isArray(words)) throw new Error('AI response missing "words" array');
 
     const validated = words
       .filter(w => w && typeof w.word === 'string' && w.word.length > 0)
