@@ -120,44 +120,19 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
     }
   };
 
-  /** Generate AI flashcards for all selected words then add them to the set.
-   *  Words already enriched by AI extraction (extractedByAI + reading + meaning)
-   *  are added directly without an extra generate-sentence API call.
-   */
+  /** Generate AI flashcards for all selected words then add them to the set. */
   const handleGenerateAllAndAdd = async () => {
     const selected = extractedVocab.filter(v => selectedVocabIds.has(v.id));
     if (selected.length === 0 || generateAllProgress !== null) return;
-
-    // Count how many actually need a generate() call so the progress counter is accurate
-    const needsGenerate = selected.filter(v => !(v.extractedByAI && v.reading && v.meaning));
-    setGenerateAllProgress({ current: 0, total: needsGenerate.length || selected.length });
+    setGenerateAllProgress({ current: 0, total: selected.length });
     setVocabError(null);
 
     const resultsMap = new Map<string, { front: string; back: string; reading: string; meaning: string }>();
     let failCount = 0;
-    let generateCallsDone = 0;
 
     for (let i = 0; i < selected.length; i++) {
       const item = selected[i];
-
-      // ── Fast path: AI extraction already gave us reading + meaning ──────────
-      if (item.extractedByAI && item.reading && item.meaning) {
-        resultsMap.set(item.id, {
-          front: item.word,
-          back: item.meaning,
-          reading: item.reading,
-          meaning: item.meaning,
-        });
-        // Mark as generated in the list so the ✓ icon renders
-        setExtractedVocab(prev =>
-          prev.map(v => v.id === item.id ? { ...v, isGenerated: true } : v)
-        );
-        continue;
-      }
-
-      // ── Slow path: call generate-sentence for words without AI data ──────────
-      generateCallsDone++;
-      setGenerateAllProgress({ current: generateCallsDone, total: needsGenerate.length || selected.length });
+      setGenerateAllProgress({ current: i + 1, total: selected.length });
       const result = await generate(item.word);
       if (result) {
         const generated = {
@@ -169,7 +144,9 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
         resultsMap.set(item.id, generated);
         setExtractedVocab(prev =>
           prev.map(v =>
-            v.id === item.id ? { ...v, ...generated, isGenerated: true } : v
+            v.id === item.id
+              ? { ...v, ...generated, isGenerated: true }
+              : v
           )
         );
       } else {
@@ -233,10 +210,6 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
     saveSet(newSet);
     onNavigateToHome();
   };
-
-  // Helper: treat AI-extracted words with reading as already done
-  const isWordDone = (item: ExtractedVocab) =>
-    item.isGenerated || (item.extractedByAI && !!item.reading);
 
   return (
     <div style={styles.container}>
@@ -382,15 +355,15 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
                           <button
                             style={{
                               ...styles.extractGenerateBtn,
-                              ...(isWordDone(item) ? styles.extractGenerateBtnDone : {}),
+                              ...(item.isGenerated ? styles.extractGenerateBtnDone : {}),
                               opacity: (isGenerating || generateAllProgress !== null) && generatingVocabId !== item.id ? 0.5 : 1,
                               cursor: (isGenerating || generateAllProgress !== null) && generatingVocabId !== item.id ? 'not-allowed' : 'pointer',
                             }}
                             onClick={() => handleGenerateForVocab(item.id)}
                             disabled={isGenerating || generateAllProgress !== null}
-                            title={isWordDone(item) ? 'Re-generate' : 'Generate reading & meaning'}
+                            title={item.isGenerated ? 'Re-generate' : 'Generate reading & meaning'}
                           >
-                            {generatingVocabId === item.id ? '⏳' : isWordDone(item) ? '✓' : '✨'}
+                            {generatingVocabId === item.id ? '⏳' : item.isGenerated ? '✓' : '✨'}
                           </button>
                         </div>
                       ))}
