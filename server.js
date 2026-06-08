@@ -107,33 +107,22 @@ app.post('/api/generate-sentence', generateLimiter, async (req, res) => {
     }
 
     // Step 2: OpenRouter — generate a simple sentence
-const systemPrompt = `You are a Japanese language teacher creating intermediate flashcards for learners targeting JLPT N2–N3.
-Given a Japanese vocabulary word, generate ONE example sentence using that word.
-The sentence should feel natural and authentic — like something a native speaker might actually say or write — while remaining comprehensible to an N2–N3 learner.
+const systemPrompt = `You are a Japanese language teacher creating beginner flashcards.
+Given a Japanese vocabulary word, generate ONE short, simple example sentence using that word.
+The sentence must be suitable for JLPT N5–N4 level learners (under 20 characters preferred, 25 at most).
 Return ONLY this exact JSON object with no extra text:
-json
 {
   "japaneseSentence": "<Japanese sentence using the word>",
   "englishTranslation": "<natural English translation of that sentence>"
 }
 Rules:
-The sentence must actually contain the given word (or a conjugated/declined form up to and including: plain past, ます-form, negative, potential, volitional, or て-form. Do NOT use causative-passive or highly literary forms)
-All words in the sentence EXCEPT the target word should be N3 or above — avoid obscure N1/N2-only vocabulary in the supporting words
-The sentence must be a single clause or a natural two-clause structure — avoid long chains of three or more clauses
-The target word must be structurally essential — removing it should break the sentence's meaning
-Write sentences that reflect real-life situations: inner thoughts, casual observations, workplace moments, or everyday decisions. Avoid tourist-phrase or textbook-cliché sentences (e.g. do NOT write "私は学生です" or "これは本です")
-englishTranslation must be natural English — write "I forgot my umbrella again" not "As for me, umbrella forgot again"
-
-Example:
-
-Target word: 気になる
-
-json
-{
-  "japaneseSentence": "彼の言葉がずっと気になって、集中できなかった。",
-  "englishTranslation": "His words kept bothering me and I couldn't focus."
-}
-`;
+- The sentence must actually contain the given word (or its conjugated/declined form)
+- All words in the sentence EXCEPT the target word must be simple N5–N4 vocabulary the learner already knows (e.g. 私、今日、食べる、行く、見る、good、大きい、小さい、etc.)
+- Do NOT use subordinate clauses、て-form chains、or conditional forms (no 〜たら、〜ば、〜のに、〜ながら)
+- Keep the sentence short and direct — a single simple clause is ideal
+- Avoid tourist-phrase or textbook-cliché sentences (e.g. do NOT write "私は学生です")
+- englishTranslation must be a natural English sentence — not a word-for-word literal translation
+- Do NOT include furigana or reading hints in the sentence itself`;
 
     const userMessage = `Vocabulary word: ${word}`;
 
@@ -157,6 +146,86 @@ json
   } catch (error) {
     console.error('generate-sentence error:', error);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── In-memory cache for extract-vocab ────────────────────────────────────────
+const extractCache = new Map();
+setInterval(() => {
+  if (extractCache.size > 200) extractCache.clear();
+}, 60 * 60 * 1000);
+
+// ─── API Route: POST /api/extract-vocab ───────────────────────────────────────
+app.post('/api/extract-vocab', generateLimiter, async (req, res) => {
+  const { text } = req.body;
+  if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    return res.status(400).json({ error: 'text is required' });
+  }
+
+  // Cache check — skip re-calling AI for identical inputs
+  const cacheKey = Buffer.from(text.trim()).toString('base64').slice(0, 64);
+  if (extractCache.has(cacheKey)) {
+    return res.json({ words: extractCache.get(cacheKey), cached: true });
+  }
+
+  const systemPrompt = `You are a Japanese language teacher building vocabulary flashcard lists for learners.
+
+Given a Japanese paragraph, extract meaningful vocabulary worth studying.
+
+INCLUDE:
+- Content words (nouns, verbs in dictionary form, い/な adjectives, adverbs) at JLPT N4–N1 level
+- Compound verbs as single units (e.g. 走り回る, 落ち着く — NOT split into parts)
+- Compound nouns as single units (e.g. 交通渋滞, 待ち合わせ)
+- Non-obvious katakana loanwords (e.g. インフラ, アルゴリズム — skip obvious ones like テレビ, コーヒー)
+- Verbs in dictionary form ONLY (e.g. 食べます → 食べる, 走っていた → 走る)
+
+EXCLUDE:
+- Pure grammatical particles (は、が、を、に、で、と、も、か、や、の…)
+- Copulas and pure auxiliaries (だ、です、ます、ている、てしまう、てもらう…)
+- Demonstratives (これ、それ、あれ、ここ、どこ…)
+- Words a learner would see in their first 100 hours of study
+- Greetings and set phrases (ありがとう、すみません…)
+
+OUTPUT FORMAT — return ONLY valid JSON array, no markdown, no explanation:
+[
+  {
+    "word": "dictionary form",
+    "reading": "hiragana reading",
+    "meaning": "concise English meaning",
+    "jlptLevel": "N1" or "N2" or "N3" or "N4" or "unknown"
+  }
+]
+
+Maximum 20 words. Order by first appearance in the text.`;
+
+  try {
+    // Use extract-specific options; response_format json_object is set in callOpenRouter
+    // but the prompt asks for a JSON array — we parse it robustly below.
+    const aiResponse = await callOpenRouter(systemPrompt, text.trim(), {
+      temperature: 0.2,
+      max_tokens: 512,
+    });
+
+    // Robust JSON extraction — strip markdown fences if model adds them
+    const jsonMatch = aiResponse.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error('No JSON array in AI response');
+
+    const words = JSON.parse(jsonMatch[0]);
+
+    // Validate shape before trusting it
+    if (!Array.isArray(words)) throw new Error('Parsed result is not an array');
+
+    const validated = words
+      .filter(w => w && typeof w.word === 'string' && w.word.length > 0)
+      .slice(0, 20);
+
+    if (validated.length === 0) throw new Error('AI returned empty word list');
+
+    extractCache.set(cacheKey, validated);
+    res.json({ words: validated, cached: false });
+  } catch (err) {
+    console.error('[extract-vocab] AI failed:', err.message);
+    res.status(500).json({ error: 'extraction_failed', detail: err.message });
   }
 });
 

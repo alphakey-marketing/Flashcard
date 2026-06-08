@@ -1,7 +1,7 @@
 import React, { useState, CSSProperties } from 'react';
 import { createNewSet, saveSet, CardDraft } from '../lib/storage';
 import { useGenerateSentence } from '../hooks/useGenerateSentence';
-import { extractVocab, ExtractedVocab } from '../lib/vocabExtractor';
+import { extractVocab, extractVocabWithAI, ExtractedVocab } from '../lib/vocabExtractor';
 
 interface CreateProps {
   onNavigateToHome: () => void;
@@ -30,6 +30,8 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
   const [generatingVocabId, setGeneratingVocabId] = useState<string | null>(null);
   const [vocabError, setVocabError] = useState<string | null>(null);
   const [generateAllProgress, setGenerateAllProgress] = useState<{ current: number; total: number } | null>(null);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractMethod, setExtractMethod] = useState<'ai' | 'fallback' | null>(null);
 
   const handleAddCard = () => {
     setCards([...cards, { id: crypto.randomUUID(), front: '', back: '' }]);
@@ -60,14 +62,27 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
   };
 
   // ── Vocab extract handlers ─────────────────────────────────────────────────
-  const handleExtract = () => {
+  const handleExtract = async () => {
     const text = extractText.trim();
     if (!text) return;
-    const vocab = extractVocab(text);
-    setExtractedVocab(vocab);
-    // Start with empty selection so the user can choose which words to add
-    setSelectedVocabIds(new Set());
+    setIsExtracting(true);
+    setExtractMethod(null);
     setVocabError(null);
+
+    try {
+      const words = await extractVocabWithAI(text);
+      if (words.length === 0) throw new Error('empty_result');
+      setExtractedVocab(words);
+      setExtractMethod('ai');
+    } catch (err: unknown) {
+      console.warn('[Extract] AI unavailable, falling back to regex:', err instanceof Error ? err.message : err);
+      const words = extractVocab(text);
+      setExtractedVocab(words);
+      setExtractMethod('fallback');
+    } finally {
+      setIsExtracting(false);
+      setSelectedVocabIds(new Set());
+    }
   };
 
   const toggleVocabSelect = (id: string) => {
@@ -241,13 +256,17 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
               />
               <div style={styles.extractControls}>
                 <button
-                  style={styles.extractButton}
+                  style={{
+                    ...styles.extractButton,
+                    opacity: !extractText.trim() || isExtracting ? 0.6 : 1,
+                    cursor: !extractText.trim() || isExtracting ? 'not-allowed' : 'pointer',
+                  }}
                   onClick={handleExtract}
-                  disabled={!extractText.trim()}
+                  disabled={!extractText.trim() || isExtracting}
                   onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
                   onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
                 >
-                  Extract
+                  {isExtracting ? '⏳ Analysing…' : 'Extract'}
                 </button>
                 <label style={styles.extractToggleLabel}>
                   <input
@@ -260,6 +279,12 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
                 </label>
               </div>
 
+              {extractMethod === 'fallback' && (
+                <div style={styles.extractFallbackNotice}>
+                  ⚡ Quick extract (AI unavailable) — JLPT levels not shown
+                </div>
+              )}
+
               {vocabError && <p style={styles.extractError}>{vocabError}</p>}
 
               {extractedVocab.length > 0 && (() => {
@@ -271,6 +296,7 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
                     <p style={styles.extractSummary}>
                       Found <strong>{extractedVocab.length}</strong> words
                       {!showCommonWords && hiddenCount > 0 && ` (${hiddenCount} common hidden)`}
+                      {extractMethod === 'ai' && <span style={styles.extractAiBadge}>✨ AI</span>}
                     </p>
 
                     <div style={styles.extractList}>
@@ -294,8 +320,21 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
                               {item.isCommon && (
                                 <span style={styles.extractCommonBadge}>common</span>
                               )}
+                              {item.jlptLevel && item.jlptLevel !== 'unknown' && (
+                                <span style={{
+                                  ...styles.jlptBadge,
+                                  ...jlptBadgeColor(item.jlptLevel),
+                                }}>
+                                  {item.jlptLevel}
+                                </span>
+                              )}
                             </div>
                             {item.isGenerated ? (
+                              <div style={styles.extractMeta}>
+                                <span style={styles.extractReading}>{item.reading}</span>
+                                <span style={styles.extractMeaning}>{item.meaning}</span>
+                              </div>
+                            ) : item.extractedByAI && item.reading ? (
                               <div style={styles.extractMeta}>
                                 <span style={styles.extractReading}>{item.reading}</span>
                                 <span style={styles.extractMeaning}>{item.meaning}</span>
@@ -355,522 +394,4 @@ const Create: React.FC<CreateProps> = ({ onNavigateToHome }) => {
                       disabled={selCount === 0 || generateAllProgress !== null}
                       onMouseEnter={e => selCount > 0 && generateAllProgress === null && (e.currentTarget.style.opacity = '1')}
                       onMouseLeave={e => selCount > 0 && generateAllProgress === null && (e.currentTarget.style.opacity = '0.7')}
-                    >
-                      Add selected without AI →
-                    </button>
-                  </>
-                );
-              })()}
-            </div>
-          )}
-        </div>
-        <section style={styles.section}>
-          <input
-            type="text"
-            placeholder="Enter title..."
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            style={styles.titleInput}
-            autoFocus
-          />
-          <textarea
-            placeholder="Add a description (optional)..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            style={styles.descriptionInput}
-            rows={3}
-          />
-          
-          {/* JLPT Level Selector */}
-          <div style={styles.levelSelectorContainer}>
-            <label style={styles.levelLabel}>JLPT Level (Optional)</label>
-            <select 
-              value={jlptLevel || ''} 
-              onChange={(e) => setJlptLevel(e.target.value as JLPTLevel || undefined)}
-              style={styles.levelSelect}
-            >
-              <option value="">Custom / No Level</option>
-              <option value="N5">N5 (Beginner)</option>
-              <option value="N4">N4 (Elementary)</option>
-              <option value="N3">N3 (Intermediate)</option>
-              <option value="N2">N2 (Upper-Intermediate)</option>
-              <option value="N1">N1 (Advanced)</option>
-            </select>
-          </div>
-        </section>
-
-        <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Cards</h2>
-          {cards.map((card, index) => (
-            <div key={card.id} style={styles.cardEditor}>
-              <div style={styles.cardEditorHeader}>
-                <span style={styles.cardNumber}>Card {index + 1}</span>
-                {cards.length > 1 && (
-                  <button
-                    style={styles.deleteCardButton}
-                    onClick={() => handleDeleteCard(card.id)}
-                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
-                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '0.6')}
-                  >
-                    🗑️
-                  </button>
-                )}
-              </div>
-              <div style={styles.autoFillContainer}>
-                <label style={styles.autoFillLabel}>
-                  Japanese vocab (auto-fill)
-                </label>
-                <div style={styles.autoFillRow}>
-                  <input
-                    type="text"
-                    value={vocabWords[card.id] ?? ''}
-                    onChange={(e) => setVocabWords(prev => ({ ...prev, [card.id]: e.target.value }))}
-                    placeholder="e.g. 食べる"
-                    style={styles.vocabInput}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleAutoFill(card.id);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleAutoFill(card.id)}
-                    disabled={!(vocabWords[card.id] ?? '').trim() || isGenerating}
-                    style={{
-                      ...styles.autoFillButton,
-                      background: isGenerating ? '#ccc' : '#4f46e5',
-                      cursor: isGenerating ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    {isGenerating ? '⏳ Generating...' : '✨ Auto-fill'}
-                  </button>
-                </div>
-                {generateError && (
-                  <p style={styles.autoFillError}>{generateError}</p>
-                )}
-              </div>
-              <textarea
-                placeholder="Front (Term/Question)"
-                value={card.front}
-                onChange={(e) => handleUpdateCard(card.id, 'front', e.target.value)}
-                style={styles.cardInput}
-                rows={2}
-              />
-              <textarea
-                placeholder="Back (Definition/Answer)"
-                value={card.back}
-                onChange={(e) => handleUpdateCard(card.id, 'back', e.target.value)}
-                style={styles.cardInput}
-                rows={2}
-              />
-              <input
-                type="text"
-                placeholder="Source (optional, e.g. Podcast – Luke's English Ep.3)"
-                value={card.source ?? ''}
-                onChange={(e) => handleUpdateCard(card.id, 'source', e.target.value)}
-                style={{ ...styles.cardInput, fontSize: '13px', color: '#64748b', padding: '8px 12px' } as CSSProperties}
-              />
-            </div>
-          ))}
-          <button
-            style={styles.addCardButton}
-            onClick={handleAddCard}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = '#f1f5f9';
-              e.currentTarget.style.borderColor = '#3b82f6';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.borderColor = '#cbd5e1';
-            }}
-          >
-            + Add Card
-          </button>
-        </section>
-      </div>
-    </div>
-  );
-};
-
-const styles: { [key: string]: CSSProperties } = {
-  container: {
-    minHeight: '100vh',
-    backgroundColor: '#f8fafc'
-  },
-  header: {
-    backgroundColor: '#fff',
-    borderBottom: '1px solid #e2e8f0',
-    padding: '16px 24px',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    position: 'sticky',
-    top: 0,
-    zIndex: 10
-  },
-  closeButton: {
-    background: 'none',
-    border: 'none',
-    fontSize: '24px',
-    cursor: 'pointer',
-    color: '#64748b',
-    padding: '4px 8px',
-    transition: 'opacity 0.2s'
-  },
-  title: {
-    fontSize: '20px',
-    fontWeight: 600,
-    color: '#0f172a',
-    margin: 0
-  },
-  saveButton: {
-    backgroundColor: '#3b82f6',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    padding: '8px 24px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  },
-  content: {
-    maxWidth: '800px',
-    margin: '0 auto',
-    padding: '24px'
-  },
-  section: {
-    marginBottom: '32px'
-  },
-  titleInput: {
-    width: '100%',
-    fontSize: '24px',
-    fontWeight: 600,
-    padding: '16px',
-    border: '2px solid #e2e8f0',
-    borderRadius: '12px',
-    marginBottom: '16px',
-    outline: 'none',
-    transition: 'border-color 0.2s',
-    backgroundColor: '#fff',
-    boxSizing: 'border-box'
-  },
-  descriptionInput: {
-    width: '100%',
-    fontSize: '16px',
-    padding: '12px 16px',
-    border: '2px solid #e2e8f0',
-    borderRadius: '12px',
-    outline: 'none',
-    resize: 'vertical',
-    fontFamily: 'inherit',
-    transition: 'border-color 0.2s',
-    backgroundColor: '#fff',
-    boxSizing: 'border-box',
-    marginBottom: '16px'
-  },
-  levelSelectorContainer: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px'
-  },
-  levelLabel: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: '#475569'
-  },
-  levelSelect: {
-    width: '100%',
-    padding: '12px 16px',
-    fontSize: '16px',
-    border: '2px solid #e2e8f0',
-    borderRadius: '12px',
-    backgroundColor: '#fff',
-    color: '#0f172a',
-    cursor: 'pointer',
-    outline: 'none',
-    transition: 'border-color 0.2s',
-    fontFamily: 'inherit'
-  },
-  sectionTitle: {
-    fontSize: '18px',
-    fontWeight: 600,
-    color: '#0f172a',
-    marginBottom: '16px'
-  },
-  cardEditor: {
-    backgroundColor: '#fff',
-    borderRadius: '12px',
-    padding: '20px',
-    marginBottom: '16px',
-    border: '1px solid #e2e8f0'
-  },
-  cardEditorHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '12px'
-  },
-  cardNumber: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: '#64748b'
-  },
-  deleteCardButton: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: '16px',
-    padding: '4px',
-    opacity: 0.6,
-    transition: 'opacity 0.2s'
-  },
-  cardInput: {
-    width: '100%',
-    fontSize: '14px',
-    padding: '12px',
-    border: '1px solid #e2e8f0',
-    borderRadius: '8px',
-    marginBottom: '8px',
-    outline: 'none',
-    resize: 'vertical',
-    fontFamily: 'inherit',
-    transition: 'border-color 0.2s',
-    boxSizing: 'border-box'
-  },
-  addCardButton: {
-    width: '100%',
-    padding: '16px',
-    border: '2px dashed #cbd5e1',
-    borderRadius: '12px',
-    backgroundColor: 'transparent',
-    color: '#3b82f6',
-    fontSize: '16px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'all 0.2s'
-  },
-  autoFillContainer: {
-    marginBottom: '12px'
-  },
-  autoFillLabel: {
-    display: 'block',
-    marginBottom: '4px',
-    fontSize: '13px',
-    fontWeight: 600,
-    color: '#64748b'
-  },
-  autoFillRow: {
-    display: 'flex',
-    gap: '8px'
-  },
-  vocabInput: {
-    flex: 1,
-    padding: '8px 12px',
-    border: '1px solid #e2e8f0',
-    borderRadius: '8px',
-    fontSize: '15px',
-    fontFamily: 'inherit',
-    outline: 'none'
-  },
-  autoFillButton: {
-    padding: '8px 16px',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: 600,
-    whiteSpace: 'nowrap',
-    transition: 'background 0.2s'
-  },
-  autoFillError: {
-    color: '#dc2626',
-    fontSize: '13px',
-    marginTop: '4px',
-    marginBottom: 0
-  },
-  // ── Vocab extract panel styles ───────────────────────────────────────────
-  extractPanel: {
-    marginBottom: '24px',
-    borderRadius: '12px',
-    border: '1px solid #e2e8f0',
-    overflow: 'hidden',
-    backgroundColor: '#fff'
-  },
-  extractToggle: {
-    width: '100%',
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '14px 20px',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: '15px',
-    fontWeight: 600,
-    color: '#0f172a',
-    fontFamily: 'inherit'
-  },
-  extractToggleIcon: {
-    fontSize: '12px',
-    color: '#94a3b8'
-  },
-  extractBody: {
-    padding: '0 20px 20px'
-  },
-  extractTextarea: {
-    width: '100%',
-    fontSize: '14px',
-    padding: '12px',
-    border: '1px solid #e2e8f0',
-    borderRadius: '8px',
-    outline: 'none',
-    resize: 'vertical',
-    fontFamily: 'inherit',
-    boxSizing: 'border-box',
-    marginBottom: '10px'
-  },
-  extractControls: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    marginBottom: '12px'
-  },
-  extractButton: {
-    padding: '8px 20px',
-    backgroundColor: '#4f46e5',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  },
-  extractToggleLabel: {
-    fontSize: '13px',
-    color: '#64748b',
-    display: 'flex',
-    alignItems: 'center',
-    cursor: 'pointer'
-  },
-  extractError: {
-    color: '#dc2626',
-    fontSize: '13px',
-    marginBottom: '8px'
-  },
-  extractSummary: {
-    fontSize: '13px',
-    color: '#64748b',
-    marginBottom: '10px'
-  },
-  extractList: {
-    maxHeight: '340px',
-    overflowY: 'auto',
-    border: '1px solid #e2e8f0',
-    borderRadius: '8px',
-    marginBottom: '12px'
-  },
-  extractRow: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '10px',
-    padding: '10px 12px',
-    borderBottom: '1px solid #f1f5f9',
-    transition: 'background 0.15s'
-  },
-  extractRowSelected: {
-    backgroundColor: '#f0f9ff'
-  },
-  extractCheckbox: {
-    marginTop: '3px',
-    flexShrink: 0,
-    cursor: 'pointer'
-  },
-  extractRowMain: {
-    flex: 1,
-    minWidth: 0
-  },
-  extractWord: {
-    fontSize: '15px',
-    fontWeight: 700,
-    color: '#0f172a',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    marginBottom: '2px'
-  },
-  extractCommonBadge: {
-    fontSize: '10px',
-    fontWeight: 600,
-    color: '#94a3b8',
-    backgroundColor: '#f1f5f9',
-    borderRadius: '4px',
-    padding: '1px 5px'
-  },
-  extractMeta: {
-    display: 'flex',
-    gap: '8px',
-    flexWrap: 'wrap',
-    marginBottom: '2px'
-  },
-  extractReading: {
-    fontSize: '12px',
-    color: '#3b82f6',
-    fontWeight: 500
-  },
-  extractMeaning: {
-    fontSize: '12px',
-    color: '#475569'
-  },
-  extractExample: {
-    fontSize: '12px',
-    color: '#94a3b8',
-    fontStyle: 'italic',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis'
-  },
-  extractGenerateBtn: {
-    flexShrink: 0,
-    padding: '5px 10px',
-    border: '1px solid #e2e8f0',
-    borderRadius: '6px',
-    backgroundColor: '#f8fafc',
-    color: '#475569',
-    fontSize: '14px',
-    cursor: 'pointer',
-    transition: 'all 0.2s'
-  },
-  extractGenerateBtnDone: {
-    borderColor: '#10b981',
-    color: '#10b981',
-    backgroundColor: '#f0fdf4'
-  },
-  extractAddButton: {
-    width: '100%',
-    padding: '11px',
-    backgroundColor: '#3b82f6',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'opacity 0.2s',
-    marginBottom: '8px'
-  },
-  extractAddSecondary: {
-    width: '100%',
-    padding: '8px',
-    backgroundColor: 'transparent',
-    color: '#64748b',
-    border: '1px solid #e2e8f0',
-    borderRadius: '8px',
-    fontSize: '13px',
-    fontWeight: 500,
-    cursor: 'pointer',
-    transition: 'opacity 0.2s'
-  }
-};
-
-export default Create;
+       

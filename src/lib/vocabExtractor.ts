@@ -1,9 +1,11 @@
 /**
  * Client-side Japanese vocab extractor.
  * Tokenises pasted text into flashcard candidates using regex-based heuristics.
- * The `extractVocab` function is designed to be replaceable with a proper
- * morphological analyser (Jisho, MeCab, etc.) without changing the interface.
+ * The `extractVocab` function is the regex fallback path.
+ * `extractVocabWithAI` is the primary AI-powered path via /api/extract-vocab.
  */
+
+export type JlptLevel = 'N1' | 'N2' | 'N3' | 'N4' | 'unknown';
 
 /** A single vocabulary candidate extracted from a paragraph of Japanese text. */
 export interface ExtractedVocab {
@@ -25,6 +27,10 @@ export interface ExtractedVocab {
   isCommon: boolean;
   /** Whether the Generate API has been called successfully for this word. */
   isGenerated: boolean;
+  /** JLPT difficulty level — only set when extracted via AI. */
+  jlptLevel?: JlptLevel;
+  /** True when this word was extracted by the AI endpoint (vs regex fallback). */
+  extractedByAI?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,17 +78,13 @@ const COMMON_WORDS = new Set([
 // ---------------------------------------------------------------------------
 // Regex for extracting meaningful Japanese tokens.
 //   1. Pure kanji runs  (今日, 図書館, 勉強, 日本語, 帰宅)
-//      Using only kanji avoids the pitfall of absorbing trailing hiragana
-//      particles (は、が、を、で…) which would merge whole sentences into one token.
-//      The AI generate step handles verb/adjective inflection naturally.
 //   2. Pure katakana words  2+ chars  (コーヒー, テレビ)
 //   3. Pure hiragana words  3+ chars  (ありがとう, もちろん)
-//      Common conjugation endings are filtered via COMMON_WORDS above.
 // ---------------------------------------------------------------------------
 const WORD_RE = /[\u4e00-\u9faf\u3400-\u4dbf]+|[\u30a0-\u30ff]{2,}|[\u3040-\u309f]{3,}/g;
 
 /** Split a block of text into individual sentences on Japanese punctuation / newlines. */
-function splitSentences(text: string): string[] {
+export function splitSentences(text: string): string[] {
   const sentences: string[] = [];
   let buf = '';
   for (let i = 0; i < text.length; i++) {
@@ -99,7 +101,7 @@ function splitSentences(text: string): string[] {
 }
 
 /**
- * Extract vocabulary candidates from a block of Japanese text.
+ * Extract vocabulary candidates from a block of Japanese text (regex fallback).
  *
  * Returns a deduplicated list ordered by first appearance, with
  * non-common words first, followed by common/function words.
@@ -138,4 +140,46 @@ export function extractVocab(text: string): ExtractedVocab[] {
     ...all.filter(v => !v.isCommon),
     ...all.filter(v => v.isCommon),
   ];
+}
+
+/**
+ * AI-powered vocab extractor — calls POST /api/extract-vocab.
+ * Throws on any failure so the caller can fall back to extractVocab().
+ */
+export async function extractVocabWithAI(text: string): Promise<ExtractedVocab[]> {
+  const response = await fetch('/api/extract-vocab', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({} as Record<string, string>));
+    throw new Error(err.error ?? `HTTP ${response.status}`);
+  }
+
+  const { words } = await response.json() as {
+    words: { word: string; reading?: string; meaning?: string; jlptLevel?: string }[];
+  };
+
+  // Build sentence map from original text to attach exampleSentence
+  const sentences = splitSentences(text);
+  const findSentence = (word: string) =>
+    sentences.find(s => s.includes(word)) ?? sentences[0] ?? '';
+
+  return words.map(w => ({
+    id: crypto.randomUUID(),
+    word: w.word,
+    reading: w.reading ?? '',
+    meaning: w.meaning ?? '',
+    exampleSentence: findSentence(w.word),
+    front: '',
+    back: '',
+    isCommon: false, // AI already filtered; nothing is "common" in its output
+    isGenerated: false,
+    jlptLevel: (['N1', 'N2', 'N3', 'N4', 'unknown'].includes(w.jlptLevel ?? '')
+      ? (w.jlptLevel as JlptLevel)
+      : 'unknown'),
+    extractedByAI: true,
+  }));
 }
