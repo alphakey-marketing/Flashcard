@@ -149,7 +149,7 @@ Rules:
   }
 });
 
-// ─── In-memory cache for extract-vocab ────────────────────────────────────────
+// ─── In-process cache for extract-vocab (max 200 entries, cleared hourly) ─────
 const extractCache = new Map();
 setInterval(() => {
   if (extractCache.size > 200) extractCache.clear();
@@ -168,7 +168,8 @@ app.post('/api/extract-vocab', generateLimiter, async (req, res) => {
     return res.json({ words: extractCache.get(cacheKey), cached: true });
   }
 
-  const systemPrompt = `You are a Japanese language teacher building vocabulary flashcard lists for learners.
+  const systemPrompt = `
+You are a Japanese language teacher building vocabulary flashcard lists for learners.
 
 Given a Japanese paragraph, extract meaningful vocabulary worth studying.
 
@@ -196,23 +197,23 @@ OUTPUT FORMAT — return ONLY valid JSON array, no markdown, no explanation:
   }
 ]
 
-Maximum 20 words. Order by first appearance in the text.`;
+Maximum 20 words. Order by first appearance in the text.
+`.trim();
 
   try {
-    // Use extract-specific options; response_format json_object is set in callOpenRouter
-    // but the prompt asks for a JSON array — we parse it robustly below.
+    // Note: callOpenRouter uses response_format: json_object which expects a JSON object,
+    // not an array. We pass the array prompt and extract it robustly from the raw string.
     const aiResponse = await callOpenRouter(systemPrompt, text.trim(), {
       temperature: 0.2,
       max_tokens: 512,
     });
 
-    // Robust JSON extraction — strip markdown fences if model adds them
+    // Robust JSON extraction — handles both raw array and object-wrapped responses
     const jsonMatch = aiResponse.match(/\[[\s\S]*\]/);
     if (!jsonMatch) throw new Error('No JSON array in AI response');
 
     const words = JSON.parse(jsonMatch[0]);
 
-    // Validate shape before trusting it
     if (!Array.isArray(words)) throw new Error('Parsed result is not an array');
 
     const validated = words
@@ -223,6 +224,7 @@ Maximum 20 words. Order by first appearance in the text.`;
 
     extractCache.set(cacheKey, validated);
     res.json({ words: validated, cached: false });
+
   } catch (err) {
     console.error('[extract-vocab] AI failed:', err.message);
     res.status(500).json({ error: 'extraction_failed', detail: err.message });

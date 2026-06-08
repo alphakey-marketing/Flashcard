@@ -2,7 +2,7 @@
  * Client-side Japanese vocab extractor.
  * Tokenises pasted text into flashcard candidates using regex-based heuristics.
  * The `extractVocab` function is the regex fallback path.
- * `extractVocabWithAI` is the primary AI-powered path via /api/extract-vocab.
+ * The `extractVocabWithAI` function is the preferred AI-powered path.
  */
 
 export type JlptLevel = 'N1' | 'N2' | 'N3' | 'N4' | 'unknown';
@@ -27,9 +27,9 @@ export interface ExtractedVocab {
   isCommon: boolean;
   /** Whether the Generate API has been called successfully for this word. */
   isGenerated: boolean;
-  /** JLPT difficulty level — only set when extracted via AI. */
+  /** JLPT level for this word — only populated when extracted by AI. */
   jlptLevel?: JlptLevel;
-  /** True when this word was extracted by the AI endpoint (vs regex fallback). */
+  /** True when this vocab item was extracted via the AI endpoint (vs regex fallback). */
   extractedByAI?: boolean;
 }
 
@@ -101,7 +101,8 @@ export function splitSentences(text: string): string[] {
 }
 
 /**
- * Extract vocabulary candidates from a block of Japanese text (regex fallback).
+ * Extract vocabulary candidates from a block of Japanese text using regex heuristics.
+ * This is the fallback path used when the AI endpoint is unavailable.
  *
  * Returns a deduplicated list ordered by first appearance, with
  * non-common words first, followed by common/function words.
@@ -132,6 +133,7 @@ export function extractVocab(text: string): ExtractedVocab[] {
       back: '',
       isCommon: COMMON_WORDS.has(word),
       isGenerated: false,
+      extractedByAI: false,
     })
   );
 
@@ -143,8 +145,9 @@ export function extractVocab(text: string): ExtractedVocab[] {
 }
 
 /**
- * AI-powered vocab extractor — calls POST /api/extract-vocab.
- * Throws on any failure so the caller can fall back to extractVocab().
+ * Extract vocabulary candidates using the AI endpoint.
+ * Returns words with JLPT levels, dictionary forms, readings, and meanings pre-filled.
+ * Throws on any failure — callers should catch and fall back to extractVocab().
  */
 export async function extractVocabWithAI(text: string): Promise<ExtractedVocab[]> {
   const response = await fetch('/api/extract-vocab', {
@@ -153,6 +156,7 @@ export async function extractVocabWithAI(text: string): Promise<ExtractedVocab[]
     body: JSON.stringify({ text }),
   });
 
+  // Treat both 429 and 500 (extraction_failed) as fallback triggers
   if (!response.ok) {
     const err = await response.json().catch(() => ({} as Record<string, string>));
     throw new Error(err.error ?? `HTTP ${response.status}`);
@@ -167,6 +171,8 @@ export async function extractVocabWithAI(text: string): Promise<ExtractedVocab[]
   const findSentence = (word: string) =>
     sentences.find(s => s.includes(word)) ?? sentences[0] ?? '';
 
+  const validLevels: JlptLevel[] = ['N1', 'N2', 'N3', 'N4', 'unknown'];
+
   return words.map(w => ({
     id: crypto.randomUUID(),
     word: w.word,
@@ -175,11 +181,11 @@ export async function extractVocabWithAI(text: string): Promise<ExtractedVocab[]
     exampleSentence: findSentence(w.word),
     front: '',
     back: '',
-    isCommon: false, // AI already filtered; nothing is "common" in its output
+    isCommon: false,      // AI already filtered; nothing is "common" in its output
     isGenerated: false,
-    jlptLevel: (['N1', 'N2', 'N3', 'N4', 'unknown'].includes(w.jlptLevel ?? '')
+    jlptLevel: validLevels.includes(w.jlptLevel as JlptLevel)
       ? (w.jlptLevel as JlptLevel)
-      : 'unknown'),
+      : 'unknown',
     extractedByAI: true,
   }));
 }

@@ -1,7 +1,7 @@
 import React, { useState, CSSProperties } from 'react';
 import { getSet, saveSet, CardDraft, FlashcardSet } from '../lib/storage';
 import { useGenerateSentence } from '../hooks/useGenerateSentence';
-import { extractVocab, ExtractedVocab } from '../lib/vocabExtractor';
+import { extractVocab, extractVocabWithAI, ExtractedVocab } from '../lib/vocabExtractor';
 
 interface EditSetProps {
   setId: string;
@@ -9,6 +9,16 @@ interface EditSetProps {
 }
 
 type JLPTLevel = 'N5' | 'N4' | 'N3' | 'N2' | 'N1' | undefined;
+
+const jlptBadgeColor = (level: string): CSSProperties => {
+  const map: Record<string, CSSProperties> = {
+    N1: { backgroundColor: '#fef2f2', color: '#dc2626', borderColor: '#fca5a5' },
+    N2: { backgroundColor: '#fff7ed', color: '#ea580c', borderColor: '#fdba74' },
+    N3: { backgroundColor: '#fefce8', color: '#ca8a04', borderColor: '#fde047' },
+    N4: { backgroundColor: '#f0fdf4', color: '#16a34a', borderColor: '#86efac' },
+  };
+  return map[level] ?? { backgroundColor: '#f1f5f9', color: '#64748b', borderColor: '#cbd5e1' };
+};
 
 const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
   const existingSet = getSet(setId);
@@ -34,6 +44,8 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
   const [generatingVocabId, setGeneratingVocabId] = useState<string | null>(null);
   const [vocabError, setVocabError] = useState<string | null>(null);
   const [generateAllProgress, setGenerateAllProgress] = useState<{ current: number; total: number } | null>(null);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractMethod, setExtractMethod] = useState<'ai' | 'fallback' | null>(null);
 
   if (!existingSet) {
     return (
@@ -57,14 +69,27 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
   };
 
   // ── Vocab extract handlers ─────────────────────────────────────────────────
-  const handleExtract = () => {
+  const handleExtract = async () => {
     const text = extractText.trim();
     if (!text) return;
-    const vocab = extractVocab(text);
-    setExtractedVocab(vocab);
-    // Start with empty selection so the user can choose which words to add
-    setSelectedVocabIds(new Set());
+    setIsExtracting(true);
+    setExtractMethod(null);
     setVocabError(null);
+
+    try {
+      const words = await extractVocabWithAI(text);
+      if (words.length === 0) throw new Error('empty_result');
+      setExtractedVocab(words);
+      setExtractMethod('ai');
+    } catch (err: unknown) {
+      console.warn('[Extract] AI unavailable, falling back to regex:', err instanceof Error ? err.message : err);
+      const words = extractVocab(text);
+      setExtractedVocab(words);
+      setExtractMethod('fallback');
+    } finally {
+      setIsExtracting(false);
+      setSelectedVocabIds(new Set());
+    }
   };
 
   const toggleVocabSelect = (id: string) => {
@@ -115,7 +140,6 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
     setGenerateAllProgress({ current: 0, total: selected.length });
     setVocabError(null);
 
-    // resultsMap: id → generated data (for words successfully generated this run)
     const resultsMap = new Map<string, { front: string; back: string; reading: string; meaning: string }>();
     let failCount = 0;
 
@@ -131,7 +155,6 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
           meaning: result.meaning ?? '',
         };
         resultsMap.set(item.id, generated);
-        // Update UI incrementally so the user sees each word fill in
         setExtractedVocab(prev =>
           prev.map(v =>
             v.id === item.id
@@ -144,7 +167,6 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
       }
     }
 
-    // Build card list: prefer freshly generated result → previously generated → word only
     const newCards: CardDraft[] = selected.map(v => {
       const fresh = resultsMap.get(v.id);
       if (fresh) {
@@ -175,10 +197,7 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
       back: v.isGenerated ? v.back : '',
       example: v.exampleSentence || undefined,
     }));
-    // Prepend new cards to the top of the card list, matching the add-at-top
-    // convention established for the per-card "+ Add Card" button.
     setCards(prev => [...newCards, ...prev]);
-    // Reset panel
     setExtractedVocab([]);
     setSelectedVocabIds(new Set());
     setExtractText('');
@@ -271,13 +290,17 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
               />
               <div style={styles.extractControls}>
                 <button
-                  style={styles.extractButton}
+                  style={{
+                    ...styles.extractButton,
+                    opacity: !extractText.trim() || isExtracting ? 0.6 : 1,
+                    cursor: !extractText.trim() || isExtracting ? 'not-allowed' : 'pointer',
+                  }}
                   onClick={handleExtract}
-                  disabled={!extractText.trim()}
+                  disabled={!extractText.trim() || isExtracting}
                   onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
                   onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
                 >
-                  Extract
+                  {isExtracting ? '⏳ Analysing…' : 'Extract'}
                 </button>
                 <label style={styles.extractToggleLabel}>
                   <input
@@ -290,6 +313,12 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
                 </label>
               </div>
 
+              {extractMethod === 'fallback' && (
+                <div style={styles.extractFallbackNotice}>
+                  ⚡ Quick extract (AI unavailable) — JLPT levels not shown
+                </div>
+              )}
+
               {vocabError && <p style={styles.extractError}>{vocabError}</p>}
 
               {extractedVocab.length > 0 && (() => {
@@ -301,6 +330,7 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
                     <p style={styles.extractSummary}>
                       Found <strong>{extractedVocab.length}</strong> words
                       {!showCommonWords && hiddenCount > 0 && ` (${hiddenCount} common hidden)`}
+                      {extractMethod === 'ai' && <span style={styles.extractAiBadge}>✨ AI</span>}
                     </p>
 
                     <div style={styles.extractList}>
@@ -324,8 +354,21 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
                               {item.isCommon && (
                                 <span style={styles.extractCommonBadge}>common</span>
                               )}
+                              {item.jlptLevel && item.jlptLevel !== 'unknown' && (
+                                <span style={{
+                                  ...styles.jlptBadge,
+                                  ...jlptBadgeColor(item.jlptLevel),
+                                }}>
+                                  {item.jlptLevel}
+                                </span>
+                              )}
                             </div>
                             {item.isGenerated ? (
+                              <div style={styles.extractMeta}>
+                                <span style={styles.extractReading}>{item.reading}</span>
+                                <span style={styles.extractMeaning}>{item.meaning}</span>
+                              </div>
+                            ) : item.extractedByAI && item.reading ? (
                               <div style={styles.extractMeta}>
                                 <span style={styles.extractReading}>{item.reading}</span>
                                 <span style={styles.extractMeaning}>{item.meaning}</span>
@@ -783,6 +826,15 @@ const styles: { [key: string]: CSSProperties } = {
     alignItems: 'center',
     cursor: 'pointer'
   },
+  extractFallbackNotice: {
+    padding: '8px 12px',
+    backgroundColor: '#fffbeb',
+    border: '1px solid #fde68a',
+    borderRadius: '6px',
+    fontSize: '12px',
+    color: '#92400e',
+    marginBottom: '10px'
+  },
   extractError: {
     color: '#dc2626',
     fontSize: '13px',
@@ -792,6 +844,17 @@ const styles: { [key: string]: CSSProperties } = {
     fontSize: '13px',
     color: '#64748b',
     marginBottom: '10px'
+  },
+  extractAiBadge: {
+    display: 'inline-block',
+    marginLeft: '8px',
+    fontSize: '11px',
+    fontWeight: 600,
+    color: '#7c3aed',
+    backgroundColor: '#f5f3ff',
+    border: '1px solid #ddd6fe',
+    borderRadius: '4px',
+    padding: '1px 6px'
   },
   extractList: {
     maxHeight: '340px',
@@ -836,6 +899,13 @@ const styles: { [key: string]: CSSProperties } = {
     backgroundColor: '#f1f5f9',
     borderRadius: '4px',
     padding: '1px 5px'
+  },
+  jlptBadge: {
+    fontSize: '10px',
+    fontWeight: 700,
+    borderRadius: '4px',
+    padding: '1px 5px',
+    border: '1px solid',
   },
   extractMeta: {
     display: 'flex',
