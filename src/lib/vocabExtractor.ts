@@ -171,8 +171,6 @@ export async function extractVocabWithAI(text: string): Promise<ExtractedVocab[]
   const findSentence = (word: string) =>
     sentences.find(s => s.includes(word)) ?? sentences[0] ?? '';
 
-  const validLevels: JlptLevel[] = ['N1', 'N2', 'N3', 'N4', 'unknown'];
-
   return words.map(w => ({
     id: crypto.randomUUID(),
     word: w.word,
@@ -183,9 +181,6 @@ export async function extractVocabWithAI(text: string): Promise<ExtractedVocab[]
     back: '',
     isCommon: false,      // AI already filtered; nothing is "common" in its output
     isGenerated: false,
-    jlptLevel: validLevels.includes(w.jlptLevel as JlptLevel)
-      ? (w.jlptLevel as JlptLevel)
-      : 'unknown',
     extractedByAI: true,
   }));
 }

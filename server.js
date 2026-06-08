@@ -196,8 +196,7 @@ OUTPUT FORMAT — return ONLY this exact JSON object, no markdown, no explanatio
     {
       "word": "dictionary form",
       "reading": "hiragana reading",
-      "meaning": "concise English meaning",
-      "jlptLevel": "N1" or "N2" or "N3" or "N4" or "unknown"
+      "meaning": "concise English meaning"
     }
   ]
 }
