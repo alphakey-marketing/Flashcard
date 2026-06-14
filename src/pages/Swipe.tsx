@@ -316,6 +316,8 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
 
     setHasUserInteracted(true);
 
+    // Always read from currentCard.front which holds the Japanese text,
+    // regardless of reverseMode — we only want Japanese TTS.
     const frontText = currentCard.front;
     const parts = frontText.split('\n');
     const mainLine = parts[0].trim();
@@ -357,6 +359,9 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     audioService.stop();
   }, [currentCard]);
 
+  // Auto-play: only fire when the Japanese side is visible.
+  // JP→EN mode (reverseMode=false): front is Japanese → play when NOT flipped.
+  // EN→JP mode (reverseMode=true):  back  is Japanese → play when flipped.
   useEffect(() => {
     if (!audioEnabled || !currentCard || !audioService.isSupported()) return;
 
@@ -364,6 +369,7 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
       return;
     }
 
+    // Compute once — true when the currently visible card face shows Japanese
     const isJapaneseSideVisible = (!reverseMode && !isFlipped) || (reverseMode && isFlipped);
 
     if (isJapaneseSideVisible) {
@@ -739,6 +745,11 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     );
   }
 
+  // True when the currently visible face of the card shows Japanese text.
+  // JP→EN (reverseMode=false): front=JP is shown before flip, back=EN after.
+  // EN→JP (reverseMode=true):  front=EN is shown before flip, back=JP after.
+  const isJapaneseSideVisible = (!reverseMode && !isFlipped) || (reverseMode && isFlipped);
+
   return (
     <div style={styles.container}>
       <header style={styles.header}>
@@ -803,14 +814,20 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
               <>
                 <div style={styles.cardLabel}>FRONT</div>
                 {renderCardText(getCurrentFront())}
-                <button style={styles.speakerButton} onClick={handlePlayAudio}>🔊 Listen</button>
+                {/* Only show the Listen button when the Japanese side is visible */}
+                {isJapaneseSideVisible && (
+                  <button style={styles.speakerButton} onClick={handlePlayAudio}>🔊 Listen</button>
+                )}
                 <div style={styles.tapHint}>👆 Tap to see answer · Swipe left/right to rate</div>
               </>
             ) : (
               <>
                 <div style={styles.cardLabel}>BACK</div>
                 {renderCardText(getCurrentBack(), true)}
-                <button style={styles.speakerButton} onClick={handlePlayAudio}>🔊 Listen</button>
+                {/* Only show the Listen button when the Japanese side is visible */}
+                {isJapaneseSideVisible && (
+                  <button style={styles.speakerButton} onClick={handlePlayAudio}>🔊 Listen</button>
+                )}
                 <div style={styles.tapHint}>👆 Tap to flip · ← Forgot | Got it →</div>
               </>
             )}
@@ -968,11 +985,11 @@ const styles: { [key: string]: CSSProperties } = {
   statsContainer: { display: 'flex', gap: '24px', marginBottom: '32px', flexWrap: 'wrap', justifyContent: 'center' },
   statBox: { textAlign: 'center' },
   statValue: { fontSize: '36px', fontWeight: 700, color: '#3b82f6', marginBottom: '4px' },
-  statLabel: { fontSize: '14px', color: '#64748b', fontWeight: 500 },
-  finishedButtons: { display: 'flex', flexDirection: 'column', gap: '12px', width: '100%', maxWidth: '300px' },
-  studyAgainButton: { backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', padding: '14px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
-  homeButton: { backgroundColor: '#fff', color: '#0f172a', border: '2px solid #e2e8f0', borderRadius: '12px', padding: '14px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
-  loading: { textAlign: 'center', marginTop: '48px', fontSize: '18px', color: '#64748b' }
+  statLabel: { fontSize: '14px', color: '#64748b' },
+  loading: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', fontSize: '16px', color: '#64748b' },
+  studyAgainButton: { backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '12px', padding: '14px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
+  homeButton: { backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '12px', padding: '14px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
+  finishedButtons: { display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }
 };
 
 export default Swipe;

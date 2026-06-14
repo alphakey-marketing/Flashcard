@@ -46,6 +46,18 @@ export class AudioService {
   }
 
   /**
+   * Lazy getter for the Japanese voice — re-reads voices on every call until
+   * one is found. This handles the common case where voices haven't loaded yet
+   * when the first speak() call arrives (async voiceschanged race on Chrome).
+   */
+  private getJapaneseVoice(): SpeechSynthesisVoice | null {
+    if (this.japaneseVoice) return this.japaneseVoice;
+    const voices = this.synth?.getVoices() ?? [];
+    this.japaneseVoice = voices.find(v => v.lang.startsWith('ja')) ?? null;
+    return this.japaneseVoice;
+  }
+
+  /**
    * Speak a single Japanese text
    */
   speak(text: string, rate: number = 0.85): void {
@@ -59,9 +71,10 @@ export class AudioService {
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
 
-    // Use Japanese voice if available
-    if (this.japaneseVoice) {
-      utterance.voice = this.japaneseVoice;
+    // Use Japanese voice if available (lazy re-check in case voices loaded late)
+    const voice = this.getJapaneseVoice();
+    if (voice) {
+      utterance.voice = voice;
     }
 
     this.synth.speak(utterance);
@@ -95,9 +108,11 @@ export class AudioService {
         const utterance = new SpeechSynthesisUtterance(item.text);
         utterance.lang = 'ja-JP';
         utterance.rate = rate;
-        
-        if (this.japaneseVoice) {
-          utterance.voice = this.japaneseVoice;
+
+        // Lazy re-check in case voices loaded late
+        const voice = this.getJapaneseVoice();
+        if (voice) {
+          utterance.voice = voice;
         }
 
         utterance.onend = settle;
@@ -152,7 +167,7 @@ export class AudioService {
    * Check if Japanese voice is available
    */
   hasJapaneseVoice(): boolean {
-    return this.japaneseVoice !== null;
+    return this.getJapaneseVoice() !== null;
   }
 }
 
