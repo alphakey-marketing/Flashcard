@@ -296,7 +296,7 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
       const rating: ReviewRating = current.resets === 0 ? 'mastered' : 'know_it';
       saveCardReview(set.id, cardId, rating);
       setPerCardProgress(prev => ({ ...prev, [cardId]: { ...current, cleared: true } }));
-      setClearedCount(c => c + 1);
+      setClearedCount(c => { const next = c + 1; if (next >= sessionCardIds.length) { clearSavedSession(); setShowCongrats(true); } return next; });
     } else {
       saveCardReview(set.id, cardId, 'again');
       const resetQ = generateQuestion(currentQuestion.card, 1, isReversed);
