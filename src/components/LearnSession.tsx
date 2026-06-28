@@ -35,6 +35,15 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
   const dragXRef = useRef(0);
   const lastSwipeTimeRef = useRef(0);
 
+  // Ref to always hold the latest currentIndex value, preventing stale
+  // closures inside the setTimeout in recordAnswer.
+  const currentIndexRef = useRef(0);
+
+  // Keep currentIndexRef in sync whenever currentIndex changes
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
+
   // Stable ref to handleFlashcardAnswer so the touch handler never goes stale
   const handleFlashcardAnswerRef = useRef<(q: 'again' | 'hard' | 'good' | 'easy') => void>(() => {});
 
@@ -293,7 +302,7 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
   };
 
   const recordAnswer = (isCorrect: boolean, quality: 'again' | 'hard' | 'good' | 'easy' = 'good') => {
-    const currentQuestion = questions[currentIndex];
+    const currentQuestion = questions[currentIndexRef.current];
     
     // Update spaced repetition system
     recordReview(currentQuestion.card.id, set.id, quality);
@@ -308,7 +317,7 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
 
     // Update question
     const updatedQuestions = [...questions];
-    updatedQuestions[currentIndex] = {
+    updatedQuestions[currentIndexRef.current] = {
       ...currentQuestion,
       userAnswer: userInput,
       isCorrect,
@@ -318,8 +327,10 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
 
     setShowAnswer(true);
     setTimeout(() => {
-      if (currentIndex < questions.length - 1) {
-        setCurrentIndex(currentIndex + 1);
+      // Read from ref to get the latest index, avoiding a stale closure.
+      const latestIndex = currentIndexRef.current;
+      if (latestIndex < updatedQuestions.length - 1) {
+        setCurrentIndex(latestIndex + 1);
         setUserInput('');
         setShowAnswer(false);
       } else {
