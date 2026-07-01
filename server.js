@@ -231,6 +231,53 @@ Maximum 20 words. Order by first appearance in the text.
   }
 });
 
+// ─── API Route: POST /api/translate ────────────────────────────────────────────
+// Translates a Japanese sentence, optionally explaining one target word in context.
+// Ported from LinguaReader's ai.ts (Claude Haiku) onto the existing OpenRouter plumbing.
+app.post('/api/translate', generateLimiter, async (req, res) => {
+  const { sentence, targetWord } = req.body;
+  if (!sentence?.trim()) {
+    return res.status(400).json({ error: 'sentence is required' });
+  }
+
+  const systemPrompt = targetWord?.trim()
+    ? `You are a Japanese language tutor. Given a Japanese sentence and a target word within it, respond with ONLY this exact JSON object, no extra text:
+{
+  "translation": "<natural English translation of the full sentence>",
+  "wordExplanation": "<brief explanation of what the target word means in this specific context>"
+}`
+    : `You are a Japanese language tutor. Given a Japanese sentence, respond with ONLY this exact JSON object, no extra text:
+{
+  "translation": "<natural English translation of the sentence>",
+  "wordExplanation": null
+}
+If there is something linguistically interesting about the grammar or vocabulary, put a brief note in "wordExplanation" instead of null.`;
+
+  const userMessage = targetWord?.trim()
+    ? `Sentence: ${sentence.trim()}\nTarget word: ${targetWord.trim()}`
+    : `Sentence: ${sentence.trim()}`;
+
+  try {
+    const raw = await callOpenRouter(systemPrompt, userMessage, {
+      temperature: 0.2,
+      max_tokens: 300,
+    });
+
+    const parsed = safeParseJSON(raw, {});
+    if (!parsed.translation) {
+      return res.status(422).json({ error: 'AI returned incomplete data. Please try again.' });
+    }
+
+    return res.status(200).json({
+      translation: parsed.translation,
+      wordExplanation: parsed.wordExplanation ?? null,
+    });
+  } catch (error) {
+    console.error('translate error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── Production: serve Vite build ─────────────────────────────────────────────
 if (IS_PROD) {
   const distPath = path.join(__dirname, 'dist');
