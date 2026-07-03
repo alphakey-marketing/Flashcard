@@ -6,13 +6,17 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import kuromoji from 'kuromoji';
+import { JSDOM } from 'jsdom';
+import { Readability } from '@mozilla/readability';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 const IS_PROD = process.env.NODE_ENV === 'production';
 
-app.use(express.json());
+// Reader passages can be a few thousand characters — default 100kb JSON limit is too tight.
+app.use(express.json({ limit: '2mb' }));
 
 // Rate-limit the AI generation endpoint to prevent abuse
 const generateLimiter = rateLimit({
@@ -23,12 +27,46 @@ const generateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Tokenization is local CPU work (no external API), so it can afford a much
+// higher ceiling than the AI/Jisho-backed endpoints below.
+const localLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { error: 'Too many requests. Please wait a moment before trying again.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// ─── Kuromoji tokenizer (lazy singleton — dictionary load takes ~1-2s) ────────
+let tokenizerPromise = null;
+function getTokenizer() {
+  if (!tokenizerPromise) {
+    tokenizerPromise = new Promise((resolve, reject) => {
+      kuromoji.builder({ dicPath: path.join(__dirname, 'node_modules/kuromoji/dict') })
+        .build((err, tokenizer) => {
+          if (err) reject(err);
+          else resolve(tokenizer);
+        });
+    });
+  }
+  return tokenizerPromise;
+}
+
+function katakanaToHiragana(str) {
+  return str.replace(/[ァ-ヶ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+}
+
+// Parts of speech worth tracking vocabulary state for (nouns, verbs, adjectives,
+// adverbs). Particles, auxiliaries, symbols, etc. render as plain text in the
+// reader but aren't tappable/highlighted.
+const CONTENT_POS = new Set(['名詞', '動詞', '形容詞', '形容動詞', '副詞']);
+
 // ─── OpenRouter helper ────────────────────────────────────────────────────────
 async function callOpenRouter(systemPrompt, userMessage, options = {}) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error('OPENROUTER_API_KEY is not set.');
 
-  const { temperature = 0.2, max_tokens = 256 } = options;
+  const { temperature = 0.2, max_tokens = 256, model = 'mistralai/mistral-small-3.1-24b-instruct' } = options;
 
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -39,7 +77,7 @@ async function callOpenRouter(systemPrompt, userMessage, options = {}) {
       'X-Title': 'FlashMind Sentence Generator',
     },
     body: JSON.stringify({
-      model: 'mistralai/mistral-small-3.1-24b-instruct',
+      model,
       temperature,
       max_tokens,
       response_format: { type: 'json_object' },
@@ -69,6 +107,53 @@ function safeParseJSON(raw, fallback) {
   throw new Error(`Failed to parse AI response. Raw: ${raw.slice(0, 200)}`);
 }
 
+// ─── Punctuation restoration (Haiku) ───────────────────────────────────────────
+// Auto-generated YouTube captions (and occasionally scraped article text) arrive
+// with little to no sentence-ending punctuation, which breaks sentence-boundary
+// splitting downstream (splitSentences relies on 。！？). Run a cheap AI pass to
+// restore punctuation, but only when the text actually needs it — well-punctuated
+// article text from Readability skips this entirely.
+function needsPunctuationRestore(text) {
+  if (!text) return false;
+  const marks = (text.match(/[。！？]/g) || []).length;
+  // Well-punctuated Japanese prose has roughly one sentence-ending mark every
+  // 20-60 characters. Below that density (including zero marks — the common
+  // case for auto-captions) the cleanup pass is worth the extra call.
+  return marks === 0 || text.length / marks > 100;
+}
+
+async function restorePunctuation(text) {
+  if (!needsPunctuationRestore(text)) return text;
+  // Long transcripts are skipped rather than partially cleaned — cleaning only
+  // a prefix would leave a jarring seam between punctuated and raw text.
+  if (text.length > 12000) return text;
+
+  try {
+    const raw = await callOpenRouter(
+      'You restore missing punctuation and sentence boundaries in Japanese text (e.g. auto-generated video captions) without changing any words, adding content, or translating. Insert 。！？ where sentences end and add commas (、) only where clearly needed for readability. Return ONLY JSON: {"text": "..."}.',
+      text,
+      { temperature: 0, max_tokens: Math.min(8000, Math.ceil(text.length * 1.5)), model: 'anthropic/claude-haiku-4.5' }
+    );
+    const parsed = safeParseJSON(raw, { text: null });
+    return typeof parsed.text === 'string' && parsed.text.trim() ? parsed.text : text;
+  } catch (err) {
+    console.error('⚠️ [PUNCTUATION] restore failed, using original text:', err.message);
+    return text;
+  }
+}
+
+// ─── Jisho.org helper — free dictionary, no key needed ────────────────────────
+// Shared by /api/generate-sentence (reading/meaning prefill) and
+// /api/dictionary/lookup (full Reader dictionary popup).
+async function lookupJisho(word) {
+  const res = await fetch(
+    `https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(word)}`
+  );
+  if (!res.ok) throw new Error(`Jisho error ${res.status}`);
+  const data = await res.json();
+  return data?.data ?? [];
+}
+
 // ─── API Route: POST /api/generate-sentence ───────────────────────────────────
 app.post('/api/generate-sentence', generateLimiter, async (req, res) => {
   const { word } = req.body;
@@ -82,24 +167,19 @@ app.post('/api/generate-sentence', generateLimiter, async (req, res) => {
     let meaning = '';
 
     try {
-      const jishoRes = await fetch(
-        `https://jisho.org/api/v1/search/words?keyword=${encodeURIComponent(word)}`
-      );
-      if (jishoRes.ok) {
-        const jishoData = await jishoRes.json();
-        const first = jishoData?.data?.[0];
-        if (first) {
-          const jp = first.japanese?.[0];
-          const kanjiForm = jp?.word || word;
-          const kana = jp?.reading || word;
-          // Display as 食べる[たべる] if kanji and kana differ, or just the kana if they're the same
-          reading = kanjiForm === kana
-            ? kana
-            : `${kanjiForm}[${kana}]`;
+      const entries = await lookupJisho(word);
+      const first = entries[0];
+      if (first) {
+        const jp = first.japanese?.[0];
+        const kanjiForm = jp?.word || word;
+        const kana = jp?.reading || word;
+        // Display as 食べる[たべる] if kanji and kana differ, or just the kana if they're the same
+        reading = kanjiForm === kana
+          ? kana
+          : `${kanjiForm}[${kana}]`;
 
-          const senses = first.senses?.[0]?.english_definitions ?? [];
-          meaning = senses.slice(0, 3).join(', ');
-        }
+        const senses = first.senses?.[0]?.english_definitions ?? [];
+        meaning = senses.slice(0, 3).join(', ');
       }
     } catch (jishoErr) {
       // Jisho failure is non-fatal
@@ -275,6 +355,281 @@ If there is something linguistically interesting about the grammar or vocabulary
   } catch (error) {
     console.error('translate error:', error);
     return res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── API Route: POST /api/tokenize ─────────────────────────────────────────────
+// Reader (FR-01): segments Japanese text into morpheme tokens via kuromoji,
+// carrying surface form, dictionary form, hiragana reading, and part-of-speech.
+app.post('/api/tokenize', localLimiter, async (req, res) => {
+  const { text } = req.body;
+  if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    return res.status(400).json({ error: 'text is required' });
+  }
+
+  try {
+    const tokenizer = await getTokenizer();
+    const rawTokens = tokenizer.tokenize(text);
+
+    const tokens = rawTokens.map(t => {
+      const dictionaryForm = t.basic_form && t.basic_form !== '*' ? t.basic_form : t.surface_form;
+      const readingKatakana = t.reading && t.reading !== '*' ? t.reading : t.surface_form;
+      return {
+        surface: t.surface_form,
+        dictionaryForm,
+        reading: katakanaToHiragana(readingKatakana),
+        pos: t.pos,
+        isWord: CONTENT_POS.has(t.pos) && dictionaryForm.trim().length > 0,
+      };
+    });
+
+    res.json({ tokens });
+  } catch (error) {
+    console.error('tokenize error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── API Route: POST /api/dictionary/lookup ────────────────────────────────────
+// Reader (FR-04 MVP): full dictionary entry for the word popup — headword, all
+// readings, all senses. Sourced from Jisho.org; swap-in point for a local
+// JMdict index later without touching callers.
+app.post('/api/dictionary/lookup', generateLimiter, async (req, res) => {
+  const { word } = req.body;
+  if (!word?.trim()) {
+    return res.status(400).json({ error: 'word is required' });
+  }
+
+  try {
+    const entries = await lookupJisho(word.trim());
+    if (entries.length === 0) {
+      return res.json({ word, found: false, headword: word, readings: [], senses: [] });
+    }
+
+    const first = entries[0];
+    const readings = (first.japanese || [])
+      .map(j => j.reading)
+      .filter((r, i, arr) => !!r && arr.indexOf(r) === i);
+    const senses = (first.senses || []).map(s => ({
+      englishDefinitions: s.english_definitions || [],
+      partsOfSpeech: s.parts_of_speech || [],
+    }));
+
+    res.json({
+      word,
+      found: true,
+      headword: first.japanese?.[0]?.word || word,
+      readings,
+      senses,
+      isCommon: !!first.is_common,
+    });
+  } catch (error) {
+    console.error('dictionary lookup error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── API Route: POST /api/import-url ───────────────────────────────────────────
+// Reader (FR-05 completion): fetches a URL server-side, extracts the main
+// article text via Readability.js (avoids nav/ads/boilerplate), and returns
+// plain text ready for /api/tokenize.
+const PRIVATE_HOST_RE = /^(localhost|127\.|0\.0\.0\.0|::1|169\.254\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/i;
+
+app.post('/api/import-url', generateLimiter, async (req, res) => {
+  const { url } = req.body;
+  if (!url?.trim()) {
+    return res.status(400).json({ error: 'url is required' });
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol) || PRIVATE_HOST_RE.test(parsed.hostname)) {
+    return res.status(400).json({ error: 'URL must be a public http(s) address' });
+  }
+
+  try {
+    const response = await fetch(parsed.toString(), {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FlashMindReader/1.0)' },
+      redirect: 'follow',
+    });
+    if (!response.ok) {
+      return res.status(502).json({ error: `Failed to fetch page: HTTP ${response.status}` });
+    }
+
+    const html = await response.text();
+    const dom = new JSDOM(html, { url: parsed.toString() });
+    const article = new Readability(dom.window.document).parse();
+
+    if (!article?.textContent?.trim()) {
+      return res.status(422).json({ error: 'Could not extract article text from this page.' });
+    }
+
+    const text = await restorePunctuation(article.textContent.trim());
+
+    res.json({
+      title: article.title || parsed.hostname,
+      text,
+    });
+  } catch (error) {
+    console.error('import-url error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── API Route: POST /api/import-youtube ───────────────────────────────────────
+// Reader: fetches a YouTube video's Japanese caption track server-side (no
+// official API supports third-party caption downloads without OAuth as the
+// uploader, so this reads the same caption data the player itself loads),
+// stitches it into plain text, and returns it ready for /api/tokenize.
+function extractYoutubeVideoId(rawUrl) {
+  let u;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (u.hostname === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null;
+
+  if (u.hostname.endsWith('youtube.com')) {
+    if (u.pathname === '/watch') return u.searchParams.get('v');
+    const shortsMatch = u.pathname.match(/^\/shorts\/([^/]+)/);
+    if (shortsMatch) return shortsMatch[1];
+  }
+
+  return null;
+}
+
+// Extracts a JSON object embedded in HTML as `<marker> = {...};`, scanning
+// braces with string-awareness (naive regex breaks on nested objects and on
+// braces that appear inside string values, both common in YouTube's payload).
+function extractJsonAfter(html, marker) {
+  const markerIndex = html.indexOf(marker);
+  if (markerIndex === -1) return null;
+  const start = html.indexOf('{', markerIndex);
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escapeNext = false;
+
+  for (let i = start; i < html.length; i++) {
+    const ch = html[i];
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escapeNext = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseYoutubeCaptionXml(xml) {
+  const entries = [...xml.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)];
+  const decode = s =>
+    s
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/<[^>]+>/g, '');
+  return entries.map(m => decode(m[1])).join('');
+}
+
+app.post('/api/import-youtube', generateLimiter, async (req, res) => {
+  const { url } = req.body;
+  if (!url?.trim()) {
+    return res.status(400).json({ error: 'url is required' });
+  }
+
+  const videoId = extractYoutubeVideoId(url.trim());
+  if (!videoId) {
+    return res.status(400).json({ error: 'Could not parse a YouTube video ID from this URL.' });
+  }
+
+  try {
+    const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        'Accept-Language': 'ja,en;q=0.8',
+      },
+    });
+    if (!pageRes.ok) {
+      return res.status(502).json({ error: `Failed to fetch video page: HTTP ${pageRes.status}` });
+    }
+
+    const html = await pageRes.text();
+    const playerResponse = extractJsonAfter(html, 'ytInitialPlayerResponse');
+    if (!playerResponse) {
+      return res.status(422).json({ error: 'Could not read this video\'s data. It may be age-restricted or unavailable.' });
+    }
+
+    const playability = playerResponse.playabilityStatus?.status;
+    if (playability && playability !== 'OK') {
+      return res.status(422).json({
+        error: `Video unavailable (${playerResponse.playabilityStatus?.reason || playability}).`,
+      });
+    }
+
+    const tracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    if (!tracks?.length) {
+      return res.status(422).json({ error: 'This video has no captions available.' });
+    }
+
+    const jaTrack =
+      tracks.find(t => t.languageCode === 'ja' && t.kind !== 'asr') ||
+      tracks.find(t => t.languageCode === 'ja') ||
+      tracks.find(t => t.languageCode?.startsWith('ja'));
+
+    if (!jaTrack) {
+      return res.status(422).json({ error: 'No Japanese captions found for this video.' });
+    }
+
+    const captionRes = await fetch(jaTrack.baseUrl);
+    if (!captionRes.ok) {
+      return res.status(502).json({ error: `Failed to fetch captions: HTTP ${captionRes.status}` });
+    }
+
+    const captionXml = await captionRes.text();
+    const rawText = parseYoutubeCaptionXml(captionXml).trim();
+    if (!rawText) {
+      return res.status(422).json({ error: 'Captions for this video were empty.' });
+    }
+
+    const text = await restorePunctuation(rawText);
+    const title = playerResponse.videoDetails?.title || `YouTube video ${videoId}`;
+
+    res.json({ title, text });
+  } catch (error) {
+    console.error('import-youtube error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
