@@ -6,6 +6,23 @@ import type { CardReviewData } from '../spacedRepetition';
 
 const PAGE_SIZE = 1000;
 
+/**
+ * Some local ids are deterministic/fixed (e.g. the Reader deck's id, or a
+ * card id derived from a word's dictionary form) rather than random UUIDs,
+ * so two different accounts can produce the same local id. decks.id and
+ * cards.id are global primary keys in Supabase, so an unscoped id collides
+ * across accounts and the second account's upsert gets rejected by RLS
+ * (its row isn't the owner of the existing id). Scoping every cloud id by
+ * user_id keeps ids globally unique no matter how they were derived locally.
+ */
+function toCloudId(userId: string, localId: string): string {
+  return `${userId}:${localId}`;
+}
+function toLocalId(userId: string, cloudId: string): string {
+  const prefix = `${userId}:`;
+  return cloudId.startsWith(prefix) ? cloudId.slice(prefix.length) : cloudId;
+}
+
 export class CloudSync {
   static async pullDecks(): Promise<FlashcardSet[]> {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
@@ -61,7 +78,7 @@ export class CloudSync {
     }
 
     const decks: FlashcardSet[] = deckRows.map((deck: any) => ({
-      id: deck.id,
+      id: toLocalId(userId, deck.id),
       title: deck.title,
       description: deck.description || '',
       tags: deck.tags || [],
@@ -69,7 +86,7 @@ export class CloudSync {
       createdAt: new Date(deck.created_at).getTime(),
       updatedAt: new Date(deck.updated_at || deck.created_at).getTime(),
       cards: (cardsByDeckId.get(deck.id) || []).map((card: any) => ({
-        id: card.id,
+        id: toLocalId(userId, card.id),
         front: card.front,
         back: card.back,
         example: card.example || undefined,
@@ -85,8 +102,9 @@ export class CloudSync {
     const { userId } = await SupabaseAuth.ensureAuthenticated();
     console.log(`📤 [CLOUD] Pushing deck: "${deck.title}" (id: ${deck.id})`);
 
+    const cloudDeckId = toCloudId(userId, deck.id);
     const deckData = {
-      id: deck.id,
+      id: cloudDeckId,
       user_id: userId,
       title: deck.title,
       description: deck.description || '',
@@ -110,21 +128,22 @@ export class CloudSync {
     console.log(`   ✅ Deck metadata synced`);
 
     if (deck.cards.length > 0) {
-      await this.pushCards(deck.id, deck.cards);
+      await this.pushCards(cloudDeckId, userId, deck.cards);
     }
 
     console.log(`✅ [CLOUD] Complete: "${deck.title}"\n`);
   }
 
   private static async pushCards(
-    deckId: string,
+    cloudDeckId: string,
+    userId: string,
     cards: Array<{ id: string; front: string; back: string; example?: string }>
   ): Promise<void> {
     console.log(`   🃏 Syncing ${cards.length} cards...`);
 
     const cardsData = cards.map((card, index) => ({
-      id: card.id,
-      deck_id: deckId,
+      id: toCloudId(userId, card.id),
+      deck_id: cloudDeckId,
       front: card.front,
       back: card.back,
       example: card.example || null,
@@ -161,7 +180,7 @@ export class CloudSync {
         deleted_at: new Date().toISOString(),
         deleted_by: userId,
       })
-      .eq('id', deckId)
+      .eq('id', toCloudId(userId, deckId))
       .eq('user_id', userId);
 
     if (error) {
@@ -182,7 +201,7 @@ export class CloudSync {
         deleted_at: new Date().toISOString(),
         deleted_by: userId,
       })
-      .eq('id', cardId);
+      .eq('id', toCloudId(userId, cardId));
 
     if (error) {
       console.error('❌ [CLOUD] Failed to soft‑delete card:', error);
@@ -218,8 +237,8 @@ export class CloudSync {
     }
 
     const reviews: CardReviewData[] = allRows.map((r: any) => ({
-      cardId: r.card_id,
-      setId: r.deck_id,
+      cardId: toLocalId(userId, r.card_id),
+      setId: toLocalId(userId, r.deck_id),
       easeFactor: r.ease_factor,
       interval: r.interval,
       repetitions: r.repetition,
@@ -250,8 +269,8 @@ export class CloudSync {
     const reviewData = {
       id,
       user_id: userId,
-      card_id: review.cardId,
-      deck_id: review.setId,
+      card_id: toCloudId(userId, review.cardId),
+      deck_id: toCloudId(userId, review.setId),
       ease_factor: review.easeFactor,
       interval: review.interval,
       repetition: review.repetitions,
@@ -292,7 +311,7 @@ export class CloudSync {
           last_review_date: reviewData.last_review_date,
         })
         .eq('user_id', userId)
-        .eq('card_id', review.cardId);
+        .eq('card_id', reviewData.card_id);
 
       if (updateError) {
         console.warn('⚠️ [CLOUD] Failed to update review (non‑fatal):', updateError.message);

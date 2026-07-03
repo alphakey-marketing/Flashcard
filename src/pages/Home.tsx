@@ -7,6 +7,7 @@ import { CloudSync } from '../lib/sync/cloudSync';
 import { SyncManager } from '../lib/sync/syncManager';
 import { supabase } from '../lib/supabaseClient';
 import { getTodayPrompt, getPromptStreak } from '../lib/sentenceBuilder';
+import { VOCAB_REVIEW_SET_ID } from '../lib/reader/vocabReview';
 import ImportModal from '../components/ImportModal';
 import LearningTips from '../components/LearningTips';
 
@@ -21,6 +22,7 @@ interface HomeProps {
   onNavigateToSpeechPractice: (setId: string) => void;
   onNavigateToDailyWriting: (setId: string) => void;
   onNavigateToBrowseCards: (setId: string) => void;
+  onNavigateToReaderHub: () => void;
   onLogout: () => void;
 }
 
@@ -39,6 +41,7 @@ const Home: React.FC<HomeProps> = ({
   onNavigateToSpeechPractice,
   onNavigateToDailyWriting,
   onNavigateToBrowseCards,
+  onNavigateToReaderHub,
   onLogout
 }) => {
   const [sets, setSets] = useState<FlashcardSet[]>([]);
@@ -111,7 +114,13 @@ const Home: React.FC<HomeProps> = ({
     }
   };
 
-  const loadSets = () => setSets(getAllSets());
+  const loadSets = () => {
+    // The auto-managed Reader Vocabulary deck is hidden once it has no cards
+    // left (e.g. everything in it has graduated to Known) rather than deleted
+    // — it comes right back the next time a word enters Learning.
+    const all = getAllSets();
+    setSets(all.filter(s => !(s.id === VOCAB_REVIEW_SET_ID && s.cards.length === 0)));
+  };
 
   const loadStats = () => {
     setStreak(getStreak());
@@ -249,6 +258,7 @@ const Home: React.FC<HomeProps> = ({
   );
 
   const renderSetCard = (set: FlashcardSet) => {
+    const isReaderDeck = set.id === VOCAB_REVIEW_SET_ID;
     const stats = getSetStudyStats(set.id, set.cards.length);
     const isUnsynced = unsyncedDeckIds.has(set.id);
     const isExpanded = expandedCardId === set.id;
@@ -286,9 +296,9 @@ const Home: React.FC<HomeProps> = ({
           border: isSelected ? '3px solid #3b82f6' : isUnsynced ? '2px solid #ef4444' : '1px solid #e2e8f0',
           backgroundColor: isSelected ? '#eff6ff' : '#fff'
         }}
-        onClick={() => selectionMode && toggleSetSelection(set.id)}
+        onClick={() => selectionMode && !isReaderDeck && toggleSetSelection(set.id)}
       >
-        {selectionMode && (
+        {selectionMode && !isReaderDeck && (
           <div style={styles.selectionCheckbox}>
             <input type="checkbox" checked={isSelected} onChange={() => toggleSetSelection(set.id)} style={styles.checkbox} />
           </div>
@@ -298,12 +308,17 @@ const Home: React.FC<HomeProps> = ({
           <h3 style={styles.cardTitle}>
             {isUnsynced && <span style={styles.unsyncedBadge}>☁️</span>}
             {set.title}
+            {isReaderDeck && <span style={styles.autoManagedBadge}>🤖 Auto</span>}
           </h3>
           {!selectionMode && (
             <div style={styles.cardActions}>
-              <button style={styles.editLevelButton} onClick={e => handleEditSet(e, set.id)} title="Edit set">📝</button>
+              {!isReaderDeck && (
+                <button style={styles.editLevelButton} onClick={e => handleEditSet(e, set.id)} title="Edit set">📝</button>
+              )}
               <button style={styles.exportButton} onClick={e => handleExport(e, set)} title="Export to CSV">📤</button>
-              <button style={styles.deleteButton} onClick={e => handleDelete(e, set.id)} title="Delete set">🗑️</button>
+              {!isReaderDeck && (
+                <button style={styles.deleteButton} onClick={e => handleDelete(e, set.id)} title="Delete set">🗑️</button>
+              )}
             </div>
           )}
         </div>
@@ -411,6 +426,7 @@ const Home: React.FC<HomeProps> = ({
           <button style={styles.tipsButton} onClick={() => setShowLearningTips(true)}>🎯 Tips</button>
           <button style={styles.logoutButton} onClick={onLogout}>Log Out</button>
           <button style={styles.statsButton} onClick={onNavigateToStats}>📊 Stats</button>
+          <button style={styles.statsButton} onClick={onNavigateToReaderHub}>📖 Reader</button>
           <button style={styles.importButton} onClick={() => setShowImportModal(true)}>📥 Import</button>
           <button style={styles.addButton} onClick={onNavigateToCreate}>+ Create</button>
         </div>
@@ -646,6 +662,7 @@ const styles: { [key: string]: CSSProperties } = {
   cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' },
   cardTitle: { fontSize: '18px', fontWeight: 600, color: '#0f172a', margin: 0, flex: 1, display: 'flex', alignItems: 'center', gap: '8px' },
   unsyncedBadge: { fontSize: '16px', opacity: 0.7 },
+  autoManagedBadge: { fontSize: '11px', fontWeight: 700, color: '#7c3aed', backgroundColor: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: '10px', padding: '2px 8px', whiteSpace: 'nowrap' as const },
   cardActions: { display: 'flex', gap: '8px' },
   editLevelButton: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '4px', opacity: 0.6 },
   exportButton: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', padding: '4px', opacity: 0.6 },

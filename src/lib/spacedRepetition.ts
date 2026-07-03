@@ -6,6 +6,8 @@
 import { storageCache } from './storageCache';
 import { syncService } from './syncService';
 import { supabase } from './supabaseClient';
+import { applyReviewRatingToStatus } from './reader/vocabStore';
+import { VOCAB_REVIEW_SET_ID } from './reader/vocabReview';
 
 export interface CardReviewData {
   cardId: string;
@@ -262,6 +264,14 @@ export function saveCardReview(
 
   if (currentUserId) {
     syncService.pushReview(updatedData, currentUserId);
+  }
+
+  // The auto-managed Reader Vocabulary deck (see readerDeckSync.ts) rides this
+  // same review engine — ratings against it also promote/demote the word's
+  // Reader status, regardless of whether the review happened via Swipe,
+  // LearnMode, or the dedicated VocabReview page (they all call this function).
+  if (setId === VOCAB_REVIEW_SET_ID) {
+    applyReviewRatingToStatus(cardId, rating);
   }
 
   return updatedData;

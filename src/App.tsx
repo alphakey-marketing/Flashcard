@@ -11,6 +11,9 @@ import SentenceBuilder from './pages/SentenceBuilder';
 import SpeechPractice from './pages/SpeechPractice';
 import DailyWriting from './pages/DailyWriting';
 import BrowseCards from './pages/BrowseCards';
+import ReaderHub from './pages/ReaderHub';
+import Reader from './pages/Reader';
+import VocabReview from './pages/VocabReview';
 import ErrorBoundary from './components/ErrorBoundary';
 import QuickCapture from './components/QuickCapture';
 import { supabase } from './lib/supabaseClient';
@@ -18,7 +21,7 @@ import { SyncManager, type SyncProgress } from './lib/sync/syncManager';
 import { getSet, setStorageAuthState } from './lib/storage';
 import { setReviewUserId } from './lib/spacedRepetition';
 
-type Page = 'home' | 'create' | 'edit-set' | 'swipe' | 'stats' | 'learn' | 'match-game' | 'sentence-builder' | 'speech-practice' | 'daily-writing' | 'browse-cards';
+type Page = 'home' | 'create' | 'edit-set' | 'swipe' | 'stats' | 'learn' | 'match-game' | 'sentence-builder' | 'speech-practice' | 'daily-writing' | 'browse-cards' | 'reader-hub' | 'reader' | 'vocab-review';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -28,6 +31,7 @@ const App: React.FC = () => {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<Page>('home');
   const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
+  const [selectedPassageId, setSelectedPassageId] = useState<string | null>(null);
   // Increments after every completed sync — forces Home to re-mount and re-read fresh localStorage
   const [syncGeneration, setSyncGeneration] = useState(0);
 
@@ -142,6 +146,9 @@ const App: React.FC = () => {
   const navigateToSpeechPractice = (setId: string) => { setSelectedSetId(setId); setCurrentPage('speech-practice'); };
   const navigateToDailyWriting = (setId: string) => { setSelectedSetId(setId); setCurrentPage('daily-writing'); };
   const navigateToBrowseCards = (setId: string) => { setSelectedSetId(setId); setCurrentPage('browse-cards'); };
+  const navigateToReaderHub = () => setCurrentPage('reader-hub');
+  const navigateToReader = (passageId: string) => { setSelectedPassageId(passageId); setCurrentPage('reader'); };
+  const navigateToVocabReview = () => setCurrentPage('vocab-review');
 
   if (isLoadingSession) {
     return (
@@ -250,6 +257,7 @@ const App: React.FC = () => {
             onNavigateToSpeechPractice={navigateToSpeechPractice}
             onNavigateToDailyWriting={navigateToDailyWriting}
             onNavigateToBrowseCards={navigateToBrowseCards}
+            onNavigateToReaderHub={navigateToReaderHub}
             onLogout={handleLogout}
           />
         )}
@@ -298,6 +306,19 @@ const App: React.FC = () => {
         )}
         {currentPage === 'browse-cards' && selectedSetId && (
           <BrowseCards set={getSet(selectedSetId)!} onExit={navigateToHome} />
+        )}
+        {currentPage === 'reader-hub' && (
+          <ReaderHub
+            onNavigateToHome={navigateToHome}
+            onOpenPassage={navigateToReader}
+            onNavigateToVocabReview={navigateToVocabReview}
+          />
+        )}
+        {currentPage === 'reader' && selectedPassageId && (
+          <Reader passageId={selectedPassageId} onExit={navigateToReaderHub} />
+        )}
+        {currentPage === 'vocab-review' && (
+          <VocabReview onExit={navigateToReaderHub} />
         )}
       </div>
     </ErrorBoundary>

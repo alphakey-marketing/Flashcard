@@ -1,24 +1,40 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
 import { getStreak, getTodayStats, getRecentStats, formatDuration, getTotalCardsStudied, getTotalStudyTime, DailyStats } from '../lib/studyStats';
+import { ensureVocabHydrated, getVocabMap } from '../lib/reader/vocabStore';
+import { ensurePassagesHydrated, getAllPassages } from '../lib/reader/passageStore';
+import { getVocabHistory } from '../lib/reader/vocabHistory';
+import MiniLineChart from '../components/MiniLineChart';
 
 interface StatsProps {
   onNavigateToHome: () => void;
 }
 
+interface ReaderVocabStats {
+  unknown: number;
+  learning: number;
+  known: number;
+  ignored: number;
+  wordsRead: number;
+  historyLabels: string[];
+  historyKnown: number[];
+}
+
 const Stats: React.FC<StatsProps> = ({ onNavigateToHome }) => {
   const [streak, setStreak] = useState({ current: 0, longest: 0, lastStudyDate: '' });
-  const [todayStats, setTodayStats] = useState<DailyStats>({ 
+  const [todayStats, setTodayStats] = useState<DailyStats>({
     date: '',
-    totalCards: 0, 
-    totalDuration: 0, 
-    sessions: [] 
+    totalCards: 0,
+    totalDuration: 0,
+    sessions: []
   });
   const [weekStats, setWeekStats] = useState<DailyStats[]>([]);
   const [totalCards, setTotalCards] = useState(0);
   const [totalTime, setTotalTime] = useState(0);
+  const [readerStats, setReaderStats] = useState<ReaderVocabStats | null>(null);
 
   useEffect(() => {
     loadStats();
+    loadReaderStats();
   }, []);
 
   const loadStats = () => {
@@ -27,6 +43,32 @@ const Stats: React.FC<StatsProps> = ({ onNavigateToHome }) => {
     setWeekStats(getRecentStats(7));
     setTotalCards(getTotalCardsStudied());
     setTotalTime(getTotalStudyTime());
+  };
+
+  const loadReaderStats = async () => {
+    await Promise.all([ensureVocabHydrated(), ensurePassagesHydrated()]);
+
+    const vocabMap = getVocabMap();
+    let unknown = 0, learning = 0, known = 0, ignored = 0;
+    for (const v of vocabMap.values()) {
+      if (v.status === 0) unknown++;
+      else if (v.status === 5) known++;
+      else if (v.status === 99) ignored++;
+      else learning++;
+    }
+
+    const wordsRead = getAllPassages().reduce((sum, p) => sum + p.wordCount, 0);
+    const history = getVocabHistory(14);
+
+    setReaderStats({
+      unknown,
+      learning,
+      known,
+      ignored,
+      wordsRead,
+      historyLabels: history.map(h => h.date.slice(5)), // MM-DD
+      historyKnown: history.map(h => h.known),
+    });
   };
 
   const getWeekdayName = (dateStr: string) => {
@@ -138,6 +180,37 @@ const Stats: React.FC<StatsProps> = ({ onNavigateToHome }) => {
             </div>
           </div>
         </div>
+
+        {/* Reader Vocab */}
+        {readerStats && (readerStats.unknown + readerStats.learning + readerStats.known + readerStats.ignored) > 0 && (
+          <div style={styles.section}>
+            <h2 style={styles.sectionTitle}>📖 Reader Vocab</h2>
+            <div style={styles.statsGrid}>
+              <div style={styles.statCard}>
+                <div style={{ ...styles.statValue, color: '#16a34a' }}>{readerStats.known}</div>
+                <div style={styles.statLabel}>Known</div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={{ ...styles.statValue, color: '#f59e0b' }}>{readerStats.learning}</div>
+                <div style={styles.statLabel}>Learning</div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={{ ...styles.statValue, color: '#3b82f6' }}>{readerStats.unknown}</div>
+                <div style={styles.statLabel}>Unknown</div>
+              </div>
+              <div style={styles.statCard}>
+                <div style={styles.statValue}>{readerStats.wordsRead}</div>
+                <div style={styles.statLabel}>Words Read</div>
+              </div>
+            </div>
+            {readerStats.historyKnown.length > 1 && (
+              <div style={styles.chartCard}>
+                <div style={styles.chartTitle}>Known words — last {readerStats.historyKnown.length} days</div>
+                <MiniLineChart values={readerStats.historyKnown} labels={readerStats.historyLabels} color="#16a34a" />
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Motivation */}
         {streak.current === 0 && (
@@ -263,6 +336,20 @@ const styles: { [key: string]: CSSProperties } = {
     fontSize: '12px',
     color: '#64748b',
     fontWeight: 500
+  },
+  chartCard: {
+    backgroundColor: '#fff',
+    borderRadius: '12px',
+    padding: '20px',
+    marginTop: '16px',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+    border: '1px solid #e2e8f0'
+  },
+  chartTitle: {
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#334155',
+    marginBottom: '12px'
   },
   weekGrid: {
     display: 'grid',

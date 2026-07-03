@@ -83,15 +83,22 @@ export class AudioService {
   /**
    * Play a sequence of items with delays between them
    */
-  async playSequence(items: { text: string; pauseAfter: number }[], rate: number = 0.85): Promise<void> {
+  async playSequence(
+    items: { text: string; pauseAfter: number }[],
+    rate: number = 0.85,
+    onItemStart?: (index: number) => void
+  ): Promise<void> {
     if (!this.synth) return;
-    
+
     this.stop();
     const currentSeqId = ++this.sequenceId;
 
-    for (const item of items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
       if (!item.text) continue;
       if (currentSeqId !== this.sequenceId) break;
+
+      onItemStart?.(i);
 
       await new Promise<void>((resolve) => {
         let settled = false;
