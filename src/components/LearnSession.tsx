@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, CSSProperties } from 'react';
 import { Flashcard, FlashcardSet } from '../lib/storage';
-import { getCardReview, recordReview } from '../lib/spacedRepetition';
+import { peekCardReviewData, recordReview } from '../lib/spacedRepetition';
 import { QuestionType, LearnQuestion, LearnSessionProgress, LearnSessionResult } from '../types/learnSession';
 
 interface LearnSessionProps {
@@ -149,7 +149,7 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
   const selectSessionCards = (cards: Flashcard[]): Flashcard[] => {
     // Get card reviews to determine difficulty
     const cardsWithStats = cards.map(card => {
-      const review = getCardReview(card.id, set.id);
+      const review = peekCardReviewData(set.id, card.id);
       return { card, review };
     });
 
@@ -174,7 +174,7 @@ const LearnSession: React.FC<LearnSessionProps> = ({ set, onComplete, onExit }) 
     const questions: LearnQuestion[] = [];
     
     cards.forEach((card, index) => {
-      const review = getCardReview(card.id, set.id);
+      const review = peekCardReviewData(set.id, card.id);
       const isNew = !review || review.repetitions === 0;
       const isStruggling = review && review.easeFactor < 2.0;
 
