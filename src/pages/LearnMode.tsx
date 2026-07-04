@@ -1,13 +1,15 @@
-import React, { useState, useEffect, CSSProperties } from 'react';
-import { FlashcardSet, Flashcard } from '../lib/storage';
-import { CardReviewData, saveCardReview, ReviewRating, getSetReviewData } from '../lib/spacedRepetition';
+import React, { useState, useEffect, useMemo, CSSProperties } from 'react';
+import { FlashcardSet, Flashcard, getAllSets } from '../lib/storage';
+import { CardReviewData, saveCardReview, ReviewRating, getSetReviewData, getSetStudyStats, pickStudyMode, findNextDueSet } from '../lib/spacedRepetition';
 import { audioService } from '../lib/audioService';
 import { checkAnswerWithDetails, MatchResult } from '../lib/answerMatcher';
+import { VOCAB_REVIEW_SET_ID } from '../lib/reader/vocabReview';
 
 interface LearnModeProps {
   set: FlashcardSet;
   onExit: () => void;
   onComplete: () => void;
+  onNavigateToSet?: (setId: string, mode: 'learn' | 'review') => void;
 }
 
 type QuestionType = 'multiple-choice' | 'type-in';
@@ -62,7 +64,7 @@ const SRGuideContent: React.FC = () => (
 );
 const SCHEMA_VERSION = 2;
 
-const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
+const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete, onNavigateToSet }) => {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [userAnswer, setUserAnswer] = useState('');
@@ -389,6 +391,20 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
     finally { setIsPlayingAudio(false); }
   };
 
+  // Suggests the next set with due cards once this session's congrats screen
+  // shows, so the user can keep studying instead of landing back on Home.
+  // Recomputed when showCongrats flips true so it reflects due counts as of
+  // right now (reviews just saved), not whatever they were on mount.
+  const nextDueSuggestion = useMemo(() => {
+    const eligibleSets = getAllSets().filter(s => !(s.id === VOCAB_REVIEW_SET_ID && s.cards.length === 0));
+    const next = findNextDueSet(eligibleSets, set.id);
+    if (!next) return null;
+    const nextStats = getSetStudyStats(next.id, next.cards.length);
+    const mode = pickStudyMode(nextStats);
+    if (!mode) return null;
+    return { set: next, mode, dueCards: nextStats.dueCards };
+  }, [set.id, showCongrats]);
+
   // ── Resume prompt screen ──────────────────────────────────────────────────
   if (showResumePrompt && savedSession) {
     const cleared = savedSession.clearedCount;
@@ -622,6 +638,14 @@ const LearnMode: React.FC<LearnModeProps> = ({ set, onExit, onComplete }) => {
           )}
 
           <div style={styles.congratsButtons}>
+            {nextDueSuggestion && onNavigateToSet && (
+              <button
+                style={styles.continueButton}
+                onClick={() => onNavigateToSet(nextDueSuggestion.set.id, nextDueSuggestion.mode)}
+              >
+                Continue: Study {nextDueSuggestion.set.title} ({nextDueSuggestion.dueCards} due) →
+              </button>
+            )}
             <button
               style={styles.primaryButton}
               onClick={() => { setShowCongrats(false); initializeSession(isReversed); }}
@@ -950,6 +974,10 @@ const styles: { [key: string]: CSSProperties } = {
   difficultItem: { fontSize: '13px', color: '#7f1d1d', marginBottom: '4px', paddingLeft: '8px' },
   congratsButtons: {
     display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap'
+  },
+  continueButton: {
+    padding: '16px 32px', fontSize: '16px', fontWeight: 700,
+    backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer'
   },
   primaryButton: {
     padding: '16px 32px', fontSize: '16px', fontWeight: 600,

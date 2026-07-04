@@ -8,6 +8,7 @@ import { syncService } from './syncService';
 import { supabase } from './supabaseClient';
 import { applyReviewRatingToStatus } from './reader/vocabStore';
 import { VOCAB_REVIEW_SET_ID } from './reader/vocabReview';
+import type { FlashcardSet } from './storage';
 
 export interface CardReviewData {
   cardId: string;
@@ -349,6 +350,31 @@ export function getSetStudyStats(setId: string, totalCards: number) {
     averageEaseFactor: Math.round(averageEaseFactor * 100) / 100,
     successRate: Math.round(successRate * 100) / 100,
   };
+}
+
+// Which study mode to default a deck's primary CTA into. New cards take
+// priority over due cards since Learn mode already blends due+new in one
+// session, so routing a "has new cards" deck to Learn never strands its due
+// cards — but the reverse isn't true (Review/Swipe is due-only).
+export function pickStudyMode(stats: ReturnType<typeof getSetStudyStats>): 'learn' | 'review' | null {
+  if (stats.newCards > 0) return 'learn';
+  if (stats.dueCards > 0) return 'review';
+  return null;
+}
+
+// Finds the next set (besides the one just finished) with cards due today,
+// for the "keep studying" suggestion after a session ends. Caller must pass
+// the same filtered set list Home.tsx's loadSets() builds (i.e. excluding
+// the empty auto-managed Reader vocab deck), and must exclude the synthetic
+// 'due-today' id itself, so this stays consistent with the due-count badge
+// the user already saw on Home rather than Swipe's broader learning-or-due
+// definition (getDueCards).
+export function findNextDueSet(allSets: FlashcardSet[], excludeSetId: string): FlashcardSet | null {
+  for (const set of allSets) {
+    if (set.id === excludeSetId || set.id === 'due-today') continue;
+    if (getSetStudyStats(set.id, set.cards.length).dueCards > 0) return set;
+  }
+  return null;
 }
 
 export function startReviewSession(setId: string): ReviewSession {
