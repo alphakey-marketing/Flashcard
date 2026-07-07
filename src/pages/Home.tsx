@@ -2,7 +2,7 @@ import React, { useState, useEffect, CSSProperties } from 'react';
 import { getAllSets, FlashcardSet, saveSet } from '../lib/storage';
 import { exportToCSV } from '../lib/csvParser';
 import { getStreak, getTodayStats } from '../lib/studyStats';
-import { getSetStudyStats, getSetReviewData } from '../lib/spacedRepetition';
+import { getSetStudyStats, getSetReviewData, pickStudyMode } from '../lib/spacedRepetition';
 import { CloudSync } from '../lib/sync/cloudSync';
 import { SyncManager } from '../lib/sync/syncManager';
 import { supabase } from '../lib/supabaseClient';
@@ -10,6 +10,7 @@ import { getTodayPrompt, getPromptStreak } from '../lib/sentenceBuilder';
 import { VOCAB_REVIEW_SET_ID } from '../lib/reader/vocabReview';
 import ImportModal from '../components/ImportModal';
 import LearningTips from '../components/LearningTips';
+import OverflowMenu from '../components/OverflowMenu';
 
 interface HomeProps {
   onNavigateToCreate: () => void;
@@ -47,7 +48,6 @@ const Home: React.FC<HomeProps> = ({
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showLearningTips, setShowLearningTips] = useState(false);
-  const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedSetIds, setSelectedSetIds] = useState<Set<string>>(new Set());
@@ -200,9 +200,6 @@ const Home: React.FC<HomeProps> = ({
     document.body.removeChild(link);
   };
 
-  const toggleCardExpansion = (cardId: string) =>
-    setExpandedCardId(expandedCardId === cardId ? null : cardId);
-
   const handleEditSet = (e: React.MouseEvent, setId: string) => {
     e.stopPropagation();
     onNavigateToEditSet(setId);
@@ -260,8 +257,8 @@ const Home: React.FC<HomeProps> = ({
   const renderSetCard = (set: FlashcardSet) => {
     const isReaderDeck = set.id === VOCAB_REVIEW_SET_ID;
     const stats = getSetStudyStats(set.id, set.cards.length);
+    const studyMode = pickStudyMode(stats);
     const isUnsynced = unsyncedDeckIds.has(set.id);
-    const isExpanded = expandedCardId === set.id;
     const isSelected = selectedSetIds.has(set.id);
     const reviewedCards = stats.totalReviews > 0 ? Math.min(set.cards.length, stats.totalReviews) : 0;
     const progress = set.cards.length === 0 ? 0 : (reviewedCards / set.cards.length) * 100;
@@ -351,48 +348,30 @@ const Home: React.FC<HomeProps> = ({
               <div style={{ ...styles.progressBar, width: `${progress}%` }} />
             </div>
 
-            <div style={styles.studyButtons}>
-              <button style={styles.learnButton} onClick={() => onNavigateToLearn(set.id)}>🎯 Learn</button>
-              <button style={styles.reviewButton} onClick={() => onNavigateToSwipe(set.id)}>💬 Review</button>
-              <button style={styles.browseButton} onClick={() => onNavigateToBrowseCards(set.id)}>📖 Browse</button>
-              <button style={styles.matchButton} onClick={() => onNavigateToMatch(set.id)}>🎮 Match</button>
-            </div>
-
-            <div style={styles.activeLearningSection}>
-              <button style={styles.expandButton} onClick={() => toggleCardExpansion(set.id)}>
-                <span style={styles.expandIcon}>🎤</span>
-                <span style={styles.expandText}>Active Practice</span>
-                <span style={styles.expandArrow}>{isExpanded ? '▲' : '▼'}</span>
+            <div style={styles.studyRow}>
+              <button
+                style={{ ...styles.studyButton, ...(studyMode === null ? styles.studyButtonDisabled : {}) }}
+                disabled={studyMode === null}
+                onClick={() => studyMode === 'learn' ? onNavigateToLearn(set.id) : studyMode === 'review' ? onNavigateToSwipe(set.id) : undefined}
+              >
+                {studyMode === 'learn' ? '🎯 Study' : studyMode === 'review' ? '💬 Study' : '✓ All caught up'}
               </button>
-
-              {isExpanded && (
-                <div style={styles.activeButtons}>
-                  <button style={styles.activeButton} onClick={() => onNavigateToSentenceBuilder(set.id)}>
-                    <div style={styles.activeButtonIcon}>🏗️</div>
-                    <div style={styles.activeButtonText}>
-                      <div style={styles.activeButtonTitle}>Sentence Builder</div>
-                      <div style={styles.activeButtonDesc}>Create sentences</div>
-                    </div>
-                  </button>
-                  <button style={styles.activeButton} onClick={() => onNavigateToSpeechPractice(set.id)}>
-                    <div style={styles.activeButtonIcon}>🎤</div>
-                    <div style={styles.activeButtonText}>
-                      <div style={styles.activeButtonTitle}>Speech Practice</div>
-                      <div style={styles.activeButtonDesc}>Record & compare</div>
-                    </div>
-                  </button>
-                  <button style={styles.activeButton} onClick={() => onNavigateToDailyWriting(set.id)}>
-                    <div style={styles.activeButtonIcon}>✍️</div>
-                    <div style={styles.activeButtonText}>
-                      <div style={styles.activeButtonTitle}>Daily Writing</div>
-                      <div style={styles.activeButtonDesc}>
-                        {isDailyCompleted ? 'Complete! ✅' : "Today's prompt"}
-                        {writingStreak > 0 && ` 🔥${writingStreak}`}
-                      </div>
-                    </div>
-                  </button>
-                </div>
-              )}
+              <OverflowMenu
+                triggerAriaLabel={`More actions for ${set.title}`}
+                items={[
+                  { key: 'browse', icon: '📖', label: 'Browse', onSelect: () => onNavigateToBrowseCards(set.id) },
+                  { key: 'match', icon: '🎮', label: 'Match', onSelect: () => onNavigateToMatch(set.id) },
+                  { key: 'sentence', icon: '🏗️', label: 'Sentence Builder', description: 'Create sentences', onSelect: () => onNavigateToSentenceBuilder(set.id) },
+                  { key: 'speech', icon: '🎤', label: 'Speech Practice', description: 'Record & compare', onSelect: () => onNavigateToSpeechPractice(set.id) },
+                  {
+                    key: 'daily',
+                    icon: '✍️',
+                    label: 'Daily Writing',
+                    description: (isDailyCompleted ? 'Complete! ✅' : "Today's prompt") + (writingStreak > 0 ? ` 🔥${writingStreak}` : ''),
+                    onSelect: () => onNavigateToDailyWriting(set.id),
+                  },
+                ]}
+              />
             </div>
           </>
         )}
@@ -408,27 +387,25 @@ const Home: React.FC<HomeProps> = ({
           <p style={styles.subtitle}>日本語を勉強しよう!</p>
         </div>
         <div style={styles.headerButtons}>
-          {userId && (
-            <button
-              style={{
-                ...styles.syncButton,
-                backgroundColor: hasUnsyncedDecks ? '#ef4444' : '#10b981',
-                cursor: isSyncing ? 'not-allowed' : 'pointer',
-                opacity: isSyncing ? 0.6 : 1
-              }}
-              onClick={handleManualSync}
-              disabled={isSyncing}
-              title={hasUnsyncedDecks ? `${unsyncedDeckIds.size} deck(s) not synced` : 'All decks synced'}
-            >
-              {isSyncing ? '🔄 Syncing...' : hasUnsyncedDecks ? `⚠️ Sync (${unsyncedDeckIds.size})` : '✅ Synced'}
-            </button>
-          )}
-          <button style={styles.tipsButton} onClick={() => setShowLearningTips(true)}>🎯 Tips</button>
-          <button style={styles.logoutButton} onClick={onLogout}>Log Out</button>
-          <button style={styles.statsButton} onClick={onNavigateToStats}>📊 Stats</button>
-          <button style={styles.statsButton} onClick={onNavigateToReaderHub}>📖 Reader</button>
-          <button style={styles.importButton} onClick={() => setShowImportModal(true)}>📥 Import</button>
+          <button style={styles.readerButton} onClick={onNavigateToReaderHub}>📖 Reader</button>
           <button style={styles.addButton} onClick={onNavigateToCreate}>+ Create</button>
+          <OverflowMenu
+            triggerAriaLabel="More options"
+            items={[
+              ...(userId ? [{
+                key: 'sync',
+                icon: isSyncing ? '🔄' : hasUnsyncedDecks ? '⚠️' : '✅',
+                label: isSyncing ? 'Syncing...' : hasUnsyncedDecks ? `Sync (${unsyncedDeckIds.size})` : 'Synced',
+                description: hasUnsyncedDecks ? `${unsyncedDeckIds.size} deck(s) not synced` : 'All decks synced',
+                onSelect: handleManualSync,
+                disabled: isSyncing,
+              }] : []),
+              { key: 'tips', icon: '🎯', label: 'Tips', onSelect: () => setShowLearningTips(true) },
+              { key: 'stats', icon: '📊', label: 'Stats', onSelect: onNavigateToStats },
+              { key: 'import', icon: '📥', label: 'Import', onSelect: () => setShowImportModal(true) },
+              { key: 'logout', icon: '🚪', label: 'Log Out', onSelect: onLogout },
+            ]}
+          />
         </div>
       </header>
 
@@ -601,12 +578,8 @@ const styles: { [key: string]: CSSProperties } = {
   header: { maxWidth: '1000px', margin: '0 auto 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' },
   title: { fontSize: '32px', fontWeight: 700, color: '#0f172a', margin: 0, marginBottom: '4px' },
   subtitle: { fontSize: '16px', color: '#64748b', margin: 0 },
-  headerButtons: { display: 'flex', gap: '12px', flexWrap: 'wrap' },
-  syncButton: { color: 'white', border: 'none', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
-  tipsButton: { backgroundColor: '#fff', color: '#f59e0b', border: '2px solid #f59e0b', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
-  logoutButton: { backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
-  statsButton: { backgroundColor: '#fff', color: '#8b5cf6', border: '2px solid #8b5cf6', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
-  importButton: { backgroundColor: '#fff', color: '#3b82f6', border: '2px solid #3b82f6', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
+  headerButtons: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' },
+  readerButton: { backgroundColor: '#fff', color: '#8b5cf6', border: '2px solid #8b5cf6', borderRadius: '12px', padding: '12px 20px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
   addButton: { backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', padding: '12px 24px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' },
   streakBanner: { maxWidth: '1000px', margin: '0 auto 16px', backgroundColor: '#fef3c7', borderRadius: '12px', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', border: '2px solid #fbbf24' },
   streakIcon: { fontSize: '24px' },
@@ -679,22 +652,9 @@ const styles: { [key: string]: CSSProperties } = {
   progressText: { fontSize: '14px', color: '#22c55e', fontWeight: 600 },
   progressBarContainer: { width: '100%', height: '6px', backgroundColor: '#e2e8f0', borderRadius: '3px', overflow: 'hidden', marginBottom: '16px' },
   progressBar: { height: '100%', backgroundColor: '#22c55e', transition: 'width 0.3s' },
-  studyButtons: { display: 'flex', gap: '6px', marginBottom: '12px' },
-  learnButton: { flex: 1, padding: '8px 4px', fontSize: '11px', fontWeight: 600, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' },
-  reviewButton: { flex: 1, padding: '8px 4px', fontSize: '11px', fontWeight: 600, backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' },
-  browseButton: { flex: 1, padding: '8px 4px', fontSize: '11px', fontWeight: 600, backgroundColor: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' },
-  matchButton: { flex: 1, padding: '8px 4px', fontSize: '11px', fontWeight: 600, backgroundColor: '#8b5cf6', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' },
-  activeLearningSection: { borderTop: '1px solid #e2e8f0', paddingTop: '12px' },
-  expandButton: { width: '100%', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600, color: '#475569' },
-  expandIcon: { fontSize: '16px' },
-  expandText: { flex: 1, textAlign: 'left' },
-  expandArrow: { fontSize: '12px', color: '#94a3b8' },
-  activeButtons: { marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' },
-  activeButton: { backgroundColor: '#fff', border: '2px solid #e2e8f0', borderRadius: '8px', padding: '12px', display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', textAlign: 'left' },
-  activeButtonIcon: { fontSize: '24px', flexShrink: 0 },
-  activeButtonText: { flex: 1 },
-  activeButtonTitle: { fontSize: '14px', fontWeight: 600, color: '#0f172a', marginBottom: '2px' },
-  activeButtonDesc: { fontSize: '12px', color: '#64748b' }
+  studyRow: { display: 'flex', gap: '8px', alignItems: 'center' },
+  studyButton: { flex: 1, padding: '12px 16px', fontSize: '14px', fontWeight: 700, backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer' },
+  studyButtonDisabled: { backgroundColor: '#f1f5f9', color: '#94a3b8', cursor: 'default' }
 };
 
 export default Home;

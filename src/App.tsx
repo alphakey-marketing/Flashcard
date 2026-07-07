@@ -23,15 +23,17 @@ import { setReviewUserId } from './lib/spacedRepetition';
 
 type Page = 'home' | 'create' | 'edit-set' | 'swipe' | 'stats' | 'learn' | 'match-game' | 'sentence-builder' | 'speech-practice' | 'daily-writing' | 'browse-cards' | 'reader-hub' | 'reader' | 'vocab-review';
 
+type NavParams = { setId?: string; passageId?: string };
+type HistoryFrame = { page: Page; params: NavParams };
+
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string>('Initializing...');
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState<Page>('home');
-  const [selectedSetId, setSelectedSetId] = useState<string | null>(null);
-  const [selectedPassageId, setSelectedPassageId] = useState<string | null>(null);
+  const [stack, setStack] = useState<HistoryFrame[]>([{ page: 'home', params: {} }]);
+  const current = stack[stack.length - 1];
   // Increments after every completed sync — forces Home to re-mount and re-read fresh localStorage
   const [syncGeneration, setSyncGeneration] = useState(0);
 
@@ -40,6 +42,12 @@ const App: React.FC = () => {
   const setIsSyncingRef = useRef(setIsSyncing);
   const setSyncStatusRef = useRef(setSyncStatus);
   const setSyncErrorRef = useRef(setSyncError);
+  const stackRef = useRef(stack);
+  stackRef.current = stack;
+  // Distinguishes a back() triggered by the browser's own popstate (already
+  // navigated, don't call history.back() again) from an in-app back() call
+  // (must call history.back() to keep the real browser history in sync).
+  const isPoppingFromBrowserRef = useRef(false);
 
   useEffect(() => {
     setIsSyncingRef.current = setIsSyncing;
@@ -135,20 +143,63 @@ const App: React.FC = () => {
     await authClient.signOut();
   };
 
-  const navigateToHome = () => setCurrentPage('home');
-  const navigateToCreate = () => setCurrentPage('create');
-  const navigateToEditSet = (setId: string) => { setSelectedSetId(setId); setCurrentPage('edit-set'); };
-  const navigateToStats = () => setCurrentPage('stats');
-  const navigateToSwipe = (setId: string) => { setSelectedSetId(setId); setCurrentPage('swipe'); };
-  const navigateToLearn = (setId: string) => { setSelectedSetId(setId); setCurrentPage('learn'); };
-  const navigateToMatch = (setId: string) => { setSelectedSetId(setId); setCurrentPage('match-game'); };
-  const navigateToSentenceBuilder = (setId: string) => { setSelectedSetId(setId); setCurrentPage('sentence-builder'); };
-  const navigateToSpeechPractice = (setId: string) => { setSelectedSetId(setId); setCurrentPage('speech-practice'); };
-  const navigateToDailyWriting = (setId: string) => { setSelectedSetId(setId); setCurrentPage('daily-writing'); };
-  const navigateToBrowseCards = (setId: string) => { setSelectedSetId(setId); setCurrentPage('browse-cards'); };
-  const navigateToReaderHub = () => setCurrentPage('reader-hub');
-  const navigateToReader = (passageId: string) => { setSelectedPassageId(passageId); setCurrentPage('reader'); };
-  const navigateToVocabReview = () => setCurrentPage('vocab-review');
+  const navigateTo = (page: Page, params: NavParams = {}) => {
+    setStack(prev => [...prev, { page, params }]);
+    window.history.pushState({ depth: stackRef.current.length + 1 }, '', '');
+  };
+
+  const back = () => {
+    setStack(prev => (prev.length > 1 ? prev.slice(0, -1) : [{ page: 'home', params: {} }]));
+    if (!isPoppingFromBrowserRef.current) {
+      window.history.back();
+    }
+  };
+
+  // Push one baseline history entry so the very first back-gesture/hardware
+  // back button has something to pop against instead of exiting the app.
+  useEffect(() => {
+    window.history.pushState({ depth: 0 }, '', '');
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      isPoppingFromBrowserRef.current = true;
+      back();
+      setTimeout(() => { isPoppingFromBrowserRef.current = false; }, 0);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateToHome = () => navigateTo('home', {});
+  const navigateToCreate = () => navigateTo('create', {});
+  const navigateToEditSet = (setId: string) => navigateTo('edit-set', { setId });
+  const navigateToStats = () => navigateTo('stats', {});
+  const navigateToSwipe = (setId: string) => navigateTo('swipe', { setId });
+  const navigateToLearn = (setId: string) => navigateTo('learn', { setId });
+  const navigateToMatch = (setId: string) => navigateTo('match-game', { setId });
+  const navigateToSentenceBuilder = (setId: string) => navigateTo('sentence-builder', { setId });
+  const navigateToSpeechPractice = (setId: string) => navigateTo('speech-practice', { setId });
+  const navigateToDailyWriting = (setId: string) => navigateTo('daily-writing', { setId });
+  const navigateToBrowseCards = (setId: string) => navigateTo('browse-cards', { setId });
+  const navigateToReaderHub = () => navigateTo('reader-hub', {});
+  const navigateToReader = (passageId: string) => navigateTo('reader', { passageId });
+  const navigateToVocabReview = () => navigateTo('vocab-review', {});
+
+  // "Session finished successfully" (LearnMode's onComplete) is semantically
+  // distinct from "user backed out" (onExit) even though both currently pop
+  // the stack the same way — kept separate so a future "suggest next set"
+  // step can hook in here without touching onExit's abandon semantics.
+  const handleSessionComplete = () => back();
+
+  // Chains straight into the next due set's session, replacing (not pushing
+  // onto) the just-finished session's frame — so back() from the new set
+  // lands on Home, not on the previous set's already-finished screen. Stack
+  // depth is unchanged, so it stays in sync with the real browser history
+  // entries without an extra pushState/back() call.
+  const handleNavigateToSet = (setId: string, mode: 'learn' | 'review') => {
+    setStack(prev => [...prev.slice(0, -1), { page: mode === 'learn' ? 'learn' : 'swipe', params: { setId } }]);
+  };
 
   if (isLoadingSession) {
     return (
@@ -244,7 +295,7 @@ const App: React.FC = () => {
       <div>
         {syncErrorModal}
         <QuickCapture />
-        {currentPage === 'home' && (
+        {current.page === 'home' && (
           <Home
             key={syncGeneration}
             onNavigateToCreate={navigateToCreate}
@@ -261,64 +312,66 @@ const App: React.FC = () => {
             onLogout={handleLogout}
           />
         )}
-        {currentPage === 'create' && (
-          <Create onNavigateToHome={navigateToHome} />
+        {current.page === 'create' && (
+          <Create onNavigateToHome={back} />
         )}
-        {currentPage === 'edit-set' && selectedSetId && (
-          <EditSet setId={selectedSetId} onNavigateToHome={navigateToHome} />
+        {current.page === 'edit-set' && current.params.setId && (
+          <EditSet setId={current.params.setId} onNavigateToHome={back} />
         )}
-        {currentPage === 'swipe' && selectedSetId && (
-          <Swipe setId={selectedSetId} onNavigateToHome={navigateToHome} />
+        {current.page === 'swipe' && current.params.setId && (
+          <Swipe key={current.params.setId} setId={current.params.setId} onNavigateToHome={back} onNavigateToSet={handleNavigateToSet} />
         )}
-        {currentPage === 'learn' && selectedSetId && getSet(selectedSetId) && (
+        {current.page === 'learn' && current.params.setId && getSet(current.params.setId) && (
           <LearnMode
-            set={getSet(selectedSetId)!}
-            onComplete={navigateToHome}
-            onExit={navigateToHome}
+            key={current.params.setId}
+            set={getSet(current.params.setId)!}
+            onComplete={handleSessionComplete}
+            onExit={back}
+            onNavigateToSet={handleNavigateToSet}
           />
         )}
-        {currentPage === 'match-game' && selectedSetId && getSet(selectedSetId) && (
+        {current.page === 'match-game' && current.params.setId && getSet(current.params.setId) && (
           <MatchGame
-            set={getSet(selectedSetId)!}
-            onExit={navigateToHome}
+            set={getSet(current.params.setId)!}
+            onExit={back}
           />
         )}
-        {currentPage === 'sentence-builder' && selectedSetId && (
+        {current.page === 'sentence-builder' && current.params.setId && (
           <SentenceBuilder
-            set={getSet(selectedSetId)!}
-            onExit={navigateToHome}
+            set={getSet(current.params.setId)!}
+            onExit={back}
           />
         )}
-        {currentPage === 'speech-practice' && selectedSetId && (
+        {current.page === 'speech-practice' && current.params.setId && (
           <SpeechPractice
-            set={getSet(selectedSetId)!}
-            onExit={navigateToHome}
+            set={getSet(current.params.setId)!}
+            onExit={back}
           />
         )}
-        {currentPage === 'daily-writing' && selectedSetId && (
+        {current.page === 'daily-writing' && current.params.setId && (
           <DailyWriting
-            set={getSet(selectedSetId)!}
-            onExit={navigateToHome}
+            set={getSet(current.params.setId)!}
+            onExit={back}
           />
         )}
-        {currentPage === 'stats' && (
-          <Stats onNavigateToHome={navigateToHome} />
+        {current.page === 'stats' && (
+          <Stats onNavigateToHome={back} />
         )}
-        {currentPage === 'browse-cards' && selectedSetId && (
-          <BrowseCards set={getSet(selectedSetId)!} onExit={navigateToHome} />
+        {current.page === 'browse-cards' && current.params.setId && (
+          <BrowseCards set={getSet(current.params.setId)!} onExit={back} />
         )}
-        {currentPage === 'reader-hub' && (
+        {current.page === 'reader-hub' && (
           <ReaderHub
-            onNavigateToHome={navigateToHome}
+            onNavigateToHome={back}
             onOpenPassage={navigateToReader}
             onNavigateToVocabReview={navigateToVocabReview}
           />
         )}
-        {currentPage === 'reader' && selectedPassageId && (
-          <Reader passageId={selectedPassageId} onExit={navigateToReaderHub} />
+        {current.page === 'reader' && current.params.passageId && (
+          <Reader passageId={current.params.passageId} onExit={back} />
         )}
-        {currentPage === 'vocab-review' && (
-          <VocabReview onExit={navigateToReaderHub} />
+        {current.page === 'vocab-review' && (
+          <VocabReview onExit={back} />
         )}
       </div>
     </ErrorBoundary>

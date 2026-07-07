@@ -2,11 +2,13 @@ import React, { useState, useEffect, CSSProperties, useCallback, useMemo, useRef
 import { getSet, getAllSets, FlashcardSet, Card } from '../lib/storage';
 import { audioService } from '../lib/audioService';
 import { recordSession } from '../lib/studyStats';
-import { saveCardReview, ReviewRating, getDueCards, getSetReviewData, getLearningCards } from '../lib/spacedRepetition';
+import { saveCardReview, ReviewRating, getDueCards, getSetReviewData, getLearningCards, getSetStudyStats, pickStudyMode, findNextDueSet } from '../lib/spacedRepetition';
+import { VOCAB_REVIEW_SET_ID } from '../lib/reader/vocabReview';
 
 interface SwipeProps {
   setId: string;
   onNavigateToHome: () => void;
+  onNavigateToSet?: (setId: string, mode: 'learn' | 'review') => void;
 }
 
 interface SavedSwipeSession {
@@ -21,7 +23,7 @@ interface SavedSwipeSession {
 const STORAGE_KEY = 'swipe-mode-session';
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
+const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome, onNavigateToSet }) => {
   const [set, setSet] = useState<FlashcardSet | null>(null);
   const [activeQueue, setActiveQueue] = useState<Card[]>([]);
   const [currentCard, setCurrentCard] = useState<Card | null>(null);
@@ -517,6 +519,21 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
     setSessionStats({ reviewed: 0, knowIt: 0, mastered: 0 });
   }, [set, studyMode, loadQueue]);
 
+  // Suggests the next set with due cards once a session ends, so the user can
+  // keep studying instead of landing back on Home. Recomputed when the
+  // session actually finishes (isFinished) so it reflects due counts as of
+  // right now, not whatever they were on mount.
+  const nextDueSuggestion = useMemo(() => {
+    if (!set) return null;
+    const eligibleSets = getAllSets().filter(s => !(s.id === VOCAB_REVIEW_SET_ID && s.cards.length === 0));
+    const next = findNextDueSet(eligibleSets, set.id);
+    if (!next) return null;
+    const nextStats = getSetStudyStats(next.id, next.cards.length);
+    const mode = pickStudyMode(nextStats);
+    if (!mode) return null;
+    return { set: next, mode, dueCards: nextStats.dueCards };
+  }, [set, isFinished]);
+
   // Keep stable refs up-to-date every render (avoids stale closures in touch handlers)
   useEffect(() => {
     handleReviewRef.current = handleReview;
@@ -675,6 +692,14 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           <p style={styles.finishedText}>{message}</p>
           
           <div style={styles.finishedButtons}>
+            {nextDueSuggestion && onNavigateToSet && (
+              <button
+                style={styles.continueButton}
+                onClick={() => onNavigateToSet(nextDueSuggestion.set.id, nextDueSuggestion.mode)}
+              >
+                Continue: Study {nextDueSuggestion.set.title} ({nextDueSuggestion.dueCards} due) →
+              </button>
+            )}
             {!isDueToday && (
               <button style={styles.studyAgainButton} onClick={() => switchMode('all')}>
                 Study All Cards
@@ -725,6 +750,14 @@ const Swipe: React.FC<SwipeProps> = ({ setId, onNavigateToHome }) => {
           </div>
 
           <div style={styles.finishedButtons}>
+            {nextDueSuggestion && onNavigateToSet && (
+              <button
+                style={styles.continueButton}
+                onClick={() => onNavigateToSet(nextDueSuggestion.set.id, nextDueSuggestion.mode)}
+              >
+                Continue: Study {nextDueSuggestion.set.title} ({nextDueSuggestion.dueCards} due) →
+              </button>
+            )}
             <button style={styles.studyAgainButton} onClick={handleStudyAgain}>
               Study Again
             </button>
@@ -987,6 +1020,7 @@ const styles: { [key: string]: CSSProperties } = {
   statValue: { fontSize: '36px', fontWeight: 700, color: '#3b82f6', marginBottom: '4px' },
   statLabel: { fontSize: '14px', color: '#64748b' },
   loading: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', fontSize: '16px', color: '#64748b' },
+  continueButton: { backgroundColor: '#3b82f6', color: 'white', border: 'none', borderRadius: '12px', padding: '14px 32px', fontSize: '16px', fontWeight: 700, cursor: 'pointer' },
   studyAgainButton: { backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '12px', padding: '14px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
   homeButton: { backgroundColor: '#f1f5f9', color: '#475569', border: 'none', borderRadius: '12px', padding: '14px 32px', fontSize: '16px', fontWeight: 600, cursor: 'pointer' },
   finishedButtons: { display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }
