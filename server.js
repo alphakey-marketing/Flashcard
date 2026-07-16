@@ -371,21 +371,50 @@ app.post('/api/tokenize', localLimiter, async (req, res) => {
     const tokenizer = await getTokenizer();
     const rawTokens = tokenizer.tokenize(text);
 
-    const tokens = rawTokens.map(t => {
-      const dictionaryForm = t.basic_form && t.basic_form !== '*' ? t.basic_form : t.surface_form;
-      const readingKatakana = t.reading && t.reading !== '*' ? t.reading : t.surface_form;
-      return {
-        surface: t.surface_form,
-        dictionaryForm,
-        reading: katakanaToHiragana(readingKatakana),
-        pos: t.pos,
-        isWord: CONTENT_POS.has(t.pos) && dictionaryForm.trim().length > 0,
-      };
-    });
+    const tokens = tokensFromKuromoji(rawTokens);
 
     res.json({ tokens });
   } catch (error) {
     console.error('tokenize error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Shared by /api/tokenize and /api/tokenize-cues — converts kuromoji's raw
+// token shape into the Reader's Token shape (surface/dictionaryForm/reading/pos/isWord).
+function tokensFromKuromoji(rawTokens) {
+  return rawTokens.map(t => {
+    const dictionaryForm = t.basic_form && t.basic_form !== '*' ? t.basic_form : t.surface_form;
+    const readingKatakana = t.reading && t.reading !== '*' ? t.reading : t.surface_form;
+    return {
+      surface: t.surface_form,
+      dictionaryForm,
+      reading: katakanaToHiragana(readingKatakana),
+      pos: t.pos,
+      isWord: CONTENT_POS.has(t.pos) && dictionaryForm.trim().length > 0,
+    };
+  });
+}
+
+// ─── API Route: POST /api/tokenize-cues ────────────────────────────────────────
+// Reader (YouTube video sync): tokenizes each caption cue independently so the
+// token index range for each cue is known exactly, instead of re-splitting a
+// jointly-tokenized string and guessing at offsets. Cue boundaries stay exact
+// even though kuromoji sees less context per call than a single big tokenize.
+app.post('/api/tokenize-cues', localLimiter, async (req, res) => {
+  const { cues } = req.body;
+  if (!Array.isArray(cues) || cues.length === 0) {
+    return res.status(400).json({ error: 'cues (non-empty string array) is required' });
+  }
+
+  try {
+    const tokenizer = await getTokenizer();
+    const cueTokens = cues.map(cueText =>
+      tokensFromKuromoji(tokenizer.tokenize(typeof cueText === 'string' ? cueText : ''))
+    );
+    res.json({ cueTokens });
+  } catch (error) {
+    console.error('tokenize-cues error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -550,8 +579,11 @@ function extractJsonAfter(html, marker) {
   return null;
 }
 
+// Parses YouTube's timedtext XML into per-cue { text, startMs, durMs }, keeping
+// each cue's timing so it can drive video seek/A-B-loop sync (not just be
+// joined into a flat transcript string).
 function parseYoutubeCaptionXml(xml) {
-  const entries = [...xml.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)];
+  const entries = [...xml.matchAll(/<text start="([\d.]+)"(?:\s+dur="([\d.]+)")?[^>]*>([\s\S]*?)<\/text>/g)];
   const decode = s =>
     s
       .replace(/&amp;/g, '&')
@@ -560,7 +592,13 @@ function parseYoutubeCaptionXml(xml) {
       .replace(/&quot;/g, '"')
       .replace(/&#39;/g, "'")
       .replace(/<[^>]+>/g, '');
-  return entries.map(m => decode(m[1])).join('');
+  return entries
+    .map(([, start, dur, text]) => ({
+      text: decode(text).trim(),
+      startMs: Math.round(parseFloat(start) * 1000),
+      durMs: Math.round(parseFloat(dur || '0') * 1000),
+    }))
+    .filter(cue => cue.text.length > 0);
 }
 
 app.post('/api/import-youtube', generateLimiter, async (req, res) => {
@@ -598,9 +636,14 @@ app.post('/api/import-youtube', generateLimiter, async (req, res) => {
       });
     }
 
+    // No (Japanese) captions is not a hard failure — the video can still be
+    // imported as a video-only passage for audio shadowing, just without
+    // text/vocab/caption-synced looping.
+    const title = playerResponse.videoDetails?.title || `YouTube video ${videoId}`;
+
     const tracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
     if (!tracks?.length) {
-      return res.status(422).json({ error: 'This video has no captions available.' });
+      return res.json({ title, text: '', videoId, cues: null });
     }
 
     const jaTrack =
@@ -609,24 +652,38 @@ app.post('/api/import-youtube', generateLimiter, async (req, res) => {
       tracks.find(t => t.languageCode?.startsWith('ja'));
 
     if (!jaTrack) {
-      return res.status(422).json({ error: 'No Japanese captions found for this video.' });
+      return res.json({ title, text: '', videoId, cues: null });
     }
 
-    const captionRes = await fetch(jaTrack.baseUrl);
-    if (!captionRes.ok) {
-      return res.status(502).json({ error: `Failed to fetch captions: HTTP ${captionRes.status}` });
+    // Caption fetch is best-effort, not required — the caption endpoint is
+    // rate-limited separately from the page scrape above and 429s under
+    // moderate load, but that should degrade to a working video-only import,
+    // not block it. Any failure here (rate limit, network error, empty/
+    // unparseable XML) falls through to the same video-only response as "no
+    // captions found".
+    let cues = [];
+    try {
+      const captionRes = await fetch(jaTrack.baseUrl);
+      if (captionRes.ok) {
+        const captionXml = await captionRes.text();
+        cues = parseYoutubeCaptionXml(captionXml);
+      } else {
+        console.warn(`caption fetch HTTP ${captionRes.status} for ${videoId}, falling back to video-only`);
+      }
+    } catch (captionErr) {
+      console.warn(`caption fetch failed for ${videoId}, falling back to video-only:`, captionErr.message);
     }
 
-    const captionXml = await captionRes.text();
-    const rawText = parseYoutubeCaptionXml(captionXml).trim();
-    if (!rawText) {
-      return res.status(422).json({ error: 'Captions for this video were empty.' });
+    if (cues.length === 0) {
+      return res.json({ title, text: '', videoId, cues: null });
     }
 
-    const text = await restorePunctuation(rawText);
-    const title = playerResponse.videoDetails?.title || `YouTube video ${videoId}`;
+    const rawText = cues.map(c => c.text).join('');
 
-    res.json({ title, text });
+    // Punctuation restoration rewrites the text and would desync cue
+    // boundaries from it, so it's skipped here — cue boundaries substitute
+    // for punctuation-based sentence splitting downstream instead.
+    res.json({ title, text: rawText, videoId, cues });
   } catch (error) {
     console.error('import-youtube error:', error);
     res.status(500).json({ error: error.message });

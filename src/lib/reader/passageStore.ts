@@ -7,7 +7,7 @@ import { supabase } from '../supabaseClient';
 import { SupabaseAuth } from '../sync/supabaseAuth';
 import { storageCache } from '../storageCache';
 import { countContentWords } from './textUtils';
-import type { Passage, Token } from './types';
+import type { CaptionCue, Passage, Token } from './types';
 
 const STORAGE_KEY = 'flashmind-passages';
 const CACHE_TTL = 5000;
@@ -28,6 +28,8 @@ function rowFromCloud(row: any): Passage {
     title: row.title,
     sourceType: row.source_type,
     sourceUrl: row.source_url || undefined,
+    videoId: row.video_id || undefined,
+    captionCues: row.caption_cues || undefined,
     collectionId: row.collection_id || undefined,
     rawText: row.raw_text,
     tokens: row.tokens || [],
@@ -45,6 +47,8 @@ function rowToCloud(p: Passage, userId: string) {
     title: p.title,
     source_type: p.sourceType,
     source_url: p.sourceUrl || null,
+    video_id: p.videoId || null,
+    caption_cues: p.captionCues || null,
     raw_text: p.rawText,
     tokens: p.tokens,
     word_count: p.wordCount,
@@ -107,26 +111,44 @@ function pushToCloud(passage: Passage): void {
     .catch(() => { /* not authenticated — nothing to push, local write already succeeded */ });
 }
 
-/** Tokenises raw text via /api/tokenize and saves the resulting passage locally + in the background to Supabase. */
+/**
+ * Tokenises raw text via /api/tokenize and saves the resulting passage locally + in the background to Supabase.
+ *
+ * Video-only YouTube imports (no captions found) pass rawText: '' and skip tokenization entirely — videoId
+ * alone is enough for playback, and there's no text to tokenize.
+ *
+ * Captioned video imports pass `precomputedTokens` (built by tokenizing each caption cue individually via
+ * /api/tokenize-cues, so captionCues[].tokenStart/tokenEnd line up exactly). Re-tokenizing the joined rawText
+ * here via /api/tokenize would silently desync those ranges — kuromoji can segment differently with full-text
+ * context than it does per-cue — so precomputed tokens always take priority over calling /api/tokenize.
+ */
 export async function createPassage(
   title: string,
   rawText: string,
   sourceType: 'text' | 'url' | 'youtube' = 'text',
   sourceUrl?: string,
-  collectionId?: string
+  collectionId?: string,
+  videoId?: string,
+  captionCues?: CaptionCue[],
+  precomputedTokens?: Token[]
 ): Promise<Passage> {
-  const response = await fetch('/api/tokenize', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: rawText }),
-  });
+  let tokens: Token[] = precomputedTokens ?? [];
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({} as Record<string, string>));
-    throw new Error(err.error ?? `Tokenize failed: HTTP ${response.status}`);
+  if (!precomputedTokens && rawText.trim()) {
+    const response = await fetch('/api/tokenize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: rawText }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({} as Record<string, string>));
+      throw new Error(err.error ?? `Tokenize failed: HTTP ${response.status}`);
+    }
+
+    ({ tokens } = await response.json() as { tokens: Token[] });
   }
 
-  const { tokens } = await response.json() as { tokens: Token[] };
   const now = Date.now();
 
   const passage: Passage = {
@@ -134,6 +156,8 @@ export async function createPassage(
     title: title.trim() || 'Untitled passage',
     sourceType,
     sourceUrl,
+    videoId,
+    captionCues,
     collectionId,
     rawText,
     tokens,
@@ -173,6 +197,12 @@ export async function updatePassage(id: string, title: string, rawText: string):
 
   const existing = passages[index];
   let tokens = existing.tokens;
+  // Editing the transcript text of a captioned video passage invalidates
+  // captionCues' tokenStart/tokenEnd ranges (they were computed against the
+  // original per-cue tokenization) — drop them rather than leave a stale,
+  // now-wrong video sync in place. The video keeps playing; it just loses
+  // caption-synced looping until re-imported.
+  let captionCues = existing.captionCues;
 
   if (rawText !== existing.rawText) {
     const response = await fetch('/api/tokenize', {
@@ -187,6 +217,7 @@ export async function updatePassage(id: string, title: string, rawText: string):
     }
 
     ({ tokens } = await response.json() as { tokens: Token[] });
+    captionCues = undefined;
   }
 
   const updated: Passage = {
@@ -194,6 +225,7 @@ export async function updatePassage(id: string, title: string, rawText: string):
     title: title.trim() || 'Untitled passage',
     rawText,
     tokens,
+    captionCues,
     wordCount: countContentWords(tokens),
     updatedAt: Date.now(),
   };

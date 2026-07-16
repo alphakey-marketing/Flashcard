@@ -8,6 +8,15 @@ import { audioService } from '../lib/audioService';
 import type { Passage } from '../lib/reader/types';
 import WordPopup from '../components/WordPopup';
 import ImportPassageModal from '../components/ImportPassageModal';
+import YoutubePlayer, { YoutubePlayerHandle } from '../components/YoutubePlayer';
+
+/** mm:ss for a millisecond timestamp — used to label manual Set A/Set B markers. */
+function formatMs(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
 
 interface ReaderProps {
   passageId: string;
@@ -36,12 +45,31 @@ const Reader: React.FC<ReaderProps> = ({ passageId, onExit }) => {
   const [isLoopPlaying, setIsLoopPlaying] = useState(false);
   // Checked after each lap of the loop so `runLoopSegment`'s while-loop stops
   // relaunching once the user hits Stop/Clear — a plain state var wouldn't be
-  // visible to the async loop between awaits.
+  // visible to the async loop between awaits. Also doubles as the "is a video
+  // A-B loop active" flag for video passages (see the polling effect below).
   const loopActiveRef = useRef(false);
+
+  // Video playback (YouTube passages) — separate from the TTS engine above.
+  // loopStart/loopEnd (indices) are reused for caption-cue-based looping;
+  // loopStartMs/loopEndMs are the fallback for videos with no captions.
+  const videoRef = useRef<YoutubePlayerHandle>(null);
+  const [videoReady, setVideoReady] = useState(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [isVideoLoopPlaying, setIsVideoLoopPlaying] = useState(false);
+  const [loopStartMs, setLoopStartMs] = useState<number | null>(null);
+  const [loopEndMs, setLoopEndMs] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setShowLoopPanel(false);
+    setLoopStart(null);
+    setLoopEnd(null);
+    setLoopStartMs(null);
+    setLoopEndMs(null);
+    setVideoReady(false);
+    setIsVideoPlaying(false);
+    setIsVideoLoopPlaying(false);
 
     Promise.all([ensureVocabHydrated(), ensurePassagesHydrated()]).then(() => {
       if (cancelled) return;
@@ -58,11 +86,12 @@ const Reader: React.FC<ReaderProps> = ({ passageId, onExit }) => {
     };
   }, [passageId]);
 
-  // Stop any in-flight speech when leaving the passage or unmounting.
+  // Stop any in-flight speech/video playback when leaving the passage or unmounting.
   useEffect(() => {
     return () => {
       loopActiveRef.current = false;
       audioService.stop();
+      videoRef.current?.pause();
     };
   }, [passageId]);
 
@@ -101,7 +130,7 @@ const Reader: React.FC<ReaderProps> = ({ passageId, onExit }) => {
   // Tapping the same sentence twice loops just that one sentence. Tapping a
   // third time starts a fresh A/B selection.
   const handleTickClick = (index: number) => {
-    if (isPlaying || isLoopPlaying) return;
+    if (isPlaying || isLoopPlaying || isVideoLoopPlaying) return;
 
     if (loopStart === null) {
       setLoopStart(index);
@@ -119,8 +148,12 @@ const Reader: React.FC<ReaderProps> = ({ passageId, onExit }) => {
     loopActiveRef.current = false;
     if (isLoopPlaying) audioService.stop();
     setIsLoopPlaying(false);
+    if (isVideoLoopPlaying) videoRef.current?.pause();
+    setIsVideoLoopPlaying(false);
     setLoopStart(null);
     setLoopEnd(null);
+    setLoopStartMs(null);
+    setLoopEndMs(null);
     setPlayingRange(null);
   };
 
@@ -160,10 +193,92 @@ const Reader: React.FC<ReaderProps> = ({ passageId, onExit }) => {
     runLoopSegment(loopStart, loopEnd);
   };
 
+  const isVideoPassage = !!passage?.videoId;
+  const cues = passage?.captionCues ?? [];
+  const hasCaptionCues = cues.length > 0;
+
+  // Single poll loop drives both the "now speaking" token highlight (for
+  // captioned videos) and A-B loop enforcement (for both captioned and
+  // caption-less videos) — the YouTube IFrame API has no timeupdate event, so
+  // getCurrentTime() has to be sampled. Runs only while the video is actually
+  // playing (tracked via onPlayingChange, not our own play()/pause() calls,
+  // since the embed's native controls can change state too).
+  useEffect(() => {
+    if (!isVideoPassage || !isVideoPlaying) return;
+
+    const interval = window.setInterval(() => {
+      const player = videoRef.current;
+      if (!player) return;
+      const t = player.getCurrentTimeMs();
+
+      if (hasCaptionCues) {
+        const cue = cues.find(c => t >= c.startMs && t < c.startMs + c.durMs);
+        if (cue) {
+          setPlayingRange(prev =>
+            prev?.start === cue.tokenStart && prev?.end === cue.tokenEnd
+              ? prev
+              : { start: cue.tokenStart, end: cue.tokenEnd }
+          );
+        }
+      }
+
+      if (loopActiveRef.current) {
+        const startMs = hasCaptionCues ? (loopStart !== null ? cues[loopStart].startMs : null) : loopStartMs;
+        const endMs = hasCaptionCues
+          ? loopEnd !== null
+            ? cues[loopEnd].startMs + cues[loopEnd].durMs
+            : null
+          : loopEndMs;
+        if (startMs !== null && endMs !== null && t >= endMs) {
+          player.seekTo(startMs);
+        }
+      }
+    }, 200);
+
+    return () => window.clearInterval(interval);
+  }, [isVideoPassage, isVideoPlaying, hasCaptionCues, cues, loopStart, loopEnd, loopStartMs, loopEndMs]);
+
+  const handleVideoPlayToggle = () => {
+    const player = videoRef.current;
+    if (!player) return;
+    if (isVideoPlaying) player.pause();
+    else player.play();
+  };
+
+  const handleSetLoopA = () => {
+    const t = videoRef.current?.getCurrentTimeMs();
+    if (t !== undefined) setLoopStartMs(t);
+  };
+
+  const handleSetLoopB = () => {
+    const t = videoRef.current?.getCurrentTimeMs();
+    if (t !== undefined) setLoopEndMs(t);
+  };
+
+  const handleStartVideoLoop = () => {
+    const player = videoRef.current;
+    if (!player) return;
+    const startMs = hasCaptionCues ? (loopStart !== null ? cues[loopStart].startMs : null) : loopStartMs;
+    const endMs = hasCaptionCues ? (loopEnd !== null ? cues[loopEnd].startMs : null) : loopEndMs;
+    if (startMs === null || endMs === null) return;
+
+    loopActiveRef.current = true;
+    setIsVideoLoopPlaying(true);
+    player.seekTo(startMs);
+    player.play();
+  };
+
+  const handleStopVideoLoop = () => {
+    loopActiveRef.current = false;
+    setIsVideoLoopPlaying(false);
+    videoRef.current?.pause();
+  };
+
   const handleDelete = async () => {
     if (!passage) return;
     if (!window.confirm(`Delete "${passage.title}"? This cannot be undone.`)) return;
     audioService.stop();
+    videoRef.current?.pause();
     await deletePassage(passage.id);
     onExit();
   };
@@ -257,7 +372,110 @@ const Reader: React.FC<ReaderProps> = ({ passageId, onExit }) => {
         </div>
       </header>
 
-      {audioService.isSupported() && (
+      {isVideoPassage && passage.videoId && (
+        <YoutubePlayer
+          ref={videoRef}
+          videoId={passage.videoId}
+          onReady={() => setVideoReady(true)}
+          onPlayingChange={setIsVideoPlaying}
+        />
+      )}
+
+      {isVideoPassage && (
+        <div style={styles.playBar}>
+          <button style={styles.playButton} onClick={handleVideoPlayToggle} disabled={!videoReady} title={isVideoPlaying ? 'Pause' : 'Play'}>
+            {isVideoPlaying ? '⏸ Pause' : '▶ Play'}
+          </button>
+          <button
+            style={{ ...styles.speedButton, ...(showLoopPanel ? styles.iconButtonActive : {}) }}
+            onClick={() => setShowLoopPanel(v => !v)}
+            title="Repeat a segment for shadowing (A-B loop)"
+          >
+            🔁 Loop
+          </button>
+        </div>
+      )}
+
+      {isVideoPassage && showLoopPanel && hasCaptionCues && (
+        <div style={styles.loopPanel}>
+          <p style={styles.loopHint}>
+            Tap a caption line to set the loop start, tap another to set the end — tap the same one twice to loop just that line.
+          </p>
+
+          <div style={styles.loopTicks}>
+            {cues.map((cue, index) => {
+              const inRange = loopStart !== null && loopEnd !== null && index >= loopStart && index <= loopEnd;
+              const isEndpoint = index === loopStart || index === loopEnd;
+              return (
+                <button
+                  key={index}
+                  style={{
+                    ...styles.loopTick,
+                    ...(inRange ? styles.loopTickActive : {}),
+                    ...(isEndpoint ? styles.loopTickEndpoint : {}),
+                  }}
+                  onClick={() => handleTickClick(index)}
+                  disabled={isVideoLoopPlaying}
+                  title={cue.text}
+                />
+              );
+            })}
+          </div>
+
+          {(loopStart !== null || loopEnd !== null) && (
+            <div style={styles.loopPreview}>
+              {loopStart !== null && <div>A: {cues[loopStart].text}</div>}
+              {loopEnd !== null && <div>B: {cues[loopEnd].text}</div>}
+            </div>
+          )}
+
+          <div style={styles.loopActions}>
+            <button
+              style={{ ...styles.loopPlayButton, opacity: loopStart === null || loopEnd === null ? 0.5 : 1 }}
+              onClick={isVideoLoopPlaying ? handleStopVideoLoop : handleStartVideoLoop}
+              disabled={loopStart === null || loopEnd === null}
+            >
+              {isVideoLoopPlaying ? '⏹ Stop Loop' : '🔁 Play Loop'}
+            </button>
+            {(loopStart !== null || loopEnd !== null) && (
+              <button style={styles.loopClearButton} onClick={handleClearLoop}>
+                ✕ Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isVideoPassage && showLoopPanel && !hasCaptionCues && (
+        <div style={styles.loopPanel}>
+          <p style={styles.loopHint}>
+            No captions to snap to — play the video, tap "Set A" where you want the loop to start, then "Set B" where it should end.
+          </p>
+
+          <div style={styles.loopActions}>
+            <button style={styles.loopClearButton} onClick={handleSetLoopA} disabled={isVideoLoopPlaying}>
+              Set A{loopStartMs !== null ? ` (${formatMs(loopStartMs)})` : ''}
+            </button>
+            <button style={styles.loopClearButton} onClick={handleSetLoopB} disabled={isVideoLoopPlaying}>
+              Set B{loopEndMs !== null ? ` (${formatMs(loopEndMs)})` : ''}
+            </button>
+            <button
+              style={{ ...styles.loopPlayButton, opacity: loopStartMs === null || loopEndMs === null ? 0.5 : 1 }}
+              onClick={isVideoLoopPlaying ? handleStopVideoLoop : handleStartVideoLoop}
+              disabled={loopStartMs === null || loopEndMs === null}
+            >
+              {isVideoLoopPlaying ? '⏹ Stop Loop' : '🔁 Play Loop'}
+            </button>
+            {(loopStartMs !== null || loopEndMs !== null) && (
+              <button style={styles.loopClearButton} onClick={handleClearLoop}>
+                ✕ Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!isVideoPassage && audioService.isSupported() && (
         <div style={styles.playBar}>
           <button style={styles.playButton} onClick={handlePlayToggle} title={isPlaying ? 'Stop' : 'Read aloud'}>
             {isPlaying ? '⏹ Stop' : '▶ Play'}
@@ -277,7 +495,7 @@ const Reader: React.FC<ReaderProps> = ({ passageId, onExit }) => {
         </div>
       )}
 
-      {audioService.isSupported() && showLoopPanel && sentences.length > 1 && (
+      {!isVideoPassage && audioService.isSupported() && showLoopPanel && sentences.length > 1 && (
         <div style={styles.loopPanel}>
           <p style={styles.loopHint}>
             Tap a sentence to set the loop start, tap another to set the end — tap the same one twice to loop just that sentence.
@@ -327,7 +545,14 @@ const Reader: React.FC<ReaderProps> = ({ passageId, onExit }) => {
         </div>
       )}
 
-      <div style={styles.textContainer}>{tokenSpans}</div>
+      {(!isVideoPassage || hasCaptionCues) && <div style={styles.textContainer}>{tokenSpans}</div>}
+
+      {isVideoPassage && !hasCaptionCues && (
+        <p style={styles.videoOnlyNote}>
+          No Japanese captions were found for this video — it plays here for shadowing practice only, with no
+          text, vocab lookup, or tracking.
+        </p>
+      )}
 
       {selectedToken && (
         <WordPopup
@@ -366,6 +591,14 @@ const styles: { [key: string]: CSSProperties } = {
     justifyContent: 'center',
     color: '#64748b',
     gap: '12px',
+  },
+  videoOnlyNote: {
+    maxWidth: '720px',
+    margin: '16px auto 0',
+    padding: '0 24px',
+    fontSize: '13px',
+    color: '#64748b',
+    textAlign: 'center',
   },
   backLink: {
     background: 'none',

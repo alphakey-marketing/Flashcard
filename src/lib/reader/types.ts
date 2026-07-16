@@ -30,11 +30,25 @@ export interface VocabStatus {
   updatedAt: number;
 }
 
+/** One caption cue's timing plus the token range it covers, for video-synced playback/looping. */
+export interface CaptionCue {
+  text: string;
+  startMs: number;
+  durMs: number;
+  /** Index range into Passage.tokens, [tokenStart, tokenEnd). */
+  tokenStart: number;
+  tokenEnd: number;
+}
+
 export interface Passage {
   id: string;
   title: string;
   sourceType: 'text' | 'url' | 'youtube';
   sourceUrl?: string;
+  /** YouTube video ID — present when sourceType === 'youtube' and a video should be embedded. */
+  videoId?: string;
+  /** Per-cue timing for video-synced A/B looping. Absent when no Japanese captions were found. */
+  captionCues?: CaptionCue[];
   collectionId?: string;
   rawText: string;
   tokens: Token[];
