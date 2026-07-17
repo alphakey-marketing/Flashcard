@@ -545,12 +545,12 @@ const Reader: React.FC<ReaderProps> = ({ passageId, onExit }) => {
         </div>
       )}
 
-      {(!isVideoPassage || hasCaptionCues) && <div style={styles.textContainer}>{tokenSpans}</div>}
+      {(!isVideoPassage || passage.tokens.length > 0) && <div style={styles.textContainer}>{tokenSpans}</div>}
 
-      {isVideoPassage && !hasCaptionCues && (
+      {isVideoPassage && passage.tokens.length === 0 && (
         <p style={styles.videoOnlyNote}>
-          No Japanese captions were found for this video — it plays here for shadowing practice only, with no
-          text, vocab lookup, or tracking.
+          No transcript for this video — it plays here for shadowing practice only, with no text, vocab lookup,
+          or tracking. Edit the passage to paste one in if you want that.
         </p>
       )}
 

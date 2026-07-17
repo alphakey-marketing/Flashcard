@@ -1,6 +1,37 @@
 import React, { useState, CSSProperties } from 'react';
 import { createPassage, updatePassage, movePassageToCollection } from '../lib/reader/passageStore';
-import type { CaptionCue, Collection, Passage, Token } from '../lib/reader/types';
+import type { Collection, Passage } from '../lib/reader/types';
+
+/**
+ * Pulls a YouTube video ID straight out of the URL in the browser — no server
+ * request at all. Deliberately duplicated from server.js's extractYoutubeVideoId
+ * (kept there for the dormant caption-import endpoints) rather than shared,
+ * since client and server code don't share a module boundary in this project.
+ *
+ * The video embeds and plays via YouTube's own official iframe player, which
+ * is never blocked — unlike scraping the watch page or caption XML server-side,
+ * which depends on the *server's* IP not being rate-limited/blocked by YouTube.
+ * That's unreliable on shared-IP hosts (e.g. Replit), so this path avoids it
+ * entirely: paste a link, get a working player + A/B loop, no fetch involved.
+ */
+function extractYoutubeVideoId(rawUrl: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  if (u.hostname === 'youtu.be') return u.pathname.slice(1).split('/')[0] || null;
+
+  if (u.hostname.endsWith('youtube.com')) {
+    if (u.pathname === '/watch') return u.searchParams.get('v');
+    const shortsMatch = u.pathname.match(/^\/shorts\/([^/]+)/);
+    if (shortsMatch) return shortsMatch[1];
+  }
+
+  return null;
+}
 
 interface ImportPassageModalProps {
   onClose: () => void;
@@ -28,8 +59,6 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
   // trip the "no content" guard in handleCreate — a video-only passage has
   // an empty rawText by design, videoId is what makes it valid.
   const [videoId, setVideoId] = useState<string | undefined>(editingPassage?.videoId);
-  const [captionCues, setCaptionCues] = useState<CaptionCue[] | undefined>(editingPassage?.captionCues);
-  const [videoTokens, setVideoTokens] = useState<Token[] | undefined>(undefined);
   const [videoStatus, setVideoStatus] = useState('');
 
   const handleFetchUrl = async () => {
@@ -40,12 +69,21 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
     setError('');
     setVideoStatus('');
     setVideoId(undefined);
-    setCaptionCues(undefined);
-    setVideoTokens(undefined);
+
+    if (tab === 'youtube') {
+      const id = extractYoutubeVideoId(sourceUrl.trim());
+      if (!id) {
+        setError('Could not parse a YouTube video ID from this URL.');
+        return;
+      }
+      setVideoId(id);
+      setVideoStatus('✅ Video linked — playback and A/B shadowing loop will work. No captions are fetched, so there\'s no text or vocab tracking; add your own title above.');
+      return;
+    }
+
     setFetching(true);
     try {
-      const endpoint = tab === 'youtube' ? '/api/import-youtube' : '/api/import-url';
-      const res = await fetch(endpoint, {
+      const res = await fetch('/api/import-url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: sourceUrl.trim() }),
@@ -68,40 +106,6 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
       if (!res.ok) throw new Error(data.error || `Failed to fetch: HTTP ${res.status}`);
       setTitle(data.title || '');
       setRawText(data.text || '');
-
-      if (tab === 'youtube') {
-        setVideoId(data.videoId);
-
-        if (Array.isArray(data.cues) && data.cues.length > 0) {
-          try {
-            const cuesRes = await fetch('/api/tokenize-cues', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ cues: data.cues.map((c: any) => c.text) }),
-            });
-            if (!cuesRes.ok) throw new Error(`Tokenize-cues failed: HTTP ${cuesRes.status}`);
-            const { cueTokens } = await cuesRes.json() as { cueTokens: Token[][] };
-
-            const flatTokens: Token[] = [];
-            const cues: CaptionCue[] = data.cues.map((c: any, i: number) => {
-              const tokenStart = flatTokens.length;
-              flatTokens.push(...cueTokens[i]);
-              return { text: c.text, startMs: c.startMs, durMs: c.durMs, tokenStart, tokenEnd: flatTokens.length };
-            });
-
-            setCaptionCues(cues);
-            setVideoTokens(flatTokens);
-            setVideoStatus(`✅ Video imported — ${cues.length} caption line${cues.length === 1 ? '' : 's'} found. Vocab tap-to-lookup and caption-synced A/B looping will be enabled.`);
-          } catch (cueErr: any) {
-            // Non-fatal — the video still imports and plays, it just falls back
-            // to the manual Set A/Set B loop instead of caption-synced looping.
-            console.error('tokenize-cues failed, falling back to video-only:', cueErr);
-            setVideoStatus('✅ Video imported, but caption sync failed — you can still shadow-practice with manual A/B markers.');
-          }
-        } else {
-          setVideoStatus('✅ Video imported — no Japanese captions found, so there\'s no text or vocab tracking, but you can still shadow-practice with manual A/B markers.');
-        }
-      }
     } catch (err: any) {
       setError(err.message || 'Failed to import. Please try again.');
     } finally {
@@ -131,9 +135,7 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
           tab === 'text' ? 'text' : tab,
           tab === 'text' ? undefined : sourceUrl.trim(),
           collectionId,
-          videoId,
-          captionCues,
-          videoTokens
+          videoId
         );
       }
       onCreated(passage);
@@ -195,7 +197,7 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
                 onClick={handleFetchUrl}
                 disabled={fetching || !sourceUrl.trim()}
               >
-                {fetching ? '⏳ Fetching…' : 'Fetch'}
+                {fetching ? '⏳ Fetching…' : tab === 'youtube' ? 'Link Video' : 'Fetch'}
               </button>
             </div>
           )}
@@ -225,22 +227,20 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
 
           {videoStatus && <div style={styles.videoStatus}>{videoStatus}</div>}
 
-          {!(tab === 'youtube' && videoId && !rawText) && (
-            <textarea
-              placeholder={
-                !isEditing && tab === 'url'
-                  ? 'Fetched article text will appear here — edit if needed.'
-                  : !isEditing && tab === 'youtube'
-                  ? 'Fetched captions will appear here — edit if needed.'
-                  : 'Paste any Japanese text here — an article, a subtitle transcript, a chapter…'
-              }
-              value={rawText}
-              onChange={e => setRawText(e.target.value)}
-              style={styles.textarea}
-              rows={12}
-              disabled={creating}
-            />
-          )}
+          <textarea
+            placeholder={
+              !isEditing && tab === 'url'
+                ? 'Fetched article text will appear here — edit if needed.'
+                : !isEditing && tab === 'youtube'
+                ? 'Optional — paste a transcript here yourself if you want vocab tracking; not required for playback/looping.'
+                : 'Paste any Japanese text here — an article, a subtitle transcript, a chapter…'
+            }
+            value={rawText}
+            onChange={e => setRawText(e.target.value)}
+            style={styles.textarea}
+            rows={12}
+            disabled={creating}
+          />
 
           {error && <div style={styles.error}>{error}</div>}
         </div>
