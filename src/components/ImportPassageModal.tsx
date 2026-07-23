@@ -1,5 +1,6 @@
-import React, { useState, CSSProperties } from 'react';
+import React, { useState, useEffect, CSSProperties } from 'react';
 import { createPassage, updatePassage, movePassageToCollection } from '../lib/reader/passageStore';
+import { ensureCollectionsHydrated, getAllCollections, createCollection } from '../lib/reader/collectionStore';
 import type { Collection, Passage } from '../lib/reader/types';
 
 /**
@@ -39,22 +40,39 @@ interface ImportPassageModalProps {
   collectionId?: string;
   /** When set, the modal edits this passage's title/text instead of creating a new one. */
   editingPassage?: Passage;
-  /** When provided alongside editingPassage, shows a collection picker so the passage can be moved. */
-  collections?: Collection[];
 }
+
+const NEW_COLLECTION_OPTION = '__new__';
 
 type SourceTab = 'text' | 'url' | 'youtube';
 
-const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCreated, collectionId, editingPassage, collections }) => {
+const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCreated, collectionId, editingPassage }) => {
   const isEditing = !!editingPassage;
   const [tab, setTab] = useState<SourceTab>('text');
   const [title, setTitle] = useState(editingPassage?.title ?? '');
   const [rawText, setRawText] = useState(editingPassage?.rawText ?? '');
   const [sourceUrl, setSourceUrl] = useState('');
-  const [selectedCollectionId, setSelectedCollectionId] = useState(editingPassage?.collectionId ?? '');
+  const [selectedCollectionId, setSelectedCollectionId] = useState(editingPassage?.collectionId ?? collectionId ?? '');
+  const [collections, setCollections] = useState<Collection[]>([]);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
   const [fetching, setFetching] = useState(false);
+
+  useEffect(() => {
+    ensureCollectionsHydrated().then(() => setCollections(getAllCollections()));
+  }, []);
+
+  const handleCollectionChange = (value: string) => {
+    if (value === NEW_COLLECTION_OPTION) {
+      const name = window.prompt('Collection name (e.g. "NHK News", "Textbook Ch. 3"):');
+      if (!name?.trim()) return;
+      const created = createCollection(name.trim());
+      setCollections(getAllCollections());
+      setSelectedCollectionId(created.id);
+      return;
+    }
+    setSelectedCollectionId(value);
+  };
   // Seeded from editingPassage so editing a video passage's title doesn't
   // trip the "no content" guard in handleCreate — a video-only passage has
   // an empty rawText by design, videoId is what makes it valid.
@@ -77,7 +95,30 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
         return;
       }
       setVideoId(id);
-      setVideoStatus('✅ Video linked — playback and A/B shadowing loop will work. No captions are fetched, so there\'s no text or vocab tracking; add your own title above.');
+
+      // oEmbed is a public, CORS-enabled YouTube endpoint — hit directly from
+      // the browser so title capture stays as server-free as the video link
+      // itself. Best-effort: if it fails (network hiccup, CORS policy change),
+      // just leave the title for the user to type themselves.
+      let capturedTitle = false;
+      try {
+        const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(sourceUrl.trim())}&format=json`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.title) {
+            setTitle(data.title);
+            capturedTitle = true;
+          }
+        }
+      } catch {
+        // ignored — fall through to the no-title-captured status message
+      }
+
+      setVideoStatus(
+        capturedTitle
+          ? '✅ Video linked, title captured — playback and A/B shadowing loop will work. No captions are fetched, so there\'s no text or vocab tracking.'
+          : '✅ Video linked — playback and A/B shadowing loop will work. No captions are fetched, so there\'s no text or vocab tracking; add your own title above.'
+      );
       return;
     }
 
@@ -124,7 +165,7 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
     try {
       let passage: Passage;
       if (editingPassage) {
-        if (collections && selectedCollectionId !== (editingPassage.collectionId ?? '')) {
+        if (selectedCollectionId !== (editingPassage.collectionId ?? '')) {
           movePassageToCollection(editingPassage.id, selectedCollectionId || undefined);
         }
         passage = await updatePassage(editingPassage.id, title, rawText.trim());
@@ -134,7 +175,7 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
           rawText.trim(),
           tab === 'text' ? 'text' : tab,
           tab === 'text' ? undefined : sourceUrl.trim(),
-          collectionId,
+          selectedCollectionId || undefined,
           videoId
         );
       }
@@ -211,19 +252,18 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
             disabled={creating}
           />
 
-          {isEditing && collections && (
-            <select
-              value={selectedCollectionId}
-              onChange={e => setSelectedCollectionId(e.target.value)}
-              style={styles.input}
-              disabled={creating}
-            >
-              <option value="">No collection</option>
-              {collections.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          )}
+          <select
+            value={selectedCollectionId}
+            onChange={e => handleCollectionChange(e.target.value)}
+            style={styles.input}
+            disabled={creating}
+          >
+            <option value="">No collection</option>
+            {collections.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+            <option value={NEW_COLLECTION_OPTION}>+ New collection…</option>
+          </select>
 
           {videoStatus && <div style={styles.videoStatus}>{videoStatus}</div>}
 

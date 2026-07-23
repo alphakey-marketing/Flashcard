@@ -193,7 +193,6 @@ const ReaderHub: React.FC<ReaderHubProps> = ({ onNavigateToHome, onOpenPassage, 
       {editingPassage && (
         <ImportPassageModal
           editingPassage={editingPassage}
-          collections={collections}
           onClose={() => setEditingPassage(undefined)}
           onCreated={() => setPassages(getAllPassages())}
         />

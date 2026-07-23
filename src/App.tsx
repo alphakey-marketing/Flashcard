@@ -44,10 +44,6 @@ const App: React.FC = () => {
   const setSyncErrorRef = useRef(setSyncError);
   const stackRef = useRef(stack);
   stackRef.current = stack;
-  // Distinguishes a back() triggered by the browser's own popstate (already
-  // navigated, don't call history.back() again) from an in-app back() call
-  // (must call history.back() to keep the real browser history in sync).
-  const isPoppingFromBrowserRef = useRef(false);
 
   useEffect(() => {
     setIsSyncingRef.current = setIsSyncing;
@@ -148,11 +144,16 @@ const App: React.FC = () => {
     window.history.pushState({ depth: stackRef.current.length + 1 }, '', '');
   };
 
-  const back = () => {
+  // Stack pops happen exclusively here, in response to an actual history
+  // transition — whether that transition was caused by our own back()
+  // calling history.back() below, or by a hardware/gesture back. This is
+  // the single source of truth so one back-action only ever pops one frame.
+  const popStack = () => {
     setStack(prev => (prev.length > 1 ? prev.slice(0, -1) : [{ page: 'home', params: {} }]));
-    if (!isPoppingFromBrowserRef.current) {
-      window.history.back();
-    }
+  };
+
+  const back = () => {
+    window.history.back();
   };
 
   // Push one baseline history entry so the very first back-gesture/hardware
@@ -162,13 +163,8 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const handlePopState = () => {
-      isPoppingFromBrowserRef.current = true;
-      back();
-      setTimeout(() => { isPoppingFromBrowserRef.current = false; }, 0);
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', popStack);
+    return () => window.removeEventListener('popstate', popStack);
   }, []);
 
   const navigateToHome = () => navigateTo('home', {});
