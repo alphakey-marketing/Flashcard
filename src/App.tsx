@@ -14,11 +14,12 @@ import BrowseCards from './pages/BrowseCards';
 import ReaderHub from './pages/ReaderHub';
 import Reader from './pages/Reader';
 import VocabReview from './pages/VocabReview';
+import LevelPicker from './pages/LevelPicker';
 import ErrorBoundary from './components/ErrorBoundary';
 import QuickCapture from './components/QuickCapture';
 import { supabase } from './lib/supabaseClient';
 import { SyncManager, type SyncProgress } from './lib/sync/syncManager';
-import { getSet, setStorageAuthState } from './lib/storage';
+import { getSet, getAllSets, setStorageAuthState, hasCompletedLevelOnboarding } from './lib/storage';
 import { setReviewUserId } from './lib/spacedRepetition';
 
 type Page = 'home' | 'create' | 'edit-set' | 'swipe' | 'stats' | 'learn' | 'match-game' | 'sentence-builder' | 'speech-practice' | 'daily-writing' | 'browse-cards' | 'reader-hub' | 'reader' | 'vocab-review';
@@ -32,6 +33,7 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string>('Initializing...');
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [showLevelPicker, setShowLevelPicker] = useState(false);
   const [stack, setStack] = useState<HistoryFrame[]>([{ page: 'home', params: {} }]);
   const current = stack[stack.length - 1];
   // Increments after every completed sync — forces Home to re-mount and re-read fresh localStorage
@@ -118,6 +120,12 @@ const App: React.FC = () => {
         const result = await SyncManager.performSync();
         if (!result.success && result.error) {
           setSyncError(result.error);
+        }
+        // A brand-new account syncs down zero decks (cloud is empty, nothing
+        // local pre-login) — that's the moment to offer the level picker,
+        // rather than dropping the user on an empty Home with no path in.
+        if (result.success && getAllSets().length === 0 && !hasCompletedLevelOnboarding()) {
+          setShowLevelPicker(true);
         }
         // Bump generation BEFORE clearing spinner — Home re-mounts with fresh data
         setSyncGeneration(g => g + 1);
@@ -230,6 +238,17 @@ const App: React.FC = () => {
         <p style={{ fontSize: '20px', color: '#1e293b', fontWeight: 600, marginBottom: '8px' }}>Syncing Your Data</p>
         <p style={{ fontSize: '14px', color: '#64748b', textAlign: 'center', maxWidth: '400px' }}>{syncStatus}</p>
       </div>
+    );
+  }
+
+  if (showLevelPicker) {
+    return (
+      <LevelPicker
+        onDone={() => {
+          setShowLevelPicker(false);
+          setSyncGeneration(g => g + 1);
+        }}
+      />
     );
   }
 

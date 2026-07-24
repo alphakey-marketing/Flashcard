@@ -186,5 +186,33 @@ export function forceReloadTemplates(): void {
   initializeTemplates();
 }
 
+// ─── Level onboarding ───────────────────────────────────────────────────────
+// A brand-new signup starts with zero decks (App.tsx requires a Supabase
+// session before rendering anything, so the legacy local-first-run seeding
+// above never runs post-login — cloud is authoritative and empty for a new
+// account). This is the seeding path that actually reaches new users: a
+// first-run level picker calls seedTemplatesForLevel() once, instead of the
+// old "dump every JLPT level at once" behavior.
+const LEVEL_ONBOARDING_KEY = 'flashmind-level-onboarding-done';
+
+export function hasCompletedLevelOnboarding(): boolean {
+  return localStorage.getItem(LEVEL_ONBOARDING_KEY) === 'true';
+}
+
+export function markLevelOnboardingDone(): void {
+  localStorage.setItem(LEVEL_ONBOARDING_KEY, 'true');
+}
+
+/** Read-only lookup — lets the picker list a level's built-in sets (title/card count) before the user chooses which ones to import. */
+export function getTemplateSetsForLevel(level: 'N5' | 'N4' | 'N3' | 'N2' | 'N1'): FlashcardSet[] {
+  return jlptTemplates.filter(set => set.jlptLevel === level);
+}
+
+/** Imports only the chosen template sets (by id), not the whole level at once. */
+export function seedSelectedTemplates(setIds: string[]): void {
+  const idSet = new Set(setIds);
+  jlptTemplates.filter(set => idSet.has(set.id)).forEach(saveSet);
+}
+
 export { SyncManager } from './sync/syncManager';
 export type { SyncProgress, SyncResult } from './sync/syncManager';

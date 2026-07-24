@@ -9,11 +9,114 @@ import { fileURLToPath } from 'url';
 import kuromoji from 'kuromoji';
 import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
+import { createClient } from '@supabase/supabase-js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 const IS_PROD = process.env.NODE_ENV === 'production';
+
+// ─── Auth + AI usage quota ──────────────────────────────────────────────────
+// Free-tier ceiling on AI-costing calls (generate-sentence, extract-vocab,
+// translate, import-url's punctuation-restore step), combined, per user per
+// UTC day. Paid users (user_tier.is_paid, flipped manually for now — see
+// supabase/migrations/003_ai_usage_quota.sql) skip this ceiling entirely.
+const FREE_DAILY_AI_QUOTA = 20;
+
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+
+// One client per request, scoped to that user's JWT — reads/writes to
+// user_tier/ai_usage go through RLS as that user, so no service-role key
+// is needed on the server at all.
+function supabaseForToken(token) {
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false },
+  });
+}
+
+function bearerToken(req) {
+  const header = req.headers.authorization;
+  return header?.startsWith('Bearer ') ? header.slice(7) : null;
+}
+
+// Populates req.userId when a valid session is present, but never rejects —
+// for endpoints (like import-url) that should keep working for logged-out
+// users, just without the AI-powered extras.
+async function optionalAuth(req, res, next) {
+  const token = bearerToken(req);
+  if (!token) { req.userId = null; return next(); }
+  try {
+    const client = supabaseForToken(token);
+    const { data } = await client.auth.getUser();
+    req.userId = data?.user?.id ?? null;
+    req.supabase = req.userId ? client : null;
+  } catch {
+    req.userId = null;
+  }
+  next();
+}
+
+// Rejects with 401 unless a valid Supabase session is attached — for the
+// endpoints that are pure AI cost with no useful logged-out fallback.
+async function requireAuth(req, res, next) {
+  await optionalAuth(req, res, () => {});
+  if (!req.userId) {
+    return res.status(401).json({ error: 'auth_required', message: 'Please log in to use this feature.' });
+  }
+  next();
+}
+
+// Checks today's usage against the free quota and, if allowed, increments it
+// in the same call (best-effort atomicity — fine at this traffic level).
+// Paid users always pass. Returns { allowed, used }.
+async function checkAndConsumeQuota(supabase, userId) {
+  const { data: tierRow } = await supabase
+    .from('user_tier')
+    .select('is_paid')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (tierRow?.is_paid) return { allowed: true, used: null };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: usageRow } = await supabase
+    .from('ai_usage')
+    .select('count')
+    .eq('user_id', userId)
+    .eq('day', today)
+    .maybeSingle();
+
+  const current = usageRow?.count ?? 0;
+  if (current >= FREE_DAILY_AI_QUOTA) {
+    return { allowed: false, used: current };
+  }
+
+  const { error } = await supabase
+    .from('ai_usage')
+    .upsert({ user_id: userId, day: today, count: current + 1 }, { onConflict: 'user_id,day' });
+  if (error) throw error;
+
+  return { allowed: true, used: current + 1 };
+}
+
+// Applied after requireAuth on pure-AI routes — blocks the request entirely
+// once the day's free quota is used up.
+async function enforceQuota(req, res, next) {
+  try {
+    const result = await checkAndConsumeQuota(req.supabase, req.userId);
+    if (!result.allowed) {
+      return res.status(403).json({
+        error: 'quota_exceeded',
+        message: "You've used today's free AI credits. Upgrade or come back tomorrow.",
+      });
+    }
+    next();
+  } catch (err) {
+    console.error('quota check failed:', err.message);
+    res.status(500).json({ error: 'quota_check_failed' });
+  }
+}
 
 // Reader passages can be a few thousand characters — default 100kb JSON limit is too tight.
 app.use(express.json({ limit: '2mb' }));
@@ -155,7 +258,7 @@ async function lookupJisho(word) {
 }
 
 // ─── API Route: POST /api/generate-sentence ───────────────────────────────────
-app.post('/api/generate-sentence', generateLimiter, async (req, res) => {
+app.post('/api/generate-sentence', generateLimiter, requireAuth, enforceQuota, async (req, res) => {
   const { word } = req.body;
   if (!word?.trim()) {
     return res.status(400).json({ error: 'word is required' });
@@ -236,7 +339,7 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 // ─── API Route: POST /api/extract-vocab ───────────────────────────────────────
-app.post('/api/extract-vocab', generateLimiter, async (req, res) => {
+app.post('/api/extract-vocab', generateLimiter, requireAuth, enforceQuota, async (req, res) => {
   const { text } = req.body;
   if (!text || typeof text !== 'string' || text.trim().length === 0) {
     return res.status(400).json({ error: 'text is required' });
@@ -314,7 +417,7 @@ Maximum 20 words. Order by first appearance in the text.
 // ─── API Route: POST /api/translate ────────────────────────────────────────────
 // Translates a Japanese sentence, optionally explaining one target word in context.
 // Ported from LinguaReader's ai.ts (Claude Haiku) onto the existing OpenRouter plumbing.
-app.post('/api/translate', generateLimiter, async (req, res) => {
+app.post('/api/translate', generateLimiter, requireAuth, enforceQuota, async (req, res) => {
   const { sentence, targetWord } = req.body;
   if (!sentence?.trim()) {
     return res.status(400).json({ error: 'sentence is required' });
@@ -464,7 +567,7 @@ app.post('/api/dictionary/lookup', generateLimiter, async (req, res) => {
 // plain text ready for /api/tokenize.
 const PRIVATE_HOST_RE = /^(localhost|127\.|0\.0\.0\.0|::1|169\.254\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/i;
 
-app.post('/api/import-url', generateLimiter, async (req, res) => {
+app.post('/api/import-url', generateLimiter, optionalAuth, async (req, res) => {
   const { url } = req.body;
   if (!url?.trim()) {
     return res.status(400).json({ error: 'url is required' });
@@ -498,7 +601,18 @@ app.post('/api/import-url', generateLimiter, async (req, res) => {
       return res.status(422).json({ error: 'Could not extract article text from this page.' });
     }
 
-    const text = await restorePunctuation(article.textContent.trim());
+    // Punctuation restore is an AI call — only spend it for logged-in users
+    // under their free quota. Anonymous/over-quota users still get their
+    // import, just with the raw (unpunctuated) text.
+    let text = article.textContent.trim();
+    if (req.userId) {
+      try {
+        const quota = await checkAndConsumeQuota(req.supabase, req.userId);
+        if (quota.allowed) text = await restorePunctuation(text);
+      } catch (quotaErr) {
+        console.error('import-url quota check failed:', quotaErr.message);
+      }
+    }
 
     res.json({
       title: article.title || parsed.hostname,

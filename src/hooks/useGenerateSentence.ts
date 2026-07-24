@@ -1,5 +1,6 @@
 // src/hooks/useGenerateSentence.ts
 import { useState } from 'react';
+import { authHeader, quotaErrorMessage } from '../lib/authHeader';
 
 export interface GeneratedCard {
   front: string;  // reading + "\n\n" + japaneseSentence
@@ -21,7 +22,7 @@ export function useGenerateSentence() {
     try {
       const res = await fetch('/api/generate-sentence', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
         body: JSON.stringify({ word: word.trim() }),
       });
 
@@ -36,7 +37,7 @@ export function useGenerateSentence() {
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.error ?? 'Generation failed. Please try again.');
+        setError(quotaErrorMessage(data.error) ?? data.error ?? 'Generation failed. Please try again.');
         return null;
       }
 

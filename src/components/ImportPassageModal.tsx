@@ -2,6 +2,7 @@ import React, { useState, useEffect, CSSProperties } from 'react';
 import { createPassage, updatePassage, movePassageToCollection } from '../lib/reader/passageStore';
 import { ensureCollectionsHydrated, getAllCollections, createCollection } from '../lib/reader/collectionStore';
 import type { Collection, Passage } from '../lib/reader/types';
+import { authHeader } from '../lib/authHeader';
 
 /**
  * Pulls a YouTube video ID straight out of the URL in the browser — no server
@@ -126,7 +127,7 @@ const ImportPassageModal: React.FC<ImportPassageModalProps> = ({ onClose, onCrea
     try {
       const res = await fetch('/api/import-url', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
         body: JSON.stringify({ url: sourceUrl.trim() }),
       });
 

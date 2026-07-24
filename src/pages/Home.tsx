@@ -11,6 +11,7 @@ import { VOCAB_REVIEW_SET_ID } from '../lib/reader/vocabReview';
 import ImportModal from '../components/ImportModal';
 import LearningTips from '../components/LearningTips';
 import OverflowMenu from '../components/OverflowMenu';
+import LevelPicker from './LevelPicker';
 
 interface HomeProps {
   onNavigateToCreate: () => void;
@@ -47,6 +48,7 @@ const Home: React.FC<HomeProps> = ({
 }) => {
   const [sets, setSets] = useState<FlashcardSet[]>([]);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showLevelPicker, setShowLevelPicker] = useState(false);
   const [showLearningTips, setShowLearningTips] = useState(false);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [selectionMode, setSelectionMode] = useState(false);
@@ -403,6 +405,7 @@ const Home: React.FC<HomeProps> = ({
               { key: 'tips', icon: '🎯', label: 'Tips', onSelect: () => setShowLearningTips(true) },
               { key: 'stats', icon: '📊', label: 'Stats', onSelect: onNavigateToStats },
               { key: 'import', icon: '📥', label: 'Import', onSelect: () => setShowImportModal(true) },
+              { key: 'add-level', icon: '🎓', label: 'Add Level Sets', description: 'Get starter sets for another JLPT level', onSelect: () => setShowLevelPicker(true) },
               { key: 'logout', icon: '🚪', label: 'Log Out', onSelect: onLogout },
             ]}
           />
@@ -569,6 +572,10 @@ const Home: React.FC<HomeProps> = ({
       )}
 
       {showLearningTips && <LearningTips onClose={() => setShowLearningTips(false)} />}
+
+      {showLevelPicker && (
+        <LevelPicker onDone={() => { setShowLevelPicker(false); loadSets(); checkUnsyncedDecks(); }} />
+      )}
     </div>
   );
 };

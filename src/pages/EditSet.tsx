@@ -2,6 +2,7 @@ import React, { useState, CSSProperties } from 'react';
 import { getSet, saveSet, CardDraft, FlashcardSet } from '../lib/storage';
 import { useGenerateSentence } from '../hooks/useGenerateSentence';
 import { extractVocab, extractVocabWithAI, ExtractedVocab } from '../lib/vocabExtractor';
+import { quotaErrorMessage } from '../lib/authHeader';
 
 interface EditSetProps {
   setId: string;
@@ -83,6 +84,8 @@ const EditSet: React.FC<EditSetProps> = ({ setId, onNavigateToHome }) => {
       setExtractMethod('ai');
     } catch (err: unknown) {
       console.warn('[Extract] AI unavailable, falling back to regex:', err instanceof Error ? err.message : err);
+      const friendly = err instanceof Error ? quotaErrorMessage(err.message) : null;
+      if (friendly) setVocabError(`${friendly} Using basic extraction instead.`);
       const words = extractVocab(text);
       setExtractedVocab(words);
       setExtractMethod('fallback');

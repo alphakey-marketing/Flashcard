@@ -1,6 +1,7 @@
 import React, { useState, useEffect, CSSProperties } from 'react';
 import type { Token, VocabStatusValue } from '../lib/reader/types';
 import { getVocabStatus, setVocabStatus, updateVocabNote, STATUS_LABELS } from '../lib/reader/vocabStore';
+import { authHeader, quotaErrorMessage } from '../lib/authHeader';
 
 interface WordPopupProps {
   token: Token;
@@ -82,21 +83,24 @@ const WordPopup: React.FC<WordPopupProps> = ({ token, sentence, passageId, onClo
     updateVocabNote(token.dictionaryForm, note);
   };
 
-  const handleTranslate = () => {
+  const handleTranslate = async () => {
     setTranslating(true);
     setTranslateError('');
-    fetch('/api/translate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sentence, targetWord: token.surface }),
-    })
-      .then(res => res.json().then(data => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok) throw new Error(data.error || 'Translation failed');
-        setTranslation(data);
-      })
-      .catch(err => setTranslateError(err.message || 'Translation failed'))
-      .finally(() => setTranslating(false));
+    try {
+      const headers = { 'Content-Type': 'application/json', ...(await authHeader()) };
+      const res = await fetch('/api/translate', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ sentence, targetWord: token.surface }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(quotaErrorMessage(data.error) ?? data.error ?? 'Translation failed');
+      setTranslation(data);
+    } catch (err: any) {
+      setTranslateError(err.message || 'Translation failed');
+    } finally {
+      setTranslating(false);
+    }
   };
 
   return (

@@ -5,6 +5,8 @@
  * The `extractVocabWithAI` function is the preferred AI-powered path.
  */
 
+import { authHeader } from './authHeader';
+
 export type JlptLevel = 'N1' | 'N2' | 'N3' | 'N4' | 'unknown';
 
 /** A single vocabulary candidate extracted from a paragraph of Japanese text. */
@@ -152,11 +154,14 @@ export function extractVocab(text: string): ExtractedVocab[] {
 export async function extractVocabWithAI(text: string): Promise<ExtractedVocab[]> {
   const response = await fetch('/api/extract-vocab', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify({ text }),
   });
 
-  // Treat both 429 and 500 (extraction_failed) as fallback triggers
+  // Treat both 429 and 500 (extraction_failed) as fallback triggers. Error
+  // message stays the raw code ('auth_required' / 'quota_exceeded' / ...) —
+  // callers map it to friendly copy via quotaErrorMessage() when they want
+  // to surface *why* extraction fell back, rather than staying silent.
   if (!response.ok) {
     const err = await response.json().catch(() => ({} as Record<string, string>));
     throw new Error(err.error ?? `HTTP ${response.status}`);
